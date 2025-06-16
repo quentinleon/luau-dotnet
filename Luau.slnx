@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/sandbox/">
+    <Project Path="sandbox/ConsoleApp1/ConsoleApp1.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Luau.Native/Luau.Native.csproj" />
+    <Project Path="src/Luau.SourceGenerator/Luau.SourceGenerator.csproj" />
+    <Project Path="src/Luau/Luau.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Luau.Tests/Luau.Tests.csproj" />
+  </Folder>
+</Solution>

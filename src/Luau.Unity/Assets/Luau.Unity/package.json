@@ -1,0 +1,9 @@
+{
+    "name": "com.nuskey.luau.unity",
+    "version": "0.4.2",
+    "displayName": "Luau.Unity",
+    "description": "Luau plugin for Unity",
+    "author": {
+        "name": "nuskey"
+    }
+}

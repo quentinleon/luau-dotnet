@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net8.0;netstandard2.1</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>13</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="runtimes\osx-arm64\native\libluau.dylib" Pack="true"
+      PackagePath="runtimes\osx-arm64\native\" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+  <!-- Copy files to Unity project -->
+  <ItemGroup>
+    <None Include="$(ProjectDir)\NativeMethods.Macros.cs" />
+    <None Include="$(ProjectDir)\Delegates.cs" />
+    <None Include="$(ProjectDir)\Enums.cs" />
+  </ItemGroup>
+
+  <Target Name="CopyFilesToUnity" AfterTargets="AfterBuild">
+    <Copy
+      SourceFiles="$(ProjectDir)\NativeMethods.Macros.cs"
+      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Native\" />
+    <Copy
+      SourceFiles="$(ProjectDir)\Delegates.cs"
+      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Native\" />
+    <Copy
+      SourceFiles="$(ProjectDir)\Enums.cs"
+      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Native\" />
+  </Target>
+
+</Project>
