@@ -1,10 +1,10 @@
 [package]
-name = "luau-ffi"
+name = "luau"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "luau-ffi"
+name = "luau"
 crate-type = ["dylib"]
 
 [dependencies]
