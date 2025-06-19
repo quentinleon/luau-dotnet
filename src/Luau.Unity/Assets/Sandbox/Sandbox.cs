@@ -1,7 +1,6 @@
 using Luau;
 using Luau.Unity;
 using UnityEngine;
-using System;
 
 public class Sandbox : MonoBehaviour
 {
