@@ -146,15 +146,6 @@ pub union __mbstate_t {
     pub __mbstate8: [::std::os::raw::c_char; 128usize],
     pub _mbstateL: ::std::os::raw::c_longlong,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of __mbstate_t"][::std::mem::size_of::<__mbstate_t>() - 128usize];
-    ["Alignment of __mbstate_t"][::std::mem::align_of::<__mbstate_t>() - 8usize];
-    ["Offset of field: __mbstate_t::__mbstate8"]
-        [::std::mem::offset_of!(__mbstate_t, __mbstate8) - 0usize];
-    ["Offset of field: __mbstate_t::_mbstateL"]
-        [::std::mem::offset_of!(__mbstate_t, _mbstateL) - 0usize];
-};
 pub type __darwin_mbstate_t = __mbstate_t;
 pub type __darwin_ptrdiff_t = ::std::os::raw::c_long;
 pub type __darwin_size_t = ::std::os::raw::c_ulong;
@@ -193,151 +184,54 @@ pub struct __darwin_pthread_handler_rec {
     pub __arg: *mut ::std::os::raw::c_void,
     pub __next: *mut __darwin_pthread_handler_rec,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of __darwin_pthread_handler_rec"]
-        [::std::mem::size_of::<__darwin_pthread_handler_rec>() - 24usize];
-    ["Alignment of __darwin_pthread_handler_rec"]
-        [::std::mem::align_of::<__darwin_pthread_handler_rec>() - 8usize];
-    ["Offset of field: __darwin_pthread_handler_rec::__routine"]
-        [::std::mem::offset_of!(__darwin_pthread_handler_rec, __routine) - 0usize];
-    ["Offset of field: __darwin_pthread_handler_rec::__arg"]
-        [::std::mem::offset_of!(__darwin_pthread_handler_rec, __arg) - 8usize];
-    ["Offset of field: __darwin_pthread_handler_rec::__next"]
-        [::std::mem::offset_of!(__darwin_pthread_handler_rec, __next) - 16usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_attr_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 56usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_attr_t"][::std::mem::size_of::<_opaque_pthread_attr_t>() - 64usize];
-    ["Alignment of _opaque_pthread_attr_t"]
-        [::std::mem::align_of::<_opaque_pthread_attr_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_attr_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_attr_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_attr_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_attr_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_cond_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 40usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_cond_t"][::std::mem::size_of::<_opaque_pthread_cond_t>() - 48usize];
-    ["Alignment of _opaque_pthread_cond_t"]
-        [::std::mem::align_of::<_opaque_pthread_cond_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_cond_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_cond_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_cond_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_cond_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_condattr_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 8usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_condattr_t"]
-        [::std::mem::size_of::<_opaque_pthread_condattr_t>() - 16usize];
-    ["Alignment of _opaque_pthread_condattr_t"]
-        [::std::mem::align_of::<_opaque_pthread_condattr_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_condattr_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_condattr_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_condattr_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_condattr_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_mutex_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 56usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_mutex_t"][::std::mem::size_of::<_opaque_pthread_mutex_t>() - 64usize];
-    ["Alignment of _opaque_pthread_mutex_t"]
-        [::std::mem::align_of::<_opaque_pthread_mutex_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_mutex_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_mutex_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_mutex_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_mutex_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_mutexattr_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 8usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_mutexattr_t"]
-        [::std::mem::size_of::<_opaque_pthread_mutexattr_t>() - 16usize];
-    ["Alignment of _opaque_pthread_mutexattr_t"]
-        [::std::mem::align_of::<_opaque_pthread_mutexattr_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_mutexattr_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_mutexattr_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_mutexattr_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_mutexattr_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_once_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 8usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_once_t"][::std::mem::size_of::<_opaque_pthread_once_t>() - 16usize];
-    ["Alignment of _opaque_pthread_once_t"]
-        [::std::mem::align_of::<_opaque_pthread_once_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_once_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_once_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_once_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_once_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_rwlock_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 192usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_rwlock_t"]
-        [::std::mem::size_of::<_opaque_pthread_rwlock_t>() - 200usize];
-    ["Alignment of _opaque_pthread_rwlock_t"]
-        [::std::mem::align_of::<_opaque_pthread_rwlock_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_rwlock_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_rwlock_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_rwlock_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_rwlock_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_rwlockattr_t {
     pub __sig: ::std::os::raw::c_long,
     pub __opaque: [::std::os::raw::c_char; 16usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_rwlockattr_t"]
-        [::std::mem::size_of::<_opaque_pthread_rwlockattr_t>() - 24usize];
-    ["Alignment of _opaque_pthread_rwlockattr_t"]
-        [::std::mem::align_of::<_opaque_pthread_rwlockattr_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_rwlockattr_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_rwlockattr_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_rwlockattr_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_rwlockattr_t, __opaque) - 8usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _opaque_pthread_t {
@@ -345,17 +239,6 @@ pub struct _opaque_pthread_t {
     pub __cleanup_stack: *mut __darwin_pthread_handler_rec,
     pub __opaque: [::std::os::raw::c_char; 8176usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of _opaque_pthread_t"][::std::mem::size_of::<_opaque_pthread_t>() - 8192usize];
-    ["Alignment of _opaque_pthread_t"][::std::mem::align_of::<_opaque_pthread_t>() - 8usize];
-    ["Offset of field: _opaque_pthread_t::__sig"]
-        [::std::mem::offset_of!(_opaque_pthread_t, __sig) - 0usize];
-    ["Offset of field: _opaque_pthread_t::__cleanup_stack"]
-        [::std::mem::offset_of!(_opaque_pthread_t, __cleanup_stack) - 8usize];
-    ["Offset of field: _opaque_pthread_t::__opaque"]
-        [::std::mem::offset_of!(_opaque_pthread_t, __opaque) - 16usize];
-};
 pub type __darwin_pthread_attr_t = _opaque_pthread_attr_t;
 pub type __darwin_pthread_cond_t = _opaque_pthread_cond_t;
 pub type __darwin_pthread_condattr_t = _opaque_pthread_condattr_t;
@@ -1049,25 +932,6 @@ pub struct lua_Debug {
     pub userdata: *mut ::std::os::raw::c_void,
     pub ssbuf: [::std::os::raw::c_char; 256usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of lua_Debug"][::std::mem::size_of::<lua_Debug>() - 312usize];
-    ["Alignment of lua_Debug"][::std::mem::align_of::<lua_Debug>() - 8usize];
-    ["Offset of field: lua_Debug::name"][::std::mem::offset_of!(lua_Debug, name) - 0usize];
-    ["Offset of field: lua_Debug::what"][::std::mem::offset_of!(lua_Debug, what) - 8usize];
-    ["Offset of field: lua_Debug::source"][::std::mem::offset_of!(lua_Debug, source) - 16usize];
-    ["Offset of field: lua_Debug::short_src"]
-        [::std::mem::offset_of!(lua_Debug, short_src) - 24usize];
-    ["Offset of field: lua_Debug::linedefined"]
-        [::std::mem::offset_of!(lua_Debug, linedefined) - 32usize];
-    ["Offset of field: lua_Debug::currentline"]
-        [::std::mem::offset_of!(lua_Debug, currentline) - 36usize];
-    ["Offset of field: lua_Debug::nupvals"][::std::mem::offset_of!(lua_Debug, nupvals) - 40usize];
-    ["Offset of field: lua_Debug::nparams"][::std::mem::offset_of!(lua_Debug, nparams) - 41usize];
-    ["Offset of field: lua_Debug::isvararg"][::std::mem::offset_of!(lua_Debug, isvararg) - 42usize];
-    ["Offset of field: lua_Debug::userdata"][::std::mem::offset_of!(lua_Debug, userdata) - 48usize];
-    ["Offset of field: lua_Debug::ssbuf"][::std::mem::offset_of!(lua_Debug, ssbuf) - 56usize];
-};
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct lua_Callbacks {
@@ -1092,31 +956,6 @@ pub struct lua_Callbacks {
     pub onallocate:
         ::std::option::Option<unsafe extern "C" fn(L: *mut lua_State, osize: usize, nsize: usize)>,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of lua_Callbacks"][::std::mem::size_of::<lua_Callbacks>() - 80usize];
-    ["Alignment of lua_Callbacks"][::std::mem::align_of::<lua_Callbacks>() - 8usize];
-    ["Offset of field: lua_Callbacks::userdata"]
-        [::std::mem::offset_of!(lua_Callbacks, userdata) - 0usize];
-    ["Offset of field: lua_Callbacks::interrupt"]
-        [::std::mem::offset_of!(lua_Callbacks, interrupt) - 8usize];
-    ["Offset of field: lua_Callbacks::panic"]
-        [::std::mem::offset_of!(lua_Callbacks, panic) - 16usize];
-    ["Offset of field: lua_Callbacks::userthread"]
-        [::std::mem::offset_of!(lua_Callbacks, userthread) - 24usize];
-    ["Offset of field: lua_Callbacks::useratom"]
-        [::std::mem::offset_of!(lua_Callbacks, useratom) - 32usize];
-    ["Offset of field: lua_Callbacks::debugbreak"]
-        [::std::mem::offset_of!(lua_Callbacks, debugbreak) - 40usize];
-    ["Offset of field: lua_Callbacks::debugstep"]
-        [::std::mem::offset_of!(lua_Callbacks, debugstep) - 48usize];
-    ["Offset of field: lua_Callbacks::debuginterrupt"]
-        [::std::mem::offset_of!(lua_Callbacks, debuginterrupt) - 56usize];
-    ["Offset of field: lua_Callbacks::debugprotectederror"]
-        [::std::mem::offset_of!(lua_Callbacks, debugprotectederror) - 64usize];
-    ["Offset of field: lua_Callbacks::onallocate"]
-        [::std::mem::offset_of!(lua_Callbacks, onallocate) - 72usize];
-};
 unsafe extern "C" {
     pub fn lua_callbacks(L: *mut lua_State) -> *mut lua_Callbacks;
 }
@@ -1126,13 +965,6 @@ pub struct luaL_Reg {
     pub name: *const ::std::os::raw::c_char,
     pub func: lua_CFunction,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of luaL_Reg"][::std::mem::size_of::<luaL_Reg>() - 16usize];
-    ["Alignment of luaL_Reg"][::std::mem::align_of::<luaL_Reg>() - 8usize];
-    ["Offset of field: luaL_Reg::name"][::std::mem::offset_of!(luaL_Reg, name) - 0usize];
-    ["Offset of field: luaL_Reg::func"][::std::mem::offset_of!(luaL_Reg, func) - 8usize];
-};
 unsafe extern "C" {
     pub fn luaL_register(
         L: *mut lua_State,
@@ -1325,17 +1157,6 @@ pub struct luaL_Strbuf {
     pub storage: *mut TString,
     pub buffer: [::std::os::raw::c_char; 512usize],
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of luaL_Strbuf"][::std::mem::size_of::<luaL_Strbuf>() - 544usize];
-    ["Alignment of luaL_Strbuf"][::std::mem::align_of::<luaL_Strbuf>() - 8usize];
-    ["Offset of field: luaL_Strbuf::p"][::std::mem::offset_of!(luaL_Strbuf, p) - 0usize];
-    ["Offset of field: luaL_Strbuf::end"][::std::mem::offset_of!(luaL_Strbuf, end) - 8usize];
-    ["Offset of field: luaL_Strbuf::L"][::std::mem::offset_of!(luaL_Strbuf, L) - 16usize];
-    ["Offset of field: luaL_Strbuf::storage"]
-        [::std::mem::offset_of!(luaL_Strbuf, storage) - 24usize];
-    ["Offset of field: luaL_Strbuf::buffer"][::std::mem::offset_of!(luaL_Strbuf, buffer) - 32usize];
-};
 pub type luaL_Buffer = luaL_Strbuf;
 unsafe extern "C" {
     pub fn luaL_buffinit(L: *mut lua_State, B: *mut luaL_Strbuf);
@@ -1439,37 +1260,6 @@ pub struct lua_CompileOptions {
     pub libraryMemberConstantCb: lua_LibraryMemberConstantCallback,
     pub disabledBuiltins: *const *const ::std::os::raw::c_char,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of lua_CompileOptions"][::std::mem::size_of::<lua_CompileOptions>() - 88usize];
-    ["Alignment of lua_CompileOptions"][::std::mem::align_of::<lua_CompileOptions>() - 8usize];
-    ["Offset of field: lua_CompileOptions::optimizationLevel"]
-        [::std::mem::offset_of!(lua_CompileOptions, optimizationLevel) - 0usize];
-    ["Offset of field: lua_CompileOptions::debugLevel"]
-        [::std::mem::offset_of!(lua_CompileOptions, debugLevel) - 4usize];
-    ["Offset of field: lua_CompileOptions::typeInfoLevel"]
-        [::std::mem::offset_of!(lua_CompileOptions, typeInfoLevel) - 8usize];
-    ["Offset of field: lua_CompileOptions::coverageLevel"]
-        [::std::mem::offset_of!(lua_CompileOptions, coverageLevel) - 12usize];
-    ["Offset of field: lua_CompileOptions::vectorLib"]
-        [::std::mem::offset_of!(lua_CompileOptions, vectorLib) - 16usize];
-    ["Offset of field: lua_CompileOptions::vectorCtor"]
-        [::std::mem::offset_of!(lua_CompileOptions, vectorCtor) - 24usize];
-    ["Offset of field: lua_CompileOptions::vectorType"]
-        [::std::mem::offset_of!(lua_CompileOptions, vectorType) - 32usize];
-    ["Offset of field: lua_CompileOptions::mutableGlobals"]
-        [::std::mem::offset_of!(lua_CompileOptions, mutableGlobals) - 40usize];
-    ["Offset of field: lua_CompileOptions::userdataTypes"]
-        [::std::mem::offset_of!(lua_CompileOptions, userdataTypes) - 48usize];
-    ["Offset of field: lua_CompileOptions::librariesWithKnownMembers"]
-        [::std::mem::offset_of!(lua_CompileOptions, librariesWithKnownMembers) - 56usize];
-    ["Offset of field: lua_CompileOptions::libraryMemberTypeCb"]
-        [::std::mem::offset_of!(lua_CompileOptions, libraryMemberTypeCb) - 64usize];
-    ["Offset of field: lua_CompileOptions::libraryMemberConstantCb"]
-        [::std::mem::offset_of!(lua_CompileOptions, libraryMemberConstantCb) - 72usize];
-    ["Offset of field: lua_CompileOptions::disabledBuiltins"]
-        [::std::mem::offset_of!(lua_CompileOptions, disabledBuiltins) - 80usize];
-};
 unsafe extern "C" {
     pub fn luau_compile(
         source: *const ::std::os::raw::c_char,

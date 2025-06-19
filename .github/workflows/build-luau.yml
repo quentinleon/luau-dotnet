@@ -4,87 +4,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    strategy:
-      matrix:
-        include:
-          # macOS (x64/arm64)
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          # Linux (x64/x86/arm64)
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-          # Windows (x64/x86/arm64)
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: i686-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-          # Android (arm64/x86_64)
-          - os: ubuntu-latest
-            target: aarch64-linux-android
-          - os: ubuntu-latest
-            target: x86_64-linux-android
-          # iOS (arm64/simulator)
-          - os: macos-latest
-            target: aarch64-apple-ios
-          - os: macos-latest
-            target: x86_64-apple-ios
-          # WebAssembly
-          - os: ubuntu-latest
-            target: wasm32-unknown-unknown
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Set up toolchains
-        if: matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-linux-android' || startsWith(matrix.target, 'aarch64-apple-ios') || startsWith(matrix.target, 'x86_64-apple-ios') || matrix.target == 'wasm32-unknown-unknown'
-        run: |
-          sudo apt-get update || true
-          sudo apt-get install -y gcc-multilib g++-multilib || true
-          if [[ "${{ matrix.target }}" == *android* ]]; then
-            rustup target add ${{ matrix.target }}
-            sudo apt-get install -y libc6-dev-i386 lib32stdc++-dev
-          fi
-          if [[ "${{ matrix.target }}" == "wasm32-unknown-unknown" ]]; then
-            rustup target add wasm32-unknown-unknown
-          fi
-
-      - name: Install CMake
-        uses: jwlawson/actions-setup-cmake@v1
-
-      - name: Install Ninja
-        if: runner.os != 'Windows'
-        run: |
-          sudo apt-get update || true
-          sudo apt-get install -y ninja-build || brew install ninja || true
-
-      - name: Build luau-ffi
-        working-directory: native/luau-ffi
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-        run: |
-          cargo build --release --target ${{ matrix.target }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: luau-ffi-${{ matrix.target }}
-          path: |
-            native/luau-ffi/target/${{ matrix.target }}/release/libluau.*
+  build-windows:
+    uses: ./.github/workflows/build-luau.windows.yml
+  build-linux:
+    uses: ./.github/workflows/build-luau.linux.yml
+  build-macos:
+    uses: ./.github/workflows/build-luau.macos.yml
+  build-ios:
+    uses: ./.github/workflows/build-luau.ios.yml
+  build-android:
+    uses: ./.github/workflows/build-luau.android.yml

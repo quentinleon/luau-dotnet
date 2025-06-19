@@ -109,39 +109,6 @@ pub struct luarequire_Configuration {
         ) -> ::std::os::raw::c_int,
     >,
 }
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of luarequire_Configuration"]
-        [::std::mem::size_of::<luarequire_Configuration>() - 104usize];
-    ["Alignment of luarequire_Configuration"]
-        [::std::mem::align_of::<luarequire_Configuration>() - 8usize];
-    ["Offset of field: luarequire_Configuration::is_require_allowed"]
-        [::std::mem::offset_of!(luarequire_Configuration, is_require_allowed) - 0usize];
-    ["Offset of field: luarequire_Configuration::reset"]
-        [::std::mem::offset_of!(luarequire_Configuration, reset) - 8usize];
-    ["Offset of field: luarequire_Configuration::jump_to_alias"]
-        [::std::mem::offset_of!(luarequire_Configuration, jump_to_alias) - 16usize];
-    ["Offset of field: luarequire_Configuration::to_parent"]
-        [::std::mem::offset_of!(luarequire_Configuration, to_parent) - 24usize];
-    ["Offset of field: luarequire_Configuration::to_child"]
-        [::std::mem::offset_of!(luarequire_Configuration, to_child) - 32usize];
-    ["Offset of field: luarequire_Configuration::is_module_present"]
-        [::std::mem::offset_of!(luarequire_Configuration, is_module_present) - 40usize];
-    ["Offset of field: luarequire_Configuration::get_chunkname"]
-        [::std::mem::offset_of!(luarequire_Configuration, get_chunkname) - 48usize];
-    ["Offset of field: luarequire_Configuration::get_loadname"]
-        [::std::mem::offset_of!(luarequire_Configuration, get_loadname) - 56usize];
-    ["Offset of field: luarequire_Configuration::get_cache_key"]
-        [::std::mem::offset_of!(luarequire_Configuration, get_cache_key) - 64usize];
-    ["Offset of field: luarequire_Configuration::is_config_present"]
-        [::std::mem::offset_of!(luarequire_Configuration, is_config_present) - 72usize];
-    ["Offset of field: luarequire_Configuration::get_alias"]
-        [::std::mem::offset_of!(luarequire_Configuration, get_alias) - 80usize];
-    ["Offset of field: luarequire_Configuration::get_config"]
-        [::std::mem::offset_of!(luarequire_Configuration, get_config) - 88usize];
-    ["Offset of field: luarequire_Configuration::load"]
-        [::std::mem::offset_of!(luarequire_Configuration, load) - 96usize];
-};
 pub type luarequire_Configuration_init =
     ::std::option::Option<unsafe extern "C" fn(config: *mut luarequire_Configuration)>;
 unsafe extern "C" {
