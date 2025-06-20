@@ -2,11 +2,26 @@ using Microsoft.CodeAnalysis;
 
 namespace Luau.SourceGenerator;
 
-internal record CreateFunctionContext
+internal class CreateFunctionContext : IEquatable<CreateFunctionContext>
 {
     public CreateFunctionMethod? Method { get; set; }
     public required DiagnosticReporter DiagnosticReporter { get; init; }
     public required SemanticModel Model { get; init; }
+
+    public bool Equals(CreateFunctionContext other)
+    {
+        return Method == other.Method;
+    }
+
+    public override bool Equals(object obj)
+    {
+        return obj is CreateFunctionContext ctx && Equals(ctx);
+    }
+
+    public override int GetHashCode()
+    {
+        return Method == null ? 0 : Method.GetHashCode();
+    }
 }
 
 internal class CreateFunctionMethod : IEquatable<CreateFunctionMethod>
