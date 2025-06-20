@@ -55,13 +55,21 @@ public static class DiagnosticDescriptors
 
     public static DiagnosticDescriptor MustBePartial { get; } = Create(
         1,
-        "LuauObject type must be partial.");
+        "LuauLibrary type must be partial.");
+
+    public static readonly DiagnosticDescriptor NestedNotAllowed = Create(
+        2,
+        "LuauLibrary type must not be nested");
+
+    public static readonly DiagnosticDescriptor AbstractNotAllowed = Create(
+        3,
+        "LuauLibrary type must not be abstract");
 
     public static DiagnosticDescriptor DefinedInOtherProject { get; } = Create(
-        2,
-        "LuauSharp cannot register type/method in another project outside the SourceGenerator referenced project.");
+        10,
+        "Cannot register type/method in another project outside the SourceGenerator referenced project.");
 
     public static DiagnosticDescriptor ArgumentMustBeMethodGroupOrLambda { get; } = Create(
-        3,
+        11,
         "The argument to CreateFunction must be a lambda expression or a method group.");
 }

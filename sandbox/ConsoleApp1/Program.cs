@@ -4,6 +4,7 @@ using Luau;
 using var state = LuauState.Create();
 state.OpenLibraries();
 state.OpenRequireLibrary(new FileSystemLuauRequirer());
+state.OpenLibrary<Commands>();
 
 state["wait"] = state.CreateFunction(async (double seconds, CancellationToken ct) =>
 {
@@ -24,4 +25,23 @@ for (int i = 0; i < 10; i++)
 static string GetCallerFilePath([CallerFilePath] string callerFilePath = "")
 {
     return callerFilePath;
+}
+
+[LuauLibrary("cmd")]
+partial class Commands
+{
+    [LuauMember]
+    public double foo;
+
+    [LuauMember]
+    public void Hello()
+    {
+        Console.WriteLine("Hello!");
+    }
+
+    [LuauMember("echo")]
+    public static void Echo(string value)
+    {
+        Console.WriteLine(value);
+    }
 }
