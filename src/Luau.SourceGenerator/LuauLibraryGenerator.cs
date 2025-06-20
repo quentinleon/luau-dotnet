@@ -4,17 +4,16 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Luau.SourceGenerator;
 
-internal class LuauLibraryContext
+internal record LuauLibraryContext
 {
-    public required DiagnosticReporter DiagnosticReporter { get; init; }
-    public required SemanticModel Model { get; init; }
+    public required IgnoreEquality<DiagnosticReporter> DiagnosticReporter { get; init; }
     public required string LibraryName { get; init; }
     public required string TypeName { get; init; }
     public required string FullTypeName { get; init; }
     public required string? Namespace { get; init; }
     public required string DeclarationKeyword { get; init; }
-    public required LuauLibraryProperty[] Properties { get; init; }
-    public required LuauLibraryMethod[] Methods { get; init; }
+    public required EquatableArray<LuauLibraryProperty> Properties { get; init; }
+    public required EquatableArray<LuauLibraryMethod> Methods { get; init; }
 }
 
 internal record LuauLibraryProperty
@@ -27,11 +26,11 @@ internal record LuauLibraryProperty
     public required bool IsStatic { get; init; }
 }
 
-internal class LuauLibraryMethod
+internal record LuauLibraryMethod
 {
     public required string LuauMemberName { get; init; }
     public required string Name { get; init; }
-    public required LuauLibraryMethodParameter[] Parameters { get; init; }
+    public required EquatableArray<LuauLibraryMethodParameter> Parameters { get; init; }
     public required string ReturnTypeName { get; init; }
     public required bool HasReturnValue { get; init; }
     public required bool IsAsync { get; init; }
@@ -152,7 +151,6 @@ public class LuauLibraryGenerator : IIncrementalGenerator
 
                     return new LuauLibraryContext
                     {
-                        Model = context.SemanticModel,
                         DiagnosticReporter = reporter,
                         FullTypeName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                         LibraryName = context.Attributes[0].ConstructorArguments[0].Value!.ToString(),
@@ -170,7 +168,6 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                     return new LuauLibraryContext
                     {
                         DiagnosticReporter = reporter,
-                        Model = context.SemanticModel,
                         LibraryName = "",
                         Namespace = null,
                         FullTypeName = "",
@@ -186,9 +183,9 @@ public class LuauLibraryGenerator : IIncrementalGenerator
 
     static void Emit(SourceProductionContext context, LuauLibraryContext library)
     {
-        if (library.DiagnosticReporter.HasDiagnostics)
+        if (library.DiagnosticReporter.Value.HasDiagnostics)
         {
-            library.DiagnosticReporter.ReportToContext(context);
+            library.DiagnosticReporter.Value.ReportToContext(context);
             return;
         }
 
