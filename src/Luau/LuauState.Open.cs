@@ -85,4 +85,22 @@ unsafe partial class LuauState
         disposables.Add(new GCHandleDisposable(handle));
         luaopen_require(l, LuaRequireHelper.Initialize, GCHandle.ToIntPtr(handle).ToPointer());
     }
+
+    public void OpenLibrary<T>(T library)
+        where T : ILuauLibrary
+    {
+        ThrowIfDisposed();
+        library.RegisterTo(this);
+
+        if (library is IDisposable disposable)
+        {
+            disposables.Add(disposable);
+        }
+    }
+
+    public void OpenLibrary<T>()
+        where T : ILuauLibrary, new()
+    {
+        OpenLibrary(new T());
+    }
 }
