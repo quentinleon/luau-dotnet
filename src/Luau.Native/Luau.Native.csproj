@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <LangVersion>13</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- NuGet Packaging -->
+    <PackageId>Luau.Native</PackageId>
+    <PackageTags>luau</PackageTags>
+    <Description>Luau for .NET low-level bindings</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +24,11 @@
       PackagePath="runtimes\osx-x64\native\" CopyToOutputDirectory="Always" />
     <None Include="runtimes\win-x64\native\luau.dll" Pack="true"
       PackagePath="runtimes\win-x64\native\" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="README.md" />
+    <EmbeddedResource Include="..\..\LICENSE" />
   </ItemGroup>
 
   <!-- Copy files to Unity project -->

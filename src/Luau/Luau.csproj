@@ -1,16 +1,21 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\Luau.Native\Luau.Native.csproj" />
-  </ItemGroup>
-
   <PropertyGroup>
     <TargetFrameworks>net9.0;net8.0;netstandard2.1</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>13</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- NuGet Packaging -->
+    <PackageId>Luau</PackageId>
+    <PackageTags>luau</PackageTags>
+    <Description>High-level Luau bindings for .NET and Unity</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Luau.Native\Luau.Native.csproj" />
+  </ItemGroup>
 
   <ItemGroup Condition="$(TargetFramework) == 'netstandard2.1'">
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
