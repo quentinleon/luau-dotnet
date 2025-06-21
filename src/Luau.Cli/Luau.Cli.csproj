@@ -10,6 +10,11 @@
     <LangVersion>13</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- NuGet Packaging -->
+    <PackageId>luau-cli</PackageId>
+    <PackageTags>luau;cli</PackageTags>
+    <Description>Luau for .NET CLI tool</Description>
   </PropertyGroup>
 
   <ItemGroup>

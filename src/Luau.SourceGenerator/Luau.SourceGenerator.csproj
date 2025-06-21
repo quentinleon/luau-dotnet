@@ -5,8 +5,14 @@
     <LangVersion>13</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
     <IsRoslynComponent>true</IsRoslynComponent>
     <AnalyzerLanguage>cs</AnalyzerLanguage>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <IncludeSymbols>false</IncludeSymbols>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +25,7 @@
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs"
       Visible="false" />
 
-    <!-- <EmbeddedResource Include="..\..\LICENSE" /> -->
+    <EmbeddedResource Include="..\..\LICENSE" />
   </ItemGroup>
 
   <!-- Copy files to Unity project -->

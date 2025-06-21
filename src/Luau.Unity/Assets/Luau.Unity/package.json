@@ -2,7 +2,7 @@
     "name": "com.nuskey.luau.unity",
     "version": "0.4.2",
     "displayName": "Luau.Unity",
-    "description": "Luau plugin for Unity",
+    "description": "High-level Luau bindings for .NET and Unity",
     "author": {
         "name": "nuskey"
     }
