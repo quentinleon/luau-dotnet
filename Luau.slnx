@@ -3,6 +3,7 @@
     <Project Path="sandbox/ConsoleApp1/ConsoleApp1.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Luau.Cli/Luau.Cli.csproj" />
     <Project Path="src/Luau.Native/Luau.Native.csproj" />
     <Project Path="src/Luau.SourceGenerator/Luau.SourceGenerator.csproj" />
     <Project Path="src/Luau/Luau.csproj" />
