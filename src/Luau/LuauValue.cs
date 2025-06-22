@@ -193,6 +193,30 @@ public readonly struct LuauValue : IEquatable<LuauValue>
                     result = Unsafe.As<float, T>(ref r);
                     return true;
                 }
+                if (typeof(T) == typeof(int) && MathEx.IsInteger(value.NumberValue))
+                {
+                    var r = (int)value.NumberValue;
+                    result = Unsafe.As<int, T>(ref r);
+                    return true;
+                }
+                if (typeof(T) == typeof(long) && MathEx.IsInteger(value.NumberValue))
+                {
+                    var r = (long)value.NumberValue;
+                    result = Unsafe.As<long, T>(ref r);
+                    return true;
+                }
+                if (typeof(T) == typeof(uint) && MathEx.IsInteger(value.NumberValue) && value.NumberValue >= 0)
+                {
+                    var r = (uint)value.NumberValue;
+                    result = Unsafe.As<uint, T>(ref r);
+                    return true;
+                }
+                if (typeof(T) == typeof(ulong) && MathEx.IsInteger(value.NumberValue) && value.NumberValue >= 0)
+                {
+                    var r = (ulong)value.NumberValue;
+                    result = Unsafe.As<ulong, T>(ref r);
+                    return true;
+                }
                 if (typeof(T) == typeof(object))
                 {
                     var r = (object)value.NumberValue;
