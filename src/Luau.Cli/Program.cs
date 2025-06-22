@@ -23,7 +23,19 @@ static class Commands
 {
     public static async Task<int> Repl(string[] args)
     {
-        return await RunProcessAsync("luau", args);
+        var status = await RunProcessAsync("luau", args);
+
+        if (args.Any(x => x is "-h" or "--help"))
+        {
+            Console.WriteLine();
+            Console.WriteLine("Commands:");
+            Console.WriteLine("  analyze  Run static analysis (including type checking and linting).");
+            Console.WriteLine("  ast      Outputs the abstract syntax tree of a Luau script as json.");
+            Console.WriteLine("  compile  Dump the bytecode of a Luau script.");
+            Console.WriteLine("  dluau    Analyzes C# files in the project and generates .d.luau file.");
+        }
+
+        return status;
     }
 
     public static async Task<int> Analyze(string[] args)
