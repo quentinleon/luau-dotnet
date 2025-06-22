@@ -59,19 +59,19 @@ public class LuauLibraryGenerator : IIncrementalGenerator
 
                     if (!syntax.Modifiers.Any(x => x.IsKind(SyntaxKind.PartialKeyword)))
                     {
-                        reporter.ReportDiagnostic(DiagnosticDescriptors.MustBePartial, syntax.GetLocation());
+                        reporter.ReportDiagnostic(DiagnosticDescriptors.MustBePartial, syntax.Identifier.GetLocation());
                         goto ERROR;
                     }
 
                     if (syntax.Parent is TypeDeclarationSyntax)
                     {
-                        reporter.ReportDiagnostic(DiagnosticDescriptors.NestedNotAllowed, syntax.GetLocation());
+                        reporter.ReportDiagnostic(DiagnosticDescriptors.NestedNotAllowed, syntax.Identifier.GetLocation());
                         goto ERROR;
                     }
 
                     if (symbol.IsAbstract)
                     {
-                        reporter.ReportDiagnostic(DiagnosticDescriptors.AbstractNotAllowed, syntax.GetLocation());
+                        reporter.ReportDiagnostic(DiagnosticDescriptors.AbstractNotAllowed, syntax.Identifier.GetLocation());
                         goto ERROR;
                     }
 
