@@ -27,7 +27,7 @@ internal unsafe static class LuaRequireHelper
         var requirer = (LuauRequirer)GCHandle.FromIntPtr((nint)ctx).Target!;
         try
         {
-            return requirer.IsRequireAllowed(LuauState.GetCachedState(L), Marshal.PtrToStringAuto((nint)requirer_chunkname) ?? "");
+            return requirer.IsRequireAllowed(LuauState.GetCachedState(L), Marshal.PtrToStringAnsi((nint)requirer_chunkname) ?? "");
         }
         catch (Exception ex)
         {
@@ -41,7 +41,7 @@ internal unsafe static class LuaRequireHelper
         var requirer = (LuauRequirer)GCHandle.FromIntPtr((nint)ctx).Target!;
         try
         {
-            return (luarequire_NavigateResult)requirer.Reset(LuauState.GetCachedState(L), Marshal.PtrToStringAuto((nint)requirer_chunkname) ?? "");
+            return (luarequire_NavigateResult)requirer.Reset(LuauState.GetCachedState(L), Marshal.PtrToStringAnsi((nint)requirer_chunkname) ?? "");
         }
         catch (Exception ex)
         {
@@ -55,7 +55,7 @@ internal unsafe static class LuaRequireHelper
         var requirer = (LuauRequirer)GCHandle.FromIntPtr((nint)ctx).Target!;
         try
         {
-            return (luarequire_NavigateResult)requirer.JumpToAlias(LuauState.GetCachedState(L), Marshal.PtrToStringAuto((nint)path) ?? "");
+            return (luarequire_NavigateResult)requirer.JumpToAlias(LuauState.GetCachedState(L), Marshal.PtrToStringAnsi((nint)path) ?? "");
         }
         catch (Exception ex)
         {
@@ -83,7 +83,7 @@ internal unsafe static class LuaRequireHelper
         var requirer = (LuauRequirer)GCHandle.FromIntPtr((nint)ctx).Target!;
         try
         {
-            return (luarequire_NavigateResult)requirer.MoveToChild(LuauState.GetCachedState(L), Marshal.PtrToStringAuto((nint)name) ?? "");
+            return (luarequire_NavigateResult)requirer.MoveToChild(LuauState.GetCachedState(L), Marshal.PtrToStringAnsi((nint)name) ?? "");
         }
         catch (Exception ex)
         {
@@ -215,9 +215,9 @@ internal unsafe static class LuaRequireHelper
     {
         var requirer = (LuauRequirer)GCHandle.FromIntPtr((nint)ctx).Target!;
 
-        var filePath = Marshal.PtrToStringAuto((IntPtr)path)!;
-        var chunkName = Marshal.PtrToStringAuto((IntPtr)chunkname)!;
-        var loadName = Marshal.PtrToStringAuto((IntPtr)loadname)!;
+        var filePath = Marshal.PtrToStringAnsi((IntPtr)path)!;
+        var chunkName = Marshal.PtrToStringAnsi((IntPtr)chunkname)!;
+        var loadName = Marshal.PtrToStringAnsi((IntPtr)loadname)!;
 
         var state = LuauState.GetCachedState(L);
 
