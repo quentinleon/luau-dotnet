@@ -595,7 +595,71 @@ TODO:
 
 ## CLIツール
 
-TODO:
+Luau for .NETはREPLや型チェックなどを実行可能なCLIツールを提供しています。
+
+```ps1
+dotnet tool install --global luau-cli
+```
+
+これを用いることで、Luauが提供しているREPLや型チェックなどのツールを`dotnet luau`コマンドから呼び出すことが可能になります。
+
+```ps1
+$ dotnet luau
+> 1 + 2
+3
+```
+
+```ps1
+$ dotnet luau analyze test.luau
+test.luau(1,1): TypeError: Type 'number' could not be converted into 'string'
+
+$ dotnet luau ast test.luau
+{"root":{"type":"AstStatBlock","location":"0,0 - 0,12","hasEnd":true,"body":[{"type":"AstStatReturn","location":"0,0 - 0,12","list":[{"type":"AstExprBinary","location":"0,7 - 0,12","op":"Add","left":{"type":"AstExprConstantNumber","location":"0,7 - 0,8","value":1},"right":{"type":"AstExprConstantNumber","location":"0,11 - 0,12","value":2}}]}]},"commentLocations":[]}%       
+
+$ dotnet luau compile test.luau
+Function 0 (??):
+    1: return 1 + 2
+LOADN R0 3
+RETURN R0 1
+```
+
+また、Luau for .NET向けの拡張として、`dluau`コマンドが追加されています。これを用いて、プロジェクト内で定義された`[LuauLibrary]`を元に型定義ファイルを生成することができます。
+
+```cs
+[LuauLibrary("cmd")]
+partial class Commands
+{
+    [LuauMember]
+    public double foo;
+
+    [LuauMember]
+    public void Hello()
+    {
+        Console.WriteLine("Hello!");
+    }
+
+    [LuauMember("echo")]
+    public static void Echo(string value)
+    {
+        Console.WriteLine(value);
+    }
+}
+```
+
+```ps1
+$ dotnet luau dluau Program.cs -o libs.d.luau
+```
+
+```lua
+-- libs.d.luau
+
+declare cmd:
+{
+    foo: number,
+    Hello: () -> (),
+    echo: (value: string) -> (),
+}
+```
 
 ## ライセンス
 

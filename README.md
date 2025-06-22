@@ -595,7 +595,71 @@ TODO:
 
 ## CLI Tools
 
-TODO:
+Luau for .NET provides a CLI tool that can perform REPL, type checking, and more.
+
+```ps1
+dotnet tool install --global luau-cli
+```
+
+By using this, you can call tools provided by Luau, such as REPL and type checking, from the `dotnet luau` command.
+
+```ps1
+$ dotnet luau
+> 1 + 2
+3
+```
+
+```ps1
+$ dotnet luau analyze test.luau
+test.luau(1,1): TypeError: Type 'number' could not be converted into 'string'
+
+$ dotnet luau ast test.luau
+{"root":{"type":"AstStatBlock","location":"0,0 - 0,12","hasEnd":true,"body":[{"type":"AstStatReturn","location":"0,0 - 0,12","list":[{"type":"AstExprBinary","location":"0,7 - 0,12","op":"Add","left":{"type":"AstExprConstantNumber","location":"0,7 - 0,8","value":1},"right":{"type":"AstExprConstantNumber","location":"0,11 - 0,12","value":2}}]}]},"commentLocations":[]}%       
+
+$ dotnet luau compile test.luau
+Function 0 (??):
+    1: return 1 + 2
+LOADN R0 3
+RETURN R0 1
+```
+
+Also, the `dluau` command has been added as an extension for Luau for .NET. Using this command, you can generate a type definition file based on the `[LuauLibrary]` defined in the project.
+
+```cs
+[LuauLibrary("cmd")]
+partial class Commands
+{
+    [LuauMember]
+    public double foo;
+
+    [LuauMember]
+    public void Hello()
+    {
+        Console.WriteLine("Hello!");
+    }
+
+    [LuauMember("echo")]
+    public static void Echo(string value)
+    {
+        Console.WriteLine(value);
+    }
+}
+```
+
+```ps1
+$ dotnet luau dluau Program.cs -o libs.d.luau
+```
+
+```lua
+-- libs.d.luau
+
+declare cmd:
+{
+    foo: number,
+    Hello: () -> (),
+    echo: (value: string) -> (),
+}
+```
 
 ## License
 
