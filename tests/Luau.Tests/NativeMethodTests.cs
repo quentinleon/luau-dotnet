@@ -42,6 +42,6 @@ public unsafe class NativeMethodTests
         luaL_pushresult(&b);
 
         var ret = lua_tostring(l, -1);
-        Assert.Equal("12345hello", Marshal.PtrToStringAuto((IntPtr)ret));
+        Assert.Equal("12345hello", Marshal.PtrToStringAnsi((IntPtr)ret));
     }
 }
