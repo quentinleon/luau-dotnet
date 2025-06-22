@@ -257,10 +257,17 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                     {
                         foreach (var property in library.Properties)
                         {
-                            using (builder.BeginIndent($"case \"{property.LuauMemberName}\":"))
+                            if (property.HasGetter)
                             {
-                                builder.AppendLine($"state.Push(state.CreateFrom({(property.IsStatic ? library.FullTypeName : "this")}.{property.Name}));");
-                                builder.AppendLine("break;");
+                                using (builder.BeginIndent($"case \"{property.LuauMemberName}\":"))
+                                {
+                                    builder.AppendLine($"state.Push(state.CreateFrom({(property.IsStatic ? library.FullTypeName : "this")}.{property.Name}));");
+                                    builder.AppendLine("break;");
+                                }
+                            }
+                            else
+                            {
+                                builder.AppendLine("throw new global::Luau.LuauException($\"cannot get set-only property '{key}'\");");
                             }
                         }
 
@@ -298,8 +305,15 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                         {
                             using (builder.BeginIndent($"case \"{property.LuauMemberName}\":"))
                             {
-                                builder.AppendLine($"{(property.IsStatic ? library.FullTypeName : "this")}.{property.Name} = value.Read<{property.FullTypeName}>();");
-                                builder.AppendLine("break;");
+                                if (property.HasSetter)
+                                {
+                                    builder.AppendLine($"{(property.IsStatic ? library.FullTypeName : "this")}.{property.Name} = value.Read<{property.FullTypeName}>();");
+                                    builder.AppendLine("break;");
+                                }
+                                else
+                                {
+                                    builder.AppendLine("throw new global::Luau.LuauException($\"cannot set readonly property '{key}'\");");
+                                }
                             }
                         }
 
