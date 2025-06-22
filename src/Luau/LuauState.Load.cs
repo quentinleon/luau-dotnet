@@ -6,10 +6,16 @@ namespace Luau;
 
 public partial class LuauState
 {
-    public unsafe void Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName = default)
+    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName = default)
     {
         ThrowIfDisposed();
+        LoadInternal(bytecode, chunkName);
+        var func = ToFunction(-1);
+        return func;
+    }
 
+    unsafe void LoadInternal(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName = default)
+    {
         var bytecodeSize = (nuint)(bytecode.Length * sizeof(byte));
 
         int status;

@@ -8,28 +8,28 @@ partial class LuauState
     public int Execute(ReadOnlySpan<byte> bytecode, Span<LuauValue> destination)
     {
         using var runner = ScriptRunner.Rent();
-        Load(bytecode);
+        LoadInternal(bytecode);
         return runner.Run(this, 0, destination);
     }
 
     public LuauValue[] Execute(ReadOnlySpan<byte> bytecode)
     {
         using var runner = ScriptRunner.Rent();
-        Load(bytecode);
+        LoadInternal(bytecode);
         return runner.Run(this, 0);
     }
 
     public ValueTask<int> ExecuteAsync(ReadOnlyMemory<byte> bytecode, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
     {
         using var runner = ScriptRunner.Rent();
-        Load(bytecode.Span);
+        LoadInternal(bytecode.Span);
         return runner.RunAsync(this, 0, destination, cancellationToken);
     }
 
     public ValueTask<LuauValue[]> ExecuteAsync(ReadOnlyMemory<byte> bytecode, CancellationToken cancellationToken = default)
     {
         using var runner = ScriptRunner.Rent();
-        Load(bytecode.Span);
+        LoadInternal(bytecode.Span);
         return runner.RunAsync(this, 0, cancellationToken);
     }
 
@@ -103,7 +103,7 @@ partial class LuauState
     {
         using var writer = new ArrayPoolBufferWriter(512);
         LuauCompiler.Compile(writer, utf8Source, options);
-        state.Load(writer.WrittenSpan, default);
+        state.LoadInternal(writer.WrittenSpan, default);
     }
 
     static void CompileAndLoadString(LuauState state, ReadOnlySpan<char> source, LuauCompileOptions? options)
