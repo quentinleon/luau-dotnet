@@ -7,7 +7,7 @@
 [![Releases](https://img.shields.io/github/release/nuskey8/Luau.svg)](https://github.com/AnnulusGames/Lua-CSharp/releases)
 [![license](https://img.shields.io/badge/LICENSE-MIT-green.svg)](LICENSE)
 
-[English]((./README.md)) | 日本語
+[English](./README.md) | 日本語
 
 ## 概要
 
