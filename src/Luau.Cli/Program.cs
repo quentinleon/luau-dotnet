@@ -1,36 +1,42 @@
 ﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
-using ConsoleAppFramework;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ZLinq;
 
-var app = ConsoleApp.Create();
-app.Add("", Commands.Repl);
-app.Add("analyze", Commands.Analyze);
-app.Add("ast", Commands.Ast);
-app.Add("compile", Commands.Compile);
-app.Add("dluau", Commands.GenerateLuauDeclarationFile);
-app.Run(args);
+if (args.Length == 0)
+{
+    return await Commands.Repl([]);
+}
+
+var command = args[0];
+return command switch
+{
+    "analyze" => await Commands.Analyze(args),
+    "ast" => await Commands.Ast(args),
+    "compile" => await Commands.Compile(args),
+    "dluau" => Commands.Dluau(args.AsSpan(1).ToArray()),
+    _ => await Commands.Repl(args),
+};
 
 static class Commands
 {
-    public static async Task<int> Repl([Argument] params string[] args)
+    public static async Task<int> Repl(string[] args)
     {
         return await RunProcessAsync("luau", args);
     }
 
-    public static async Task<int> Analyze([Argument] params string[] args)
+    public static async Task<int> Analyze(string[] args)
     {
         return await RunProcessAsync("luau-analyze", args);
     }
 
-    public static async Task<int> Ast([Argument] params string[] args)
+    public static async Task<int> Ast(string[] args)
     {
         return await RunProcessAsync("luau-ast", args);
     }
 
-    public static async Task<int> Compile([Argument] params string[] args)
+    public static async Task<int> Compile(string[] args)
     {
         return await RunProcessAsync("luau-compile", args);
     }
@@ -78,8 +84,44 @@ static class Commands
     /// <param name="path">The path of the file or directory</param>
     /// <param name="output">-o|Output path</param>
     /// <returns></returns>
-    public static int GenerateLuauDeclarationFile([Argument] string path, string? output = null)
+    public static int Dluau(string[] args)
     {
+        if (args.Any(x => x is "-h" or "--help"))
+        {
+            Console.WriteLine("Usage: dotnet luau dluau [path] [options]");
+            Console.WriteLine();
+            Console.WriteLine("Analyzes C# files in the project and generates .d.luau file");
+            Console.WriteLine();
+            Console.WriteLine("Available options:");
+            Console.WriteLine("  -h, --help: Display this usage message.");
+            Console.WriteLine("  -o, --output: output path");
+            return 0;
+        }
+
+        if (args.Length == 0)
+        {
+            Console.WriteLine("Required argument 'path' was not specified.");
+            return 1;
+        }
+
+        var path = args[0];
+
+        string? output = null;
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] is "-o" or "--output")
+            {
+                if (i == args.Length - 1)
+                {
+                    Console.WriteLine("Argument 'output' was not specified.");
+                    return 1;
+                }
+
+                output = args[i + 1];
+                i++;
+            }
+        }
+
         var outputPath = output ?? Path.Combine(
             Path.GetDirectoryName(path)!,
             Path.GetFileNameWithoutExtension(path) + ".d.luau");
