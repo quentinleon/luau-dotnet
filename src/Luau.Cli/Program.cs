@@ -12,9 +12,9 @@ if (args.Length == 0)
 var command = args[0];
 return command switch
 {
-    "analyze" => await Commands.Analyze(args),
-    "ast" => await Commands.Ast(args),
-    "compile" => await Commands.Compile(args),
+    "analyze" => await Commands.Analyze(args.AsSpan(1).ToArray()),
+    "ast" => await Commands.Ast(args.AsSpan(1).ToArray()),
+    "compile" => await Commands.Compile(args.AsSpan(1).ToArray()),
     "dluau" => Commands.Dluau(args.AsSpan(1).ToArray()),
     _ => await Commands.Repl(args),
 };
@@ -78,12 +78,6 @@ static class Commands
         return process.ExitCode;
     }
 
-    /// <summary>
-    /// Analyzes C# files in the project and generates .d.luau file
-    /// </summary>
-    /// <param name="path">The path of the file or directory</param>
-    /// <param name="output">-o|Output path</param>
-    /// <returns></returns>
     public static int Dluau(string[] args)
     {
         if (args.Any(x => x is "-h" or "--help"))
