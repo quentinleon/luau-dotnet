@@ -133,7 +133,7 @@ public unsafe partial class LuauState
                 var vecPtr = lua_tovector(l, index);
                 return LuauValue.FromVector(new(vecPtr[0], vecPtr[1], vecPtr[2]));
             case lua_Type.LUA_TSTRING:
-                var str = Marshal.PtrToStringUTF8((IntPtr)lua_tostring(l, index));
+                var str = Marshal.PtrToStringAuto((IntPtr)lua_tostring(l, index));
                 return LuauValue.FromString(str!);
             case lua_Type.LUA_TTABLE:
                 var table = new LuauTable(this, lua_ref(l, index));
@@ -231,7 +231,7 @@ public unsafe partial class LuauState
     public string ToString(int index)
     {
         ThrowIfDisposed();
-        return Marshal.PtrToStringUTF8((IntPtr)lua_tostring(l, index))!;
+        return Marshal.PtrToStringAuto((IntPtr)lua_tostring(l, index))!;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
