@@ -10,6 +10,19 @@ namespace Luau;
 
 public unsafe partial class LuauState
 {
+    public void Call(int numOfargs, int numOfresults)
+    {
+        ThrowIfDisposed();
+        var status = lua_pcall(l, numOfargs, numOfresults, 0);
+
+        if (status != (int)lua_Status.LUA_OK)
+        {
+            var message = ToString(-1);
+            lua_pop(l, 1);
+            throw new LuauException(message);
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetTop()
     {
