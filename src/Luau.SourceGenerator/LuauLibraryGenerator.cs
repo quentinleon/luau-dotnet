@@ -338,6 +338,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
 
                 builder.AppendLine("state.SetMetatable(table, metatable);");
                 builder.AppendLine($"state[\"{library.LibraryName}\"] = table;");
+                builder.AppendLine("state.PushTable(table);");
             }
         }
 
