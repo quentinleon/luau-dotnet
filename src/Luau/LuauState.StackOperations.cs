@@ -133,7 +133,7 @@ public unsafe partial class LuauState
                 var vecPtr = lua_tovector(l, index);
                 return LuauValue.FromVector(new(vecPtr[0], vecPtr[1], vecPtr[2]));
             case lua_Type.LUA_TSTRING:
-                var str = Marshal.PtrToStringUTF8((IntPtr)lua_tostring(l, index));
+                var str = Marshal.PtrToStringAuto((IntPtr)lua_tostring(l, index));
                 return LuauValue.FromString(str!);
             case lua_Type.LUA_TTABLE:
                 var table = new LuauTable(this, lua_ref(l, index));
@@ -231,7 +231,7 @@ public unsafe partial class LuauState
     public string ToString(int index)
     {
         ThrowIfDisposed();
-        return Marshal.PtrToStringUTF8((IntPtr)lua_tostring(l, index))!;
+        return Marshal.PtrToStringAuto((IntPtr)lua_tostring(l, index))!;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -389,11 +389,12 @@ public unsafe partial class LuauState
         {
             var utf8Count = Encoding.UTF8.GetBytes(value, buffer);
 #if NET6_0_OR_GREATER
-            var stringPtr = (byte*)NativeMemory.Alloc((nuint)utf8Count);
+            var stringPtr = (byte*)NativeMemory.Alloc((nuint)(utf8Count + 1));
 #else
-            var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Count).ToPointer();
+            var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Count + 1).ToPointer();
 #endif
             buffer.AsSpan(0, utf8Count).CopyTo(new Span<byte>(stringPtr, utf8Count));
+            stringPtr[utf8Count] = 0;
             lua_pushstring(l, stringPtr);
         }
         finally
