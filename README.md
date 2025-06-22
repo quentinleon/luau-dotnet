@@ -100,9 +100,9 @@ Console.WriteLine(results[0]); // 2
 > [!WARNING]
 > `LuauState` is not thread-safe. Do not access it from multiple threads simultaneously.
 
-## LuaValue
+## LuauValue
 
-Values in Lua scripts are represented by the `LuaValue` type. Values of `LuaValue` can be read using `TryRead<T>(out T value)` or `Read<T>()`.
+Values in Luau scripts are represented by the `LuauValue` type. Values of `LuauValue` can be read using `TryRead<T>(out T value)` or `Read<T>()`.
 
 ```cs
 var results = state.DoString("return 1 + 1");
@@ -120,7 +120,7 @@ Console.WriteLine(results[0].Type); // string
 
 The correspondence between Lua and C# types is shown below.
 
-| Lua             | C#                        |
+| Luau             | C#                        |
 | --------------- | ------------------------- |
 | `nil`           | `LuaValue.Nil`            |
 | `boolean`       | `bool`                    |

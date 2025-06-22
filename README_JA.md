@@ -100,9 +100,9 @@ Console.WriteLine(results[0]); // 2
 > [!WARNING]
 > `LuauState`はスレッドセーフではありません。同時に複数のスレッドからアクセスしないでください。
 
-## LuaValue
+## LuauValue
 
-Luaスクリプト上の値は`LuaValue`型で表現されます。`LuaValue`の値は`TryRead<T>(out T value)`または`Read<T>()`で読み取ることが可能です。
+Luaスクリプト上の値は`LuauValue`型で表現されます。`LuauValue`の値は`TryRead<T>(out T value)`または`Read<T>()`で読み取ることが可能です。
 
 ```cs
 var results = state.DoString("return 1 + 1");
@@ -118,9 +118,9 @@ var results = state.DoString("return 'hello'");
 Console.WriteLine(results[0].Type); // string
 ```
 
-Lua-C#間の型の対応を以下に示します。
+Luau-C#間の型の対応を以下に示します。
 
-| Lua             | C#                        |
+| Luau             | C#                        |
 | --------------- | ------------------------- |
 | `nil`           | `LuaValue.Nil`            |
 | `boolean`       | `bool`                    |
