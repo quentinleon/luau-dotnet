@@ -389,11 +389,12 @@ public unsafe partial class LuauState
         {
             var utf8Count = Encoding.UTF8.GetBytes(value, buffer);
 #if NET6_0_OR_GREATER
-            var stringPtr = (byte*)NativeMemory.Alloc((nuint)utf8Count);
+            var stringPtr = (byte*)NativeMemory.Alloc((nuint)(utf8Count + 1));
 #else
-            var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Count).ToPointer();
+            var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Count + 1).ToPointer();
 #endif
             buffer.AsSpan(0, utf8Count).CopyTo(new Span<byte>(stringPtr, utf8Count));
+            stringPtr[utf8Count] = 0;
             lua_pushstring(l, stringPtr);
         }
         finally
