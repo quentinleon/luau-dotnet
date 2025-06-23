@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Luau;
 
@@ -47,7 +48,7 @@ public abstract class LuauRequirer
     }
 
     protected abstract void LoadModule(LuauState state, string fullPath, string requireArgument);
-    protected abstract bool TryGetAliasPath(string alias, out string path);
+    protected abstract bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string? path);
 
     protected virtual string GetCacheKey(string path) => path;
     protected virtual void OnError(Exception ex)

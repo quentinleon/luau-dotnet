@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
@@ -63,7 +64,7 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         return Path.GetFullPath(targetPath);
     }
 
-    protected override bool TryGetAliasPath(string alias, out string path)
+    protected override bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string? path)
     {
         if (aliases == null)
         {
