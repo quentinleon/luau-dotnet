@@ -1,5 +1,6 @@
 #if LUAU_UNITY_ADDRESSABLES
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using UnityEngine.AddressableAssets;
 
@@ -8,6 +9,8 @@ namespace Luau.Unity
     public sealed class AddressablesLuauRequirer : LuauRequirer
     {
         public static readonly AddressablesLuauRequirer Default = new();
+
+        public IDictionary<string, string> Aliases { get; init; } = new Dictionary<string, string>();
 
         protected override bool TryLoadModule(LuauState state, string fullPath, string requireArgument)
         {
@@ -35,8 +38,7 @@ namespace Luau.Unity
 
         protected override bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string path)
         {
-            path = "";
-            return true;
+            return Aliases.TryGetValue(alias, out path);
         }
     }
 }

@@ -10,7 +10,13 @@ public class Sandbox : MonoBehaviour
     {
         using var state = LuauState.Create();
         state.OpenLibraries();
-        state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
+        state.OpenRequireLibrary(new ResourcesLuauRequirer
+        {
+            Aliases =
+            {
+                ["Resources"] = "."
+            }
+        });
 
         state["print"] = state.CreateFunction(state =>
         {

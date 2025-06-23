@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Luau.Unity
@@ -5,6 +6,8 @@ namespace Luau.Unity
     public sealed class ResourcesLuauRequirer : LuauRequirer
     {
         public static readonly ResourcesLuauRequirer Default = new();
+
+        public IDictionary<string, string> Aliases { get; init; } = new Dictionary<string, string>();
 
         protected override bool TryLoadModule(LuauState state, string fullPath, string requireArgument)
         {
@@ -31,8 +34,7 @@ namespace Luau.Unity
 
         protected override bool TryGetAliasPath(string alias, out string path)
         {
-            path = "";
-            return true;
+            return Aliases.TryGetValue(alias, out path);
         }
     }
 }
