@@ -1,4 +1,7 @@
 {
 	"languageMode": "nonstrict",
-	"lint": { "*": true, "FunctionUnused": false }
+	"lint": { "*": true, "FunctionUnused": false },
+	"aliases": {
+		"src": ""
+	}
 }

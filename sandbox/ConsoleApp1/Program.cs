@@ -5,7 +5,7 @@ using var state = LuauState.Create();
 state.OpenLibraries();
 state.OpenRequireLibrary(new FileSystemLuauRequirer
 {
-    WorkingDirectory = GetCallerFilePath(),
+    WorkingDirectory = Directory.GetParent(GetCallerFilePath())!.FullName,
 });
 state.OpenLibrary<Commands>();
 

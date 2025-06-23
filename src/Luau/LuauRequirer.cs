@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Luau;
 
 public abstract class LuauRequirer
@@ -21,16 +23,19 @@ public abstract class LuauRequirer
                 cacheTable = cache.Read<LuauTable>();
             }
 
-            if (cacheTable.TryGetValue(GetCacheKey(path), out var result))
+            var fullPath = AliasToPath(path);
+            var cacheKey = GetCacheKey(fullPath);
+
+            if (cacheTable.TryGetValue(cacheKey, out var result))
             {
                 state.Push(result);
                 return true;
             }
 
             var thread = state.CreateThread();
-            LoadModule(thread, path);
+            LoadModule(thread, fullPath);
             thread.XMove(state, 1);
-            cacheTable.Add(GetCacheKey(path), state.ToValue(-1));
+            cacheTable.Add(cacheKey, state.ToValue(-1));
             return true;
         }
         catch (Exception ex)
@@ -42,10 +47,23 @@ public abstract class LuauRequirer
     }
 
     protected abstract void LoadModule(LuauState state, string path);
+    protected abstract IDictionary<string, string> GetAliases();
 
     protected virtual string GetCacheKey(string path) => path;
     protected virtual void OnError(Exception ex)
     {
         Console.WriteLine(ex);
+    }
+
+    string AliasToPath(string alias)
+    {
+        Debug.Assert(alias.Length > 1 && alias[0] is '@');
+        var index = alias.IndexOf('/');
+
+        var key = index == -1
+            ? alias[1..]
+            : alias[1..index];
+
+        return $"{GetAliases()[key]}/{alias[index..]}";
     }
 }

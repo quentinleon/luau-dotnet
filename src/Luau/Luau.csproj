@@ -15,14 +15,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Luau.Native\Luau.Native.csproj" />
-    <ProjectReference Include="..\Luau.SourceGenerator\Luau.SourceGenerator.csproj"
-      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\Luau.SourceGenerator\Luau.SourceGenerator.csproj" ReferenceOutputAssembly="false" />
 
-    <None
-      Include="..\Luau.SourceGenerator\bin\$(Configuration)\netstandard2.0\Luau.SourceGenerator.dll"
-      PackagePath="analyzers\dotnet\cs"
-      Pack="true"
-      Visible="false" />
+    <None Include="..\Luau.SourceGenerator\bin\$(Configuration)\netstandard2.0\Luau.SourceGenerator.dll" PackagePath="analyzers\dotnet\cs" Pack="true" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +27,7 @@
 
   <ItemGroup Condition="$(TargetFramework) == 'netstandard2.1'">
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.0.0" />
+    <PackageReference Include="System.Text.Json" Version="9.0.6" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,10 +38,8 @@
   </ItemGroup>
 
   <!-- Copy files to Unity project -->
-  <Target Name="CopyDllToUnity" AfterTargets="AfterBuild"
-    Condition="'$(TargetFramework)' == 'netstandard2.1'">
-    <Copy SourceFiles="$(OutputPath)\Luau.dll"
-      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Runtime\" />
+  <Target Name="CopyDllToUnity" AfterTargets="AfterBuild" Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <Copy SourceFiles="$(OutputPath)\Luau.dll" DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Runtime\" />
   </Target>
 
 </Project>

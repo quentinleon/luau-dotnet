@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+
 namespace Luau;
 
 public sealed class FileSystemLuauRequirer : LuauRequirer
@@ -5,13 +8,28 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
     public static readonly FileSystemLuauRequirer Default = new();
 
     public LuauCompileOptions? CompileOptions { get; init; }
-    public string WorkingDirectory { get; init; } = Directory.GetCurrentDirectory();
+    public string? WorkingDirectory { get; init; }
+    public string? ConfigFilePath { get; init; }
+
+    Dictionary<string, string>? aliases;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    string GetWorkingDirectoryOrDefault()
+    {
+        return WorkingDirectory ?? Directory.GetCurrentDirectory();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    string GetConfigFilePathOrDefault()
+    {
+        return ConfigFilePath ?? Path.Combine(GetWorkingDirectoryOrDefault(), ".luaurc");
+    }
 
     protected override void LoadModule(LuauState state, string path)
     {
         var targetPath = Path.IsPathRooted(path)
             ? path
-            : Path.GetRelativePath(WorkingDirectory, path);
+            : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), path);
 
         targetPath = Path.GetFileNameWithoutExtension(targetPath) + ".luau";
 
@@ -36,8 +54,27 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
     {
         var targetPath = Path.IsPathRooted(path)
             ? path
-            : Path.GetRelativePath(WorkingDirectory, path);
+            : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), path);
 
         return Path.GetFullPath(targetPath);
+    }
+
+    protected override IDictionary<string, string> GetAliases()
+    {
+        if (aliases != null) return aliases;
+
+        var stream = File.Open(GetConfigFilePathOrDefault(), FileMode.Open, FileAccess.Read, FileShare.Read);
+        var json = JsonDocument.Parse(stream).RootElement;
+
+        if (json.TryGetProperty("aliases", out var aliasesElement))
+        {
+            aliases = aliasesElement.Deserialize(DictionaryJsonSerializeContext.Default.DictionaryStringString);
+        }
+        else
+        {
+            aliases = [];
+        }
+
+        return aliases!;
     }
 }
