@@ -83,6 +83,7 @@ internal class CreateFunctionMethod : IEquatable<CreateFunctionMethod>
 internal record CreateFunctionMethodParameter
 {
     public required string FullTypeName { get; init; }
+    public required bool FromLuauState { get; init; }
 }
 
 [Generator(LanguageNames.CSharp)]
@@ -149,6 +150,8 @@ namespace Luau
                         actionExpression = castExpression.Expression;
                     }
 
+                    var fromLuauStateAttribute = context.SemanticModel.Compilation.GetTypeByMetadataName("Luau.FromLuauStateAttribute")!;
+
                     if (actionExpression is ParenthesizedLambdaExpressionSyntax lambda)
                     {
                         var parameters = lambda.ParameterList
@@ -156,12 +159,14 @@ namespace Luau
                             .Where(x => x.Type != null)
                             .Select(x =>
                             {
+                                var symbol = context.SemanticModel.GetDeclaredSymbol(x)!;
                                 var type = context.SemanticModel.GetTypeInfo(x.Type!);
                                 var typeName = type.Type!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
                                 return new CreateFunctionMethodParameter
                                 {
-                                    FullTypeName = type.Type!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                                    FullTypeName = type.Type!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                                    FromLuauState = symbol.TryGetAttribute(fromLuauStateAttribute, out _)
                                 };
                             })
                             .Where(x => x != null)
@@ -201,6 +206,7 @@ namespace Luau
                                     return new CreateFunctionMethodParameter
                                     {
                                         FullTypeName = typeName,
+                                        FromLuauState = x.TryGetAttribute(fromLuauStateAttribute, out _),
                                     };
                                 })
                                 .ToArray();
@@ -254,17 +260,22 @@ namespace Luau
                 ? $"global::System.Func<{string.Join(", ", method.Parameters.Select(x => x.FullTypeName))}, {(method.IsAsync && !method.HasReturnValue ? "global::System.Threading.Tasks.Task" : method.ReturnTypeName)}>"
                 : method.Parameters.Length == 0 ? "global::System.Action" : $"global::System.Action<{string.Join(", ", method.Parameters.Select(x => x.FullTypeName))}>";
 
+            const string ctType = "global::System.Threading.CancellationToken";
+            var parameterCount = method.Parameters.Count(x => x.FullTypeName != ctType && !x.FromLuauState);
+
             var argsDeclaration = string.Join("\n", method.Parameters.Select((x, i) =>
             {
-                const string ctType = "global::System.Threading.CancellationToken";
                 if (x.FullTypeName == ctType)
                 {
                     return $"var arg{i} = ct;";
                 }
+                else if (x.FromLuauState)
+                {
+                    return $"var arg{i} = state;";
+                }
                 else
                 {
-                    var count = method.Parameters.Count(x => x.FullTypeName != ctType);
-                    return $"var arg{i} = state.ToValue({i - count}).Read<{x.FullTypeName}>();";
+                    return $"var arg{i} = state.ToValue({i - parameterCount}).Read<{x.FullTypeName}>();";
                 }
             }));
 
