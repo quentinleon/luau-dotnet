@@ -1,29 +1,50 @@
 namespace Luau;
 
-public enum LuauRequirerNavigateResult
-{
-    Success,
-    Ambiguous,
-    NotFound,
-};
-
 public abstract class LuauRequirer
 {
-    public abstract bool IsRequireAllowed(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult Reset(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult JumpToAlias(LuauState state, string path);
-    public abstract LuauRequirerNavigateResult MoveToParent(LuauState state);
-    public abstract LuauRequirerNavigateResult MoveToChild(LuauState state, string name);
-    public abstract bool IsModulePresent(LuauState state);
-    public abstract bool IsConfigPresent(LuauState state);
-    public abstract bool TryGetChunkName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetLoadName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetCacheKey(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetConfig(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract int Load(LuauState state, string path, string chunkName, string loadName);
+    static ReadOnlySpan<byte> Key => "_MODULES"u8;
 
-    public virtual void OnError(Exception exception)
+    public bool TryLoad(LuauState state, string path)
     {
-        Console.WriteLine(exception);
+        try
+        {
+            var cache = state[Key];
+
+            LuauTable cacheTable;
+            if (cache.IsNil)
+            {
+                cacheTable = state.CreateTable();
+                state[Key] = cacheTable;
+            }
+            else
+            {
+                cacheTable = cache.Read<LuauTable>();
+            }
+
+            if (cacheTable.TryGetValue(path, out var result))
+            {
+                state.Push(result);
+                return true;
+            }
+
+            var thread = state.CreateThread();
+            LoadModule(thread, path);
+            thread.XMove(state, 1);
+            cacheTable.Add(path, state.ToValue(-1));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            OnError(ex);
+        }
+
+        return false;
+    }
+
+    protected abstract void LoadModule(LuauState state, string path);
+
+    protected virtual void OnError(Exception ex)
+    {
+        Console.WriteLine(ex);
     }
 }
