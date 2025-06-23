@@ -15,7 +15,7 @@ state["wait"] = state.CreateFunction(async (double seconds, CancellationToken ct
 });
 
 var path = Path.Combine(Directory.GetParent(GetCallerFilePath())!.FullName, "main.luau");
-var results = state.DoString(File.ReadAllBytes(path));
+var results = state.DoString(File.ReadAllBytes(path), "main"u8);
 
 var co = results[0].Read<LuauState>();
 
