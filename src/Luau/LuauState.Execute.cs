@@ -1,28 +1,60 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Luau;
 
 partial class LuauState
 {
-    public int Execute(ReadOnlySpan<byte> bytecode, Span<LuauValue> destination)
+    public int Execute(ReadOnlySpan<byte> bytecode, Span<LuauValue> destination, ReadOnlySpan<char> chunkName = default)
     {
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode);
+        LoadInternal(bytecode, chunkName);
         return runner.Run(this, 0, destination);
     }
 
-    public LuauValue[] Execute(ReadOnlySpan<byte> bytecode)
+    [OverloadResolutionPriority(1)]
+    public int Execute(ReadOnlySpan<byte> bytecode, Span<LuauValue> destination, ReadOnlySpan<byte> utf8ChunkName = default)
     {
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode);
+        LoadInternal(bytecode, utf8ChunkName);
+        return runner.Run(this, 0, destination);
+    }
+
+    public LuauValue[] Execute(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        LoadInternal(bytecode, chunkName);
+        return runner.Run(this, 0);
+    }
+
+    [OverloadResolutionPriority(1)]
+    public LuauValue[] Execute(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        LoadInternal(bytecode, utf8ChunkName);
         return runner.Run(this, 0);
     }
 
     public ValueTask<int> ExecuteAsync(ReadOnlyMemory<byte> bytecode, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
     {
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span);
+        LoadInternal(bytecode.Span, default);
+        return runner.RunAsync(this, 0, destination, cancellationToken);
+    }
+
+    public ValueTask<int> ExecuteAsync(ReadOnlyMemory<byte> bytecode, Memory<LuauValue> destination, ReadOnlyMemory<char> chunkName = default, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        LoadInternal(bytecode.Span, chunkName.Span);
+        return runner.RunAsync(this, 0, destination, cancellationToken);
+    }
+
+    [OverloadResolutionPriority(1)]
+    public ValueTask<int> ExecuteAsync(ReadOnlyMemory<byte> bytecode, Memory<LuauValue> destination, ReadOnlyMemory<byte> utf8ChunkName = default, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        LoadInternal(bytecode.Span, utf8ChunkName.Span);
         return runner.RunAsync(this, 0, destination, cancellationToken);
     }
 
@@ -33,90 +65,108 @@ partial class LuauState
         return runner.RunAsync(this, 0, cancellationToken);
     }
 
-    public LuauValue[] DoString(ReadOnlySpan<char> source, LuauCompileOptions? options = null)
+    public ValueTask<LuauValue[]> ExecuteAsync(ReadOnlyMemory<byte> bytecode, ReadOnlyMemory<char> chunkName = default, CancellationToken cancellationToken = default)
     {
         using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, source, options);
-        return runner.Run(this, 0);
-    }
-
-    public int DoString(ReadOnlySpan<char> source, Span<LuauValue> destination, LuauCompileOptions? options = null)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, source, options);
-        return runner.Run(this, 0, destination);
-    }
-
-    public ValueTask<int> DoStringAsync(string source, Memory<LuauValue> destination, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        return DoStringAsync(source.AsMemory(), destination, options, cancellationToken);
-    }
-
-    public ValueTask<int> DoStringAsync(ReadOnlyMemory<char> source, Memory<LuauValue> destination, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, source.Span, options);
-        return runner.RunAsync(this, 0, destination, cancellationToken);
-    }
-
-    public ValueTask<LuauValue[]> DoStringAsync(string source, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        return DoStringAsync(source.AsMemory(), options, cancellationToken);
-    }
-
-    public ValueTask<LuauValue[]> DoStringAsync(ReadOnlyMemory<char> source, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, source.Span, options);
+        LoadInternal(bytecode.Span, chunkName.Span);
         return runner.RunAsync(this, 0, cancellationToken);
     }
 
-    public LuauValue[] DoString(ReadOnlySpan<byte> utf8Source, LuauCompileOptions? options = null)
+    [OverloadResolutionPriority(1)]
+    public ValueTask<LuauValue[]> ExecuteAsync(ReadOnlyMemory<byte> bytecode, ReadOnlyMemory<byte> utf8ChunkName = default, CancellationToken cancellationToken = default)
     {
         using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, utf8Source, options);
-        return runner.Run(this, 0);
-    }
-
-    public int DoString(ReadOnlySpan<byte> utf8Source, Span<LuauValue> destination, LuauCompileOptions? options = null)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, utf8Source, options);
-        return runner.Run(this, 0, destination);
-    }
-
-    public ValueTask<int> DoStringAsync(ReadOnlyMemory<byte> utf8Source, Memory<LuauValue> destination, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, utf8Source.Span, options);
-        return runner.RunAsync(this, 0, destination, cancellationToken);
-    }
-
-    public ValueTask<LuauValue[]> DoStringAsync(ReadOnlyMemory<byte> utf8Source, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        using var runner = ScriptRunner.Rent();
-        CompileAndLoadString(this, utf8Source.Span, options);
+        LoadInternal(bytecode.Span, utf8ChunkName.Span);
         return runner.RunAsync(this, 0, cancellationToken);
     }
 
-    static void CompileAndLoadString(LuauState state, ReadOnlySpan<byte> utf8Source, LuauCompileOptions? options)
+    public LuauValue[] DoString(ReadOnlySpan<char> source, ReadOnlySpan<char> chunkName = default, LuauCompileOptions? options = null)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, source, chunkName, options);
+        return runner.Run(this, 0);
+    }
+
+    public int DoString(ReadOnlySpan<char> source, Span<LuauValue> destination, ReadOnlySpan<char> chunkName = default, LuauCompileOptions? options = null)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, source, chunkName, options);
+        return runner.Run(this, 0, destination);
+    }
+
+    public ValueTask<int> DoStringAsync(string source, Memory<LuauValue> destination, string chunkName = "", LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return DoStringAsync(source.AsMemory(), destination, chunkName.AsMemory(), options, cancellationToken);
+    }
+
+    public ValueTask<int> DoStringAsync(ReadOnlyMemory<char> source, Memory<LuauValue> destination, ReadOnlyMemory<char> chunkName = default, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, source.Span, chunkName.Span, options);
+        return runner.RunAsync(this, 0, destination, cancellationToken);
+    }
+
+    public ValueTask<LuauValue[]> DoStringAsync(string source, string chunkName = "", LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return DoStringAsync(source.AsMemory(), chunkName.AsMemory(), options, cancellationToken);
+    }
+
+    public ValueTask<LuauValue[]> DoStringAsync(ReadOnlyMemory<char> source, ReadOnlyMemory<char> chunkName = default, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, source.Span, chunkName.Span, options);
+        return runner.RunAsync(this, 0, cancellationToken);
+    }
+
+    public LuauValue[] DoString(ReadOnlySpan<byte> utf8Source, ReadOnlySpan<byte> utf8ChunkName = default, LuauCompileOptions? options = null)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, utf8Source, utf8ChunkName, options);
+        return runner.Run(this, 0);
+    }
+
+    public int DoString(ReadOnlySpan<byte> utf8Source, Span<LuauValue> destination, ReadOnlySpan<byte> utf8ChunkName = default, LuauCompileOptions? options = null)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, utf8Source, utf8ChunkName, options);
+        return runner.Run(this, 0, destination);
+    }
+
+    public ValueTask<int> DoStringAsync(ReadOnlyMemory<byte> utf8Source, Memory<LuauValue> destination, ReadOnlyMemory<byte> utf8ChunkName = default, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, utf8Source.Span, utf8ChunkName.Span, options);
+        return runner.RunAsync(this, 0, destination, cancellationToken);
+    }
+
+    public ValueTask<LuauValue[]> DoStringAsync(ReadOnlyMemory<byte> utf8Source, ReadOnlyMemory<byte> utf8ChunkName = default, LuauCompileOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        using var runner = ScriptRunner.Rent();
+        CompileAndLoadString(this, utf8Source.Span, utf8ChunkName.Span, options);
+        return runner.RunAsync(this, 0, cancellationToken);
+    }
+
+    static void CompileAndLoadString(LuauState state, ReadOnlySpan<byte> utf8Source, ReadOnlySpan<byte> utf8ChunkName, LuauCompileOptions? options)
     {
         using var writer = new ArrayPoolBufferWriter(512);
         LuauCompiler.Compile(writer, utf8Source, options);
-        state.LoadInternal(writer.WrittenSpan, default);
+        state.LoadInternal(writer.WrittenSpan, utf8ChunkName);
     }
 
-    static void CompileAndLoadString(LuauState state, ReadOnlySpan<char> source, LuauCompileOptions? options)
+    static void CompileAndLoadString(LuauState state, ReadOnlySpan<char> source, ReadOnlySpan<char> chunkName, LuauCompileOptions? options)
     {
-        var buffer = ArrayPool<byte>.Shared.Rent(source.Length * 3);
+        var buffer1 = ArrayPool<byte>.Shared.Rent(source.Length * 3);
+        var buffer2 = ArrayPool<byte>.Shared.Rent(chunkName.Length * 3);
         try
         {
-            var utf8Count = Encoding.UTF8.GetBytes(source, buffer);
-            CompileAndLoadString(state, buffer.AsSpan(0, utf8Count), options);
+            var utf8Count1 = Encoding.UTF8.GetBytes(source, buffer1);
+            var utf8Count2 = Encoding.UTF8.GetBytes(chunkName, buffer2);
+            CompileAndLoadString(state, buffer1.AsSpan(0, utf8Count1), buffer2.AsSpan(0, utf8Count2), options);
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            ArrayPool<byte>.Shared.Return(buffer1);
+            ArrayPool<byte>.Shared.Return(buffer2);
         }
     }
 
