@@ -7,7 +7,7 @@ namespace Luau;
 
 public partial class LuauState
 {
-    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName = default)
+    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
     {
         ThrowIfDisposed();
         LoadInternal(bytecode, chunkName);
@@ -15,8 +15,7 @@ public partial class LuauState
         return func;
     }
 
-    [OverloadResolutionPriority(1)]
-    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName)
+    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
     {
         ThrowIfDisposed();
         LoadInternal(bytecode, utf8ChunkName);
@@ -28,7 +27,7 @@ public partial class LuauState
     {
         if (chunkName.IsEmpty)
         {
-            LoadInternal(bytecode, []);
+            LoadInternal(bytecode, ReadOnlySpan<byte>.Empty);
             return;
         }
 
@@ -45,8 +44,7 @@ public partial class LuauState
         }
     }
 
-    [OverloadResolutionPriority(1)]
-    unsafe void LoadInternal(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> chunkName = default)
+    unsafe void LoadInternal(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> chunkName)
     {
         var bytecodeSize = (nuint)(bytecode.Length * sizeof(byte));
 
