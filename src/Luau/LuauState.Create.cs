@@ -129,6 +129,8 @@ unsafe partial class LuauState
 
         if (value == null) return LuauValue.Nil;
 
+        if (typeof(T) == typeof(LuauValue)) return Unsafe.As<T, LuauValue>(ref value);
+
         if (typeof(T) == typeof(bool)) return LuauValue.FromBoolean(Unsafe.As<T, bool>(ref value));
         if (typeof(T) == typeof(string)) return LuauValue.FromString(Unsafe.As<T, string>(ref value));
         if (typeof(T) == typeof(Vector3)) return LuauValue.FromVector(Unsafe.As<T, Vector3>(ref value));
