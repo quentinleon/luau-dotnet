@@ -40,8 +40,6 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
     {
         get
         {
-            ThrowIfDisposed();
-
             state.Push(this);
             state.Push(key);
             lua_gettable(state.AsPointer(), -2);
@@ -50,8 +48,6 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
         }
         set
         {
-            ThrowIfDisposed();
-
             var ptr = state!.AsPointer();
             state.Push(this);
             state.Push(key);
@@ -65,8 +61,6 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
     {
         get
         {
-            ThrowIfDisposed();
-
             state.Push(this);
             lua_objlen(state.AsPointer(), -1);
             var len = state.Pop().Read<int>();
@@ -78,6 +72,13 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
     {
         this.state = state;
         this.reference = reference;
+    }
+
+    public LuauTable Clone()
+    {
+        state.Push(this);
+        lua_clonetable(state.AsPointer(), -1);
+        return state.Pop().Read<LuauTable>();
     }
 
     public bool TryMoveNext(LuauValue key, out KeyValuePair<LuauValue, LuauValue> result)
