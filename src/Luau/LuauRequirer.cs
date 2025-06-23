@@ -58,7 +58,11 @@ public abstract class LuauRequirer
 
     string AliasToPath(string alias)
     {
-        Debug.Assert(alias.Length > 1 && alias[0] is '@');
+        if (alias.Length <= 1 || alias[0] is not '@')
+        {
+            return alias;
+        }
+
         var index = alias.IndexOf('/');
 
         var key = index == -1
