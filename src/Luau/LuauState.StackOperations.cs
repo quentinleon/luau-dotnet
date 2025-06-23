@@ -384,15 +384,11 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
 
-        var buffer = ArrayPool<byte>.Shared.Rent(value.Length * 3);
+        var buffer = ArrayPool<byte>.Shared.Rent(value.Length * 3 + 1);
         try
         {
             var utf8Count = Encoding.UTF8.GetBytes(value, buffer);
-#if NET6_0_OR_GREATER
-            var stringPtr = (byte*)NativeMemory.Alloc((nuint)(utf8Count + 1));
-#else
-            var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Count + 1).ToPointer();
-#endif
+            var stringPtr = (byte*)malloc((nuint)(utf8Count + 1));
             buffer.AsSpan(0, utf8Count).CopyTo(new Span<byte>(stringPtr, utf8Count));
             stringPtr[utf8Count] = 0;
             lua_pushstring(l, stringPtr);
@@ -405,11 +401,7 @@ public unsafe partial class LuauState
 
     public void PushString(ReadOnlySpan<byte> utf8Value)
     {
-#if NET6_0_OR_GREATER
-        var stringPtr = (byte*)NativeMemory.Alloc((nuint)utf8Value.Length);
-#else
-        var stringPtr = (byte*)Marshal.AllocHGlobal(utf8Value.Length).ToPointer();
-#endif
+        var stringPtr = (byte*)malloc((nuint)utf8Value.Length);
         utf8Value.CopyTo(new Span<byte>(stringPtr, utf8Value.Length));
         lua_pushstring(l, stringPtr);
     }
