@@ -21,7 +21,7 @@ public abstract class LuauRequirer
                 cacheTable = cache.Read<LuauTable>();
             }
 
-            if (cacheTable.TryGetValue(path, out var result))
+            if (cacheTable.TryGetValue(GetCacheKey(path), out var result))
             {
                 state.Push(result);
                 return true;
@@ -30,7 +30,7 @@ public abstract class LuauRequirer
             var thread = state.CreateThread();
             LoadModule(thread, path);
             thread.XMove(state, 1);
-            cacheTable.Add(path, state.ToValue(-1));
+            cacheTable.Add(GetCacheKey(path), state.ToValue(-1));
             return true;
         }
         catch (Exception ex)
@@ -43,6 +43,7 @@ public abstract class LuauRequirer
 
     protected abstract void LoadModule(LuauState state, string path);
 
+    protected virtual string GetCacheKey(string path) => path;
     protected virtual void OnError(Exception ex)
     {
         Console.WriteLine(ex);

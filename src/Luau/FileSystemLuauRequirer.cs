@@ -31,4 +31,13 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         var results = state.DoString(writer.WrittenSpan, CompileOptions);
         state.Push(results[0]);
     }
+
+    protected override string GetCacheKey(string path)
+    {
+        var targetPath = Path.IsPathRooted(path)
+            ? path
+            : Path.GetRelativePath(WorkingDirectory, path);
+
+        return Path.GetFullPath(targetPath);
+    }
 }
