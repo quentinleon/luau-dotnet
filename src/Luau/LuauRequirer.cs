@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Luau;
@@ -9,52 +8,43 @@ public abstract class LuauRequirer
 
     public bool TryLoad(LuauState state, string argument)
     {
-        try
+        var cache = state[Key];
+
+        LuauTable cacheTable;
+        if (cache.IsNil)
         {
-            var cache = state[Key];
+            cacheTable = state.CreateTable();
+            state[Key] = cacheTable;
+        }
+        else
+        {
+            cacheTable = cache.Read<LuauTable>();
+        }
 
-            LuauTable cacheTable;
-            if (cache.IsNil)
-            {
-                cacheTable = state.CreateTable();
-                state[Key] = cacheTable;
-            }
-            else
-            {
-                cacheTable = cache.Read<LuauTable>();
-            }
+        var fullPath = AliasToPath(argument);
+        var cacheKey = GetCacheKey(fullPath);
 
-            var fullPath = AliasToPath(argument);
-            var cacheKey = GetCacheKey(fullPath);
-
-            if (cacheTable.TryGetValue(cacheKey, out var result))
-            {
-                state.Push(result);
-                return true;
-            }
-
-            var thread = state.CreateThread();
-            LoadModule(thread, fullPath, argument);
-            thread.XMove(state, 1);
-            cacheTable.Add(cacheKey, state.ToValue(-1));
+        if (cacheTable.TryGetValue(cacheKey, out var result))
+        {
+            state.Push(result);
             return true;
         }
-        catch (Exception ex)
+
+        var thread = state.CreateThread();
+        if (!TryLoadModule(thread, fullPath, argument))
         {
-            OnError(ex);
+            return false;
         }
 
-        return false;
+        thread.XMove(state, 1);
+        cacheTable.Add(cacheKey, state.ToValue(-1));
+        return true;
     }
 
-    protected abstract void LoadModule(LuauState state, string fullPath, string requireArgument);
+    protected abstract bool TryLoadModule(LuauState state, string fullPath, string requireArgument);
     protected abstract bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string? path);
 
     protected virtual string GetCacheKey(string path) => path;
-    protected virtual void OnError(Exception ex)
-    {
-        Console.WriteLine(ex);
-    }
 
     string AliasToPath(string alias)
     {

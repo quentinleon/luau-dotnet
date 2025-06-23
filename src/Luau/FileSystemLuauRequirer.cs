@@ -26,13 +26,18 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         return ConfigFilePath ?? Path.Combine(GetWorkingDirectoryOrDefault(), ".luaurc");
     }
 
-    protected override void LoadModule(LuauState state, string fullPath, string requireArgument)
+    protected override bool TryLoadModule(LuauState state, string fullPath, string requireArgument)
     {
         var targetPath = Path.IsPathRooted(fullPath)
             ? fullPath
             : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), fullPath);
 
         targetPath = Path.GetFileNameWithoutExtension(targetPath) + ".luau";
+
+        if (!File.Exists(targetPath))
+        {
+            return false;
+        }
 
         using var writer = new ArrayPoolBufferWriter(8192);
         using (var stream = File.Open(targetPath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -50,9 +55,11 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         var results = state.DoString(writer.WrittenSpan, CompileOptions);
         if (results.Length != 1)
         {
-            throw new LuauException($"Module '{fullPath}' does not return exactly 1 value. It cannot be required.");
+            throw new LuauException($"Module '{requireArgument}' does not return exactly 1 value. It cannot be required.");
         }
         state.Push(results[0]);
+
+        return true;
     }
 
     protected override string GetCacheKey(string path)
