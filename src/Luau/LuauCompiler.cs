@@ -25,11 +25,7 @@ public unsafe static class LuauCompiler
         }
         finally
         {
-#if NET8_0_OR_GREATER
-            NativeMemory.Free(code);
-#else
-            Marshal.FreeHGlobal((IntPtr)code);
-#endif
+            free(code);
         }
     }
 
@@ -58,11 +54,7 @@ public unsafe static class LuauCompiler
         }
         finally
         {
-#if NET8_0_OR_GREATER
-            NativeMemory.Free(code);
-#else
-            Marshal.FreeHGlobal((IntPtr)code);
-#endif
+            free(code);
         }
     }
 }

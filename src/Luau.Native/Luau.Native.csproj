@@ -34,6 +34,7 @@
   <!-- Copy files to Unity project -->
   <ItemGroup>
     <None Include="$(ProjectDir)\NativeMethods.Macros.cs" />
+    <None Include="$(ProjectDir)\NativeMethods.Memory.cs" />
     <None Include="$(ProjectDir)\Delegates.cs" />
     <None Include="$(ProjectDir)\Enums.cs" />
   </ItemGroup>
@@ -41,6 +42,9 @@
   <Target Name="CopyFilesToUnity" AfterTargets="AfterBuild">
     <Copy
       SourceFiles="$(ProjectDir)\NativeMethods.Macros.cs"
+      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Native\" />
+    <Copy
+      SourceFiles="$(ProjectDir)\NativeMethods.Memory.cs"
       DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Native\" />
     <Copy
       SourceFiles="$(ProjectDir)\Delegates.cs"
