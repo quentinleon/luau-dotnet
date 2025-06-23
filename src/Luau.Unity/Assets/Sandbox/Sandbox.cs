@@ -9,9 +9,21 @@ public class Sandbox : MonoBehaviour
     void Start()
     {
         using var state = LuauState.Create();
-        state.OpenMathLibrary();
+        state.OpenLibraries();
+        state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
 
-        var results = state.Execute(luauAsset);
-        Debug.Log(results[0]);
+        state["print"] = state.CreateFunction(state =>
+        {
+            var args = new LuauValue[state.GetTop()];
+            for (int i = 0; i < args.Length; i++)
+            {
+                args[i] = state.ToValue(-i - 1);
+            }
+
+            Debug.Log(string.Join('\t', args));
+            return 0;
+        });
+
+        state.Execute(luauAsset);
     }
 }
