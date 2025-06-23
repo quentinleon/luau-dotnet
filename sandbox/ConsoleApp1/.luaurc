@@ -2,6 +2,6 @@
 	"languageMode": "nonstrict",
 	"lint": { "*": true, "FunctionUnused": false },
 	"aliases": {
-		"src": ""
+		"src": "."
 	}
 }

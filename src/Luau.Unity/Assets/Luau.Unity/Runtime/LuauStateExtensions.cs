@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,20 +12,26 @@ namespace Luau.Unity
         {
             if (asset.IsPrecompiled)
             {
-                return state.Execute(asset.AsSpan(), destination);
+                return state.Execute(asset.AsSpan(), destination, asset.name);
             }
 
-            return state.DoString(asset.AsSpan(), destination);
+            Span<byte> buffer = stackalloc byte[asset.name.Length * 3 + 1];
+            var count = Encoding.UTF8.GetBytes(asset.name, buffer);
+            buffer[count] = 0;
+            return state.DoString(asset.AsSpan(), destination, buffer[..count]);
         }
 
         public static LuauValue[] Execute(this LuauState state, LuauAsset asset)
         {
             if (asset.IsPrecompiled)
             {
-                return state.Execute(asset.AsSpan());
+                return state.Execute(asset.AsSpan(), asset.name);
             }
 
-            return state.DoString(asset.AsSpan());
+            Span<byte> buffer = stackalloc byte[asset.name.Length * 3 + 1];
+            var count = Encoding.UTF8.GetBytes(asset.name, buffer);
+            buffer[count] = 0;
+            return state.DoString(asset.AsSpan(), buffer[..count]);
         }
 
         public static ValueTask<int> ExecuteAsync(this LuauState state, LuauAsset asset, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
@@ -33,17 +41,38 @@ namespace Luau.Unity
                 return state.ExecuteAsync(asset.AsMemory(), destination, cancellationToken);
             }
 
-            return state.DoStringAsync(asset.AsMemory(), destination, cancellationToken: cancellationToken);
+            var buffer = ArrayPool<byte>.Shared.Rent(asset.name.Length * 3 + 1);
+            try
+            {
+                var count = Encoding.UTF8.GetBytes(asset.name, buffer);
+                buffer[count] = 0;
+                return state.DoStringAsync(asset.AsMemory(), destination, buffer.AsMemory()[..count], cancellationToken: cancellationToken);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         public static ValueTask<LuauValue[]> ExecuteAsync(this LuauState state, LuauAsset asset, CancellationToken cancellationToken = default)
         {
             if (asset.IsPrecompiled)
             {
-                return state.ExecuteAsync(asset.AsMemory(), cancellationToken);
+                return state.ExecuteAsync(asset.AsMemory(), asset.name.AsMemory(), cancellationToken);
             }
 
-            return state.DoStringAsync(asset.AsMemory(), cancellationToken: cancellationToken);
+
+            var buffer = ArrayPool<byte>.Shared.Rent(asset.name.Length * 3 + 1);
+            try
+            {
+                var count = Encoding.UTF8.GetBytes(asset.name, buffer);
+                buffer[count] = 0;
+                return state.DoStringAsync(asset.AsMemory(), buffer.AsMemory()[..count], cancellationToken: cancellationToken);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
     }
 }
