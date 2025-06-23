@@ -1,29 +1,69 @@
-namespace Luau;
+using System.Diagnostics.CodeAnalysis;
 
-public enum LuauRequirerNavigateResult
-{
-    Success,
-    Ambiguous,
-    NotFound,
-};
+namespace Luau;
 
 public abstract class LuauRequirer
 {
-    public abstract bool IsRequireAllowed(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult Reset(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult JumpToAlias(LuauState state, string path);
-    public abstract LuauRequirerNavigateResult MoveToParent(LuauState state);
-    public abstract LuauRequirerNavigateResult MoveToChild(LuauState state, string name);
-    public abstract bool IsModulePresent(LuauState state);
-    public abstract bool IsConfigPresent(LuauState state);
-    public abstract bool TryGetChunkName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetLoadName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetCacheKey(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetConfig(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract int Load(LuauState state, string path, string chunkName, string loadName);
+    static ReadOnlySpan<byte> Key => "_MODULES"u8;
 
-    public virtual void OnError(Exception exception)
+    public bool TryLoad(LuauState state, string argument)
     {
-        Console.WriteLine(exception);
+        var cache = state[Key];
+
+        LuauTable cacheTable;
+        if (cache.IsNil)
+        {
+            cacheTable = state.CreateTable();
+            state[Key] = cacheTable;
+        }
+        else
+        {
+            cacheTable = cache.Read<LuauTable>();
+        }
+
+        var fullPath = AliasToPath(argument);
+        var cacheKey = GetCacheKey(fullPath);
+
+        if (cacheTable.TryGetValue(cacheKey, out var result))
+        {
+            state.Push(result);
+            return true;
+        }
+
+        var thread = state.CreateThread();
+        if (!TryLoadModule(thread, fullPath, argument))
+        {
+            return false;
+        }
+
+        thread.XMove(state, 1);
+        cacheTable.Add(cacheKey, state.ToValue(-1));
+        return true;
+    }
+
+    protected abstract bool TryLoadModule(LuauState state, string fullPath, string requireArgument);
+    protected abstract bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string? path);
+
+    protected virtual string GetCacheKey(string path) => path;
+
+    string AliasToPath(string alias)
+    {
+        if (alias.Length <= 1 || alias[0] is not '@')
+        {
+            return alias;
+        }
+
+        var index = alias.IndexOf('/');
+
+        var key = index == -1
+            ? alias[1..]
+            : alias[1..index];
+
+        if (!TryGetAliasPath(key, out var path))
+        {
+            return alias;
+        }
+
+        return $"{path}{alias[index..]}";
     }
 }

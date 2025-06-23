@@ -381,43 +381,32 @@ state.OpenLibraries();
 
 Luauの`require()`はLuaのそれとは大きく異なる実装になっています。Luau for .NETはこれに対応するC# APIを提供しています。
 
-`LuauRequirer`はLuauのモジュール解決を抽象化するクラスで、これを実装することで`require()`に対応したモジュールの読み込みをカスタマイズが可能です。標準では特定のディレクトリを起点に`*.luau`/`.luaurc`ファイルの探索を行う`FileSystemLuauRequirer`が提供されています。
-
-```cs
-public abstract class LuauRequirer
-{
-    public abstract bool IsRequireAllowed(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult Reset(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult JumpToAlias(LuauState state, string path);
-    public abstract LuauRequirerNavigateResult MoveToParent(LuauState state);
-    public abstract LuauRequirerNavigateResult MoveToChild(LuauState state, string name);
-    public abstract bool IsModulePresent(LuauState state);
-    public abstract bool IsConfigPresent(LuauState state);
-    public abstract bool TryGetChunkName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetLoadName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetCacheKey(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetConfig(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract int Load(LuauState state, string path, string chunkName, string loadName);
-
-    public virtual void OnError(Exception exception)
-    {
-        Console.WriteLine(exception);
-    }
-}
-
-public enum LuauRequirerNavigateResult
-{
-    Success,
-    Ambiguous,
-    NotFound,
-}
-```
+`LuauRequirer`はLuauのモジュール解決を抽象化するクラスで、これを実装することで`require()`に対応したモジュールの読み込みをカスタマイズが可能です。標準では特定のディレクトリを起点に`*.luau`/`.luaurc`ファイルの探索を行う`FileSystemLuauRequirer`が提供されています。また、Unity向けにResource/Addressablesからモジュールをロードする実装も用意されています。
 
 Requireライブラリを追加するには`OpenRequireLibrary()`を呼び出し、利用する`LuauRequier`のインスタンスを引数に指定します。
 
 ```cs
-state.OpenRequireLibrary(new FileSystemLuauRequirer("target/path/"));
+state.OpenRequireLibrary(new FileSystemLuauRequirer
+{
+    WorkingDirectory = "scripts/"       // 基準となるディレクトリ
+    ConfigFilePath = "scripts/.luaurc"  // .luaurcのパス
+});
 ```
+
+> [!TIP]
+> パスの指定には`.luaurc`に設定したエイリアスを利用することが推奨されます。
+> 
+> ```json
+> {
+>   "aliases": {
+>      "Script": "."
+>   }    
+> }
+> ```
+>
+> ```lua
+> require "@Script/foo"
+> ```
 
 ### LuauLibrary
 
@@ -591,7 +580,24 @@ public class Example : MonoBehaviour
 
 ### Resources / Addressables
 
-TODO:
+Luau.UnityではResources / Addressablesに対応した`LuaRequirer`の実装が用意されています。
+
+```cs
+state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
+state.OpenRequireLibrary(AddressablesLuauRequirer.Default);
+```
+
+ただし、これらのRequirerでエイリアスを利用する場合にはこれを明示的に渡す必要があります。
+
+```cs
+state.OpenRequireLibrary(new ResourcesLuauRequirer
+{
+    Aliases =
+    {
+        ["Resources"] = "."
+    }
+});
+```
 
 ## CLIツール
 

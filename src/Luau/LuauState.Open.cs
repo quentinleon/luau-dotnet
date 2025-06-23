@@ -81,9 +81,16 @@ unsafe partial class LuauState
     {
         ThrowIfDisposed();
 
-        var handle = GCHandle.Alloc(requirer);
-        disposables.Add(new GCHandleDisposable(handle));
-        luaopen_require(l, LuaRequireHelper.Initialize, GCHandle.ToIntPtr(handle).ToPointer());
+        this["require"] = CreateFunction(state =>
+        {
+            var path = state.ToString(-1);
+            if (requirer.TryLoad(state, path))
+            {
+                return 1;
+            }
+
+            throw new LuauException($"module '{path}' not found");
+        });
     }
 
     public void OpenLibrary<T>(T library)

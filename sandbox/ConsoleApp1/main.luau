@@ -1,4 +1,4 @@
-local test = require "./person"
+local test = require "@src/person"
 
 local p = test.new("Alice", 18)
 print(p)

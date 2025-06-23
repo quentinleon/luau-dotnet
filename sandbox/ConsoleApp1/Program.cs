@@ -3,7 +3,10 @@ using Luau;
 
 using var state = LuauState.Create();
 state.OpenLibraries();
-state.OpenRequireLibrary(new FileSystemLuauRequirer());
+state.OpenRequireLibrary(new FileSystemLuauRequirer
+{
+    WorkingDirectory = Directory.GetParent(GetCallerFilePath())!.FullName,
+});
 state.OpenLibrary<Commands>();
 
 state["wait"] = state.CreateFunction(async (double seconds, CancellationToken ct) =>
