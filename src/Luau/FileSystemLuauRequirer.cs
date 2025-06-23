@@ -25,11 +25,11 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         return ConfigFilePath ?? Path.Combine(GetWorkingDirectoryOrDefault(), ".luaurc");
     }
 
-    protected override void LoadModule(LuauState state, string path)
+    protected override void LoadModule(LuauState state, string fullPath, string requireArgument)
     {
-        var targetPath = Path.IsPathRooted(path)
-            ? path
-            : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), path);
+        var targetPath = Path.IsPathRooted(fullPath)
+            ? fullPath
+            : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), fullPath);
 
         targetPath = Path.GetFileNameWithoutExtension(targetPath) + ".luau";
 
@@ -47,6 +47,10 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         }
 
         var results = state.DoString(writer.WrittenSpan, CompileOptions);
+        if (results.Length != 1)
+        {
+            throw new LuauException($"Module '{fullPath}' does not return exactly 1 value. It cannot be required.");
+        }
         state.Push(results[0]);
     }
 

@@ -6,7 +6,7 @@ public abstract class LuauRequirer
 {
     static ReadOnlySpan<byte> Key => "_MODULES"u8;
 
-    public bool TryLoad(LuauState state, string path)
+    public bool TryLoad(LuauState state, string argument)
     {
         try
         {
@@ -23,7 +23,7 @@ public abstract class LuauRequirer
                 cacheTable = cache.Read<LuauTable>();
             }
 
-            var fullPath = AliasToPath(path);
+            var fullPath = AliasToPath(argument);
             var cacheKey = GetCacheKey(fullPath);
 
             if (cacheTable.TryGetValue(cacheKey, out var result))
@@ -33,7 +33,7 @@ public abstract class LuauRequirer
             }
 
             var thread = state.CreateThread();
-            LoadModule(thread, fullPath);
+            LoadModule(thread, fullPath, argument);
             thread.XMove(state, 1);
             cacheTable.Add(cacheKey, state.ToValue(-1));
             return true;
@@ -46,7 +46,7 @@ public abstract class LuauRequirer
         return false;
     }
 
-    protected abstract void LoadModule(LuauState state, string path);
+    protected abstract void LoadModule(LuauState state, string fullPath, string requireArgument);
     protected abstract bool TryGetAliasPath(string alias, out string path);
 
     protected virtual string GetCacheKey(string path) => path;
