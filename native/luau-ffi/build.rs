@@ -1,4 +1,25 @@
+use std::env;
+
 fn main() {
+    let target = build_target::target_triple().unwrap();
+    if target == "wasm32-unknown-emscripten" {
+        if let Ok(em_dir) = env::var("EM_DIR") {
+            fn exec_path(path: &str) -> String {
+                if cfg!(windows) {
+                    format!("{}.bat", path)
+                } else {
+                    path.to_string()
+                }
+            }
+            env::set_var(
+                "EMCMAKE",
+                exec_path(&format!("{em_dir}/emscripten/emcmake")),
+            );
+            env::set_var("EMMAKE", exec_path(&format!("{em_dir}/emscripten/emmake")));
+            env::set_var("EM_CONFIG", format!("{em_dir}/.emscripten"));
+        }
+    }
+
     let dst = new_cmake_config().build_target("Luau.Compiler").build();
     println!(
         "cargo:warning=CMake configure (Luau.Compiler) completed: {}",
@@ -39,6 +60,7 @@ fn main() {
             "../../luau/Compiler/include/luacode.h",
         ])
         .clang_arg(format!("--target={}", target))
+        .clang_arg("-fvisibility=default")
         .layout_tests(false)
         .generate()
         .unwrap()
@@ -60,6 +82,7 @@ fn main() {
         .blocklist_type("lua_State")
         .raw_line("use super::luau::*;")
         .clang_arg(format!("--target={}", target))
+        .clang_arg("-fvisibility=default")
         .layout_tests(false)
         .generate()
         .unwrap()
@@ -87,12 +110,9 @@ using lua_getcoverage_callback_delegate = Luau.Native.lua_Coverage;
     )
     .unwrap();
 
-    cs.csharp_dll_name_if(
-        "UNITY_IOS && !UNITY_EDITOR",
-        "__Internal",
-    )
-    .generate_csharp_file("../../src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.g.cs")
-    .unwrap();
+    cs.csharp_dll_name_if("(UNITY_IOS || UNITY_WEBGL) && !UNITY_EDITOR", "__Internal")
+        .generate_csharp_file("../../src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.g.cs")
+        .unwrap();
 
     let cs2 = new_csbindgen_builder("src/luau_require.rs")
         .rust_file_header(
@@ -233,6 +253,15 @@ fn new_cmake_config() -> cmake::Config {
         config.define(
             "CMAKE_CXX_FLAGS",
             "-DANDROID -ffunction-sections -fdata-sections -fPIC -m64",
+        );
+    } else if target == "wasm32-unknown-emscripten" {
+        config.define(
+            "CMAKE_C_FLAGS",
+            "-ffunction-sections -fdata-sections -fPIC",
+        );
+        config.define(
+            "CMAKE_CXX_FLAGS",
+            "-ffunction-sections -fdata-sections -fPIC",
         );
     }
 
