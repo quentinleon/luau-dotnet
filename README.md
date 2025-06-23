@@ -379,45 +379,34 @@ state.OpenLibraries();
 
 ### Require Library
 
-Luau's `require()` has a significantly different implementation from Lua's. Luau for .NET provides a C# API that corresponds to this.
+Luau's `require()` implementation is significantly different from Lua's. Luau for .NET offers corresponding C\# APIs to handle this.
 
-`LuauRequirer` is a class that abstracts Luau's module resolution, and by implementing this, you can customize module loading with `require()` support. By default, `FileSystemLuauRequirer` is provided, which searches for `*.luau`/`.luaurc` files starting from a specific directory.
+The `LuauRequirer` class abstracts Luau's module resolution, allowing you to customize how `require()` loads modules by implementing it. By default, `FileSystemLuauRequirer` is provided, which searches for `*.luau` and `.luaurc` files starting from a specified directory. Additionally, implementations for loading modules from Resources and Addressables are available for Unity.
 
-```cs
-public abstract class LuauRequirer
+To add a Require library, call `OpenRequireLibrary()` and pass an instance of the `LuauRequirer` you want to use as an argument.
+
+```csharp
+state.OpenRequireLibrary(new FileSystemLuauRequirer
 {
-    public abstract bool IsRequireAllowed(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult Reset(LuauState state, string chunkName);
-    public abstract LuauRequirerNavigateResult JumpToAlias(LuauState state, string path);
-    public abstract LuauRequirerNavigateResult MoveToParent(LuauState state);
-    public abstract LuauRequirerNavigateResult MoveToChild(LuauState state, string name);
-    public abstract bool IsModulePresent(LuauState state);
-    public abstract bool IsConfigPresent(LuauState state);
-    public abstract bool TryGetChunkName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetLoadName(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetCacheKey(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract bool TryGetConfig(LuauState state, Span<byte> destination, out int bytesWritten);
-    public abstract int Load(LuauState state, string path, string chunkName, string loadName);
-
-    public virtual void OnError(Exception exception)
-    {
-        Console.WriteLine(exception);
-    }
-}
-
-public enum LuauRequirerNavigateResult
-{
-    Success,
-    Ambiguous,
-    NotFound,
-}
+    WorkingDirectory = "scripts/"       // Base directory
+    ConfigFilePath = "scripts/.luaurc"  // Path to .luaurc
+});
 ```
 
-To add the Require library, call `OpenRequireLibrary()` and specify an instance of `LuauRequier` to use as an argument.
-
-```cs
-state.OpenRequireLibrary(new FileSystemLuauRequirer("target/path/"));
-```
+> [!TIP]
+> It's recommended to use aliases configured in your `.luaurc` for specifying paths.
+>
+> ```json
+> {
+>   "aliases": {
+>      "Script": "."
+>   }    
+> }
+> ```
+>
+> ```lua
+> require "@Script/foo"
+> ```
 
 ### LuauLibrary
 
@@ -591,7 +580,24 @@ public class Example : MonoBehaviour
 
 ### Resources / Addressables
 
-TODO:
+In Luau.Unity, `LuaRequirer` implementations that support Resources and Addressables*are available.
+
+```csharp
+state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
+state.OpenRequireLibrary(AddressablesLuauRequirer.Default);
+```
+
+However, if you want to use aliases with these Requirers, you need to explicitly pass them.
+
+```csharp
+state.OpenRequireLibrary(new ResourcesLuauRequirer
+{
+    Aliases =
+    {
+        ["Resources"] = "."
+    }
+});
+```
 
 ## CLI Tools
 
