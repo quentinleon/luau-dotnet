@@ -40,6 +40,7 @@ internal record LuauLibraryMethod
 internal record LuauLibraryMethodParameter
 {
     public required string FullTypeName { get; init; }
+    public required bool FromLuauState { get; init; }
 }
 
 [Generator(LanguageNames.CSharp)]
@@ -76,6 +77,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                     }
 
                     var luauMemberAttribute = context.SemanticModel.Compilation.GetTypeByMetadataName("Luau.LuauMemberAttribute")!;
+                    var fromLuauStateAttribute = context.SemanticModel.Compilation.GetTypeByMetadataName("Luau.FromLuauStateAttribute")!;
 
                     var fields = members
                         .OfType<IFieldSymbol>()
@@ -127,7 +129,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                             return (symbol: x, tryResult, attribute);
                         })
                         .Where(x => x.tryResult)
-                        .Select(static x =>
+                        .Select(x =>
                         {
                             var returnTypeName = x.symbol.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                             var isAsync = x.symbol.ReturnType.IsTaskType();
@@ -144,6 +146,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                                     .Select(x => new LuauLibraryMethodParameter
                                     {
                                         FullTypeName = x.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                                        FromLuauState = x.TryGetAttribute(fromLuauStateAttribute, out _)
                                     })
                                     .ToArray()
                             };
@@ -206,22 +209,29 @@ public class LuauLibraryGenerator : IIncrementalGenerator
 
                 foreach (var method in library.Methods)
                 {
+                    const string ctType = "global::System.Threading.CancellationToken";
+                    var parameterCount = method.Parameters.Count(x => x.FullTypeName != ctType && !x.FromLuauState);
+
                     var argsDeclarations = method.Parameters.Select((x, i) =>
                     {
-                        const string ctType = "global::System.Threading.CancellationToken";
                         if (x.FullTypeName == ctType)
                         {
                             return $"var arg{i} = ct;";
                         }
+                        else if (x.FromLuauState)
+                        {
+                            return $"var arg{i} = state";
+                        }
                         else
                         {
-                            var count = method.Parameters.Count(x => x.FullTypeName != ctType);
-                            return $"var arg{i} = state.ToValue({i - count}).Read<{x.FullTypeName}>();";
+                            return $"var arg{i} = state.ToValue({i - parameterCount}).Read<{x.FullTypeName}>();";
                         }
                     });
+
                     var call = $"{(method.HasReturnValue ? "var result = " : "")} " +
                         (method.IsAsync ? "await " : "") +
                         $"{(method.IsStatic ? library.FullTypeName : "this")}.{method.Name}({string.Join(", ", method.Parameters.Select((x, i) => $"arg{i}"))});";
+
                     var pushResult = method.HasReturnValue ? "state.Push(state.CreateFrom(result));" : "";
 
                     builder.AppendLine($"var function_{method.LuauMemberName} = state.CreateFunction({(method.IsAsync ? "async(state, ct)" : "state")} => ");
