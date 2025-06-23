@@ -14,6 +14,6 @@ namespace Luau.Native
         public static extern void* malloc(nuint size);
 
         [DllImport(__DllName, EntryPoint = "free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        public static extern void* free(void* free);
+        public static extern void free(void* free);
     }
 }
