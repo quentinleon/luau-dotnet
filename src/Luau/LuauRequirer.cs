@@ -64,6 +64,6 @@ public abstract class LuauRequirer
             return alias;
         }
 
-        return $"{path}/{alias[index..]}";
+        return $"{path}{alias[index..]}";
     }
 }
