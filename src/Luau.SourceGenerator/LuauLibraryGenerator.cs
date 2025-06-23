@@ -158,7 +158,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                         FullTypeName = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                         LibraryName = context.Attributes[0].ConstructorArguments[0].Value!.ToString(),
                         TypeName = symbol.Name,
-                        Namespace = symbol.ContainingNamespace.IsGlobalNamespace ? null : symbol.ContainingNamespace.Name,
+                        Namespace = symbol.ContainingNamespace.IsGlobalNamespace ? null : symbol.ContainingNamespace.ToDisplayString(),
                         DeclarationKeyword = syntax.Keyword.ToFullString(),
                         Properties = properties
                             .Concat(fields)
