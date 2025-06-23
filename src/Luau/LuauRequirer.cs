@@ -47,7 +47,7 @@ public abstract class LuauRequirer
     }
 
     protected abstract void LoadModule(LuauState state, string path);
-    protected abstract IDictionary<string, string> GetAliases();
+    protected abstract bool TryGetAliasPath(string alias, out string path);
 
     protected virtual string GetCacheKey(string path) => path;
     protected virtual void OnError(Exception ex)
@@ -64,6 +64,11 @@ public abstract class LuauRequirer
             ? alias[1..]
             : alias[1..index];
 
-        return $"{GetAliases()[key]}/{alias[index..]}";
+        if (!TryGetAliasPath(key, out var path))
+        {
+            return alias;
+        }
+
+        return $"{path}/{alias[index..]}";
     }
 }

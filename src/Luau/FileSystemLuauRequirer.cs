@@ -59,22 +59,23 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         return Path.GetFullPath(targetPath);
     }
 
-    protected override IDictionary<string, string> GetAliases()
+    protected override bool TryGetAliasPath(string alias, out string path)
     {
-        if (aliases != null) return aliases;
-
-        var stream = File.Open(GetConfigFilePathOrDefault(), FileMode.Open, FileAccess.Read, FileShare.Read);
-        var json = JsonDocument.Parse(stream).RootElement;
-
-        if (json.TryGetProperty("aliases", out var aliasesElement))
+        if (aliases == null)
         {
-            aliases = aliasesElement.Deserialize(DictionaryJsonSerializeContext.Default.DictionaryStringString);
-        }
-        else
-        {
-            aliases = [];
+            var stream = File.Open(GetConfigFilePathOrDefault(), FileMode.Open, FileAccess.Read, FileShare.Read);
+            var json = JsonDocument.Parse(stream).RootElement;
+
+            if (json.TryGetProperty("aliases", out var aliasesElement))
+            {
+                aliases = aliasesElement.Deserialize(DictionaryJsonSerializeContext.Default.DictionaryStringString)!;
+            }
+            else
+            {
+                aliases = [];
+            }
         }
 
-        return aliases!;
+        return aliases.TryGetValue(alias, out path);
     }
 }
