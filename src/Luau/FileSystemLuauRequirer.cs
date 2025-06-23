@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 
 namespace Luau;
@@ -32,7 +34,7 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
             ? fullPath
             : Path.GetRelativePath(GetWorkingDirectoryOrDefault(), fullPath);
 
-        targetPath = Path.GetFileNameWithoutExtension(targetPath) + ".luau";
+        if (!Path.HasExtension(targetPath)) targetPath += ".luau";
 
         if (!File.Exists(targetPath))
         {
@@ -52,7 +54,11 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
             }
         }
 
-        var results = state.DoString(writer.WrittenSpan, CompileOptions);
+        var targetFileName = Path.GetFileNameWithoutExtension(targetPath);
+        Span<byte> utf8ChunkName = stackalloc byte[targetFileName.Length * 3];
+        var utf8ChunkNameCount = Encoding.UTF8.GetBytes(targetFileName, utf8ChunkName);
+
+        var results = state.DoString(writer.WrittenSpan, utf8ChunkName[..utf8ChunkNameCount], CompileOptions);
         if (results.Length != 1)
         {
             throw new LuauException($"Module '{requireArgument}' does not return exactly 1 value. It cannot be required.");
