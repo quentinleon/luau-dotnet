@@ -220,7 +220,7 @@ public class LuauLibraryGenerator : IIncrementalGenerator
                         }
                         else if (x.FromLuauState)
                         {
-                            return $"var arg{i} = state";
+                            return $"var arg{i} = state;";
                         }
                         else
                         {
