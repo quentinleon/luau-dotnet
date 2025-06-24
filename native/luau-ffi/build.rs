@@ -6,7 +6,7 @@ fn main() {
         if let Ok(em_dir) = env::var("EM_DIR") {
             fn exec_path(path: &str) -> String {
                 if cfg!(windows) {
-                    format!("{}.bat", path)
+                    format!("{path}.bat")
                 } else {
                     path.to_string()
                 }
@@ -255,10 +255,18 @@ fn new_cmake_config() -> cmake::Config {
             "-DANDROID -ffunction-sections -fdata-sections -fPIC -m64",
         );
     } else if target == "wasm32-unknown-emscripten" {
-        config.define(
-            "CMAKE_C_FLAGS",
-            "-ffunction-sections -fdata-sections -fPIC",
-        );
+        if let Ok(em_dir) = env::var("EM_DIR") {
+            // By default cmake crate overrides compiler paths with not qualified ones, causing missing compiler errors with no emscripten in PATH.
+            config.define(
+                "CMAKE_C_COMPILER",
+                format!("{}/emscripten/emcc", em_dir),
+            );
+            config.define(
+                "CMAKE_CXX_COMPILER",
+                format!("{}/emscripten/em++", em_dir),
+            );
+        }
+        config.define("CMAKE_C_FLAGS", "-ffunction-sections -fdata-sections -fPIC");
         config.define(
             "CMAKE_CXX_FLAGS",
             "-ffunction-sections -fdata-sections -fPIC",
