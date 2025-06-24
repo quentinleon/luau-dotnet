@@ -5,60 +5,21 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Luau.SourceGenerator;
 
-// TODO: refactoring
-
-internal class CreateFunctionContext : IEquatable<CreateFunctionContext>
+internal record CreateFunctionContext
 {
     public CreateFunctionMethod? Method { get; set; }
-    public required DiagnosticReporter DiagnosticReporter { get; init; }
-    public required SemanticModel Model { get; init; }
-
-    public bool Equals(CreateFunctionContext other)
-    {
-        return Method == other.Method;
-    }
-
-    public override bool Equals(object obj)
-    {
-        return obj is CreateFunctionContext ctx && Equals(ctx);
-    }
-
-    public override int GetHashCode()
-    {
-        return Method == null ? 0 : Method.GetHashCode();
-    }
+    public required IgnoreEquality<DiagnosticReporter> DiagnosticReporter { get; init; }
+    public required IgnoreEquality<SemanticModel> Model { get; init; }
 }
 
-internal class CreateFunctionMethod : IEquatable<CreateFunctionMethod>
+internal record CreateFunctionMethod
 {
-    public required CreateFunctionMethodParameter[] Parameters { get; init; }
+    public required EquatableArray<CreateFunctionMethodParameter> Parameters { get; init; }
     public required string ReturnTypeName { get; init; }
     public required bool HasReturnValue { get; init; }
     public required bool IsAsync { get; init; }
     public required string FilePath { get; init; }
     public required int LineNumber { get; init; }
-
-    public bool Equals(CreateFunctionMethod other)
-    {
-        return Parameters.SequenceEqual(other.Parameters) && ReturnTypeName == other.ReturnTypeName;
-    }
-
-    public override bool Equals(object obj)
-    {
-        return obj is CreateFunctionMethod other && Equals(other);
-    }
-
-    public override int GetHashCode()
-    {
-        if (Parameters.Length == 0) return 0;
-        var hashCode = Parameters[0].GetHashCode();
-        for (int i = 1; i < Parameters.Length; i++)
-        {
-            hashCode ^= Parameters[i].GetHashCode();
-        }
-        hashCode ^= ReturnTypeName.GetHashCode();
-        return hashCode;
-    }
 
     public static CreateFunctionMethod Create(Location location, bool isAsync, ITypeSymbol? returnType, CreateFunctionMethodParameter[] parameters)
     {
@@ -212,12 +173,7 @@ namespace Luau
                                 .ToArray();
 
                             var returnType = methodSymbol.ReturnsVoid ? null : methodSymbol.ReturnType;
-                            var isAsync = returnType != null && (
-                                returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.Tasks.Task" ||
-                                returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Threading.Tasks.ValueTask" ||
-                                returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::Cysharp.Threading.Tasks.UniTask" ||
-                                returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::UnityEngine.Awaitable"
-                            );
+                            var isAsync = returnType.IsTaskType();
 
                             result.Method = CreateFunctionMethod.Create(actionExpression.GetLocation(), isAsync, returnType, parameters);
                         }
@@ -244,9 +200,9 @@ namespace Luau
         foreach (var methodContext in methodContexts)
         {
             // check compilation errors
-            if (methodContext.DiagnosticReporter.HasDiagnostics)
+            if (methodContext.DiagnosticReporter.Value.HasDiagnostics)
             {
-                methodContext.DiagnosticReporter.ReportToContext(context);
+                methodContext.DiagnosticReporter.Value.ReportToContext(context);
                 continue;
             }
 
