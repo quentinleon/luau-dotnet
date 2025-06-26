@@ -4,7 +4,7 @@
 ![header](./docs/images/img-header.png)
 
 [![NuGet](https://img.shields.io/nuget/v/Luau.svg)](https://www.nuget.org/packages/Luau)
-[![Releases](https://img.shields.io/github/release/nuskey8/Luau.svg)](https://github.com/AnnulusGames/Lua-CSharp/releases)
+[![Releases](https://img.shields.io/github/release/nuskey8/luau-dotnet.svg)](https://github.com/nuskey8/luau-dotnet/releases)
 [![license](https://img.shields.io/badge/LICENSE-MIT-green.svg)](LICENSE)
 
 English | [日本語](./README_JA.md)
