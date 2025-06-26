@@ -85,6 +85,8 @@ https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity
 }
 ```
 
+また、依存関係である[System.Runtime.CompilerServices.Unsafe](https://www.nuget.org/packages/System.Runtime.Compilerservices.Unsafe/)と[System.Text.Json](https://www.nuget.org/packages/System.Text.Json)のdllをプロジェクトに追加する必要があります。これは[NugetForUnity](https://github.com/GlitchEnzo/NuGetForUnity)を用いるか、NuGetからインストールした.nupkgを.zipにリネームし、展開したフォルダ内のdllをUnityプロジェクトに追加してください。
+
 ## クイックスタート
 
 `LuauState`を用いてLuauスクリプトをC#から実行できます。
