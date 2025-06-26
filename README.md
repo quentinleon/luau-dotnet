@@ -85,6 +85,8 @@ Alternatively, open Packages/manifest.json and add the following to the dependen
 }
 ```
 
+Adding the [System.Runtime.CompilerServices.Unsafe](https://www.nuget.org/packages/System.Runtime.Compilerservices.Unsafe/) and [System.Text.Json](https://www.nuget.org/packages/System.Text.Json) DLLs as dependencies to your project is also necessary. You can do this by using [NugetForUnity](https://github.com/GlitchEnzo/NuGetForUnity) or by renaming the `.nupkg` file you installed from NuGet to `.zip`, unzipping the folder, and then adding the DLLs from the folder to your Unity project.
+
 ## Quick Start
 
 You can execute Luau scripts from C# using `LuauState`.
