@@ -30,20 +30,20 @@ For detailed information about Luau, please refer to the [official documentation
 
 Luau for .NET supports the following platforms.
 
-| Platform | Architecture          | Support | Notes |
-| -------- | --------------------- | ------- | ----- |
-| Windows  | x64                   | ✅      |       |
-|          | arm64                 | ❌      | WIP   |
-| macOS    | x64                   | ✅      |       |
-|          | arm64 (Apple Silicon) | ✅      |       |
-|          | Universal (x64 + arm64) | ✅   |       |
-| Linux    | x64                   | ✅      |       |
-|          | arm64                 | ✅      |       |
-| iOS      | arm64                 | ✅      |       |
-|          | x64                   | ✅      |       |
-| Android  | arm64                 | ✅      |       |
-|          | x64                   | ✅      |       |
-| WebGL    | wasm32                | ❌      | WIP   |
+| Platform | Architecture            | Support | Notes |
+| -------- | ----------------------- | ------- | ----- |
+| Windows  | x64                     | ✅       |       |
+|          | arm64                   | ❌       | WIP   |
+| macOS    | x64                     | ✅       |       |
+|          | arm64 (Apple Silicon)   | ✅       |       |
+|          | Universal (x64 + arm64) | ✅       |       |
+| Linux    | x64                     | ✅       |       |
+|          | arm64                   | ✅       |       |
+| iOS      | arm64                   | ✅       |       |
+|          | x64                     | ✅       |       |
+| Android  | arm64                   | ✅       |       |
+|          | x64                     | ✅       |       |
+| WebGL    | wasm32                  | ✅       |       |
 
 ## Installation
 
@@ -122,7 +122,7 @@ Console.WriteLine(results[0].Type); // string
 
 The correspondence between Lua and C# types is shown below.
 
-| Luau             | C#                        |
+| Luau            | C#                        |
 | --------------- | ------------------------- |
 | `nil`           | `LuaValue.Nil`            |
 | `boolean`       | `bool`                    |

@@ -43,7 +43,7 @@ Luau for .NETは以下のプラットフォームに対応しています。
 |                  | x64                     | ✅        |      |
 | Android          | arm64                   | ✅        |      |
 |                  | x64                     | ✅        |      |
-| WebGL            | wasm32                  | ❌        | WIP  |
+| WebGL            | wasm32                  | ✅        |      |
 
 ## インストール
 
@@ -122,7 +122,7 @@ Console.WriteLine(results[0].Type); // string
 
 Luau-C#間の型の対応を以下に示します。
 
-| Luau             | C#                        |
+| Luau            | C#                        |
 | --------------- | ------------------------- |
 | `nil`           | `LuaValue.Nil`            |
 | `boolean`       | `bool`                    |
