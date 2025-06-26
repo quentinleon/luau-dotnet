@@ -43,7 +43,7 @@ Luau for .NET supports the following platforms.
 |          | x64                     | ✅       |       |
 | Android  | arm64                   | ✅       |       |
 |          | x64                     | ✅       |       |
-| WebGL    | wasm32                  | ✅       |       |
+| Web      | wasm32                  | ✅       |       |
 
 ## Installation
 
