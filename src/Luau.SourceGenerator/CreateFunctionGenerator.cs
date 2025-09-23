@@ -26,7 +26,7 @@ internal record CreateFunctionMethod
         var returnTypeName = returnType == null ? "void" : returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
         var lineSpan = location.GetLineSpan();
-        var filePath = lineSpan.Path;
+        var filePath = lineSpan.Path.Replace('\\', '/');
         var lineNumber = lineSpan.StartLinePosition.Line + 1; // 1-based
 
         return new CreateFunctionMethod
