@@ -65,6 +65,29 @@ public partial class NativeMethods
 
             return NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, path), assembly, searchPath);
         }
+        else if (string.Equals(libraryName, "libc", StringComparison.OrdinalIgnoreCase))
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (NativeLibrary.TryLoad("ucrtbase.dll", assembly, searchPath, out var handle) ||
+                    NativeLibrary.TryLoad("msvcrt.dll", assembly, searchPath, out handle))
+                {
+                    return handle;
+                }
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return NativeLibrary.Load("libSystem.B.dylib", assembly, searchPath);
+            }
+            else
+            {
+                if (NativeLibrary.TryLoad("libc.so.6", assembly, searchPath, out var handle) ||
+                    NativeLibrary.TryLoad("libc.so", assembly, searchPath, out handle))
+                {
+                    return handle;
+                }
+            }
+        }
 
         return IntPtr.Zero;
     }

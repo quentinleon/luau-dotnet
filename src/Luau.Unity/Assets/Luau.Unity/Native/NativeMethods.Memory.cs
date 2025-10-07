@@ -10,10 +10,13 @@ namespace Luau.Native
 
     unsafe partial class NativeMethods
     {
-        [DllImport(__DllName, EntryPoint = "malloc", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+
+        const string C_RUNTIME_LIB = "libc";
+
+        [DllImport(C_RUNTIME_LIB, EntryPoint = "malloc", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void* malloc(nuint size);
 
-        [DllImport(__DllName, EntryPoint = "free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DllImport(C_RUNTIME_LIB, EntryPoint = "free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void free(void* free);
     }
 }
