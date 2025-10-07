@@ -36,6 +36,17 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.target }}
 
+      - name: Normalize Unity plugin names
+        shell: pwsh
+        run: |
+          $dir = "native/luau-ffi/target/${{ matrix.target }}/release"
+          if (Test-Path "$dir/luau.dll") { Rename-Item "$dir/luau.dll" -NewName "libluau.dll" -Force }
+          if (Test-Path "$dir/luau.pdb") { Rename-Item "$dir/luau.pdb" -NewName "libluau.pdb" -Force }
+          if (Test-Path "$dir/luau.lib") { Rename-Item "$dir/luau.lib" -NewName "libluau.lib" -Force }
+          if (Test-Path "$dir/luau.dll.lib") { Rename-Item "$dir/luau.dll.lib" -NewName "libluau.dll.lib" -Force }
+          if (Test-Path "$dir/luau.dll.exp") { Rename-Item "$dir/luau.dll.exp" -NewName "libluau.dll.exp" -Force }
+          if (Test-Path "$dir/luau.d") { Rename-Item "$dir/luau.d" -NewName "libluau.d" -Force }
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
