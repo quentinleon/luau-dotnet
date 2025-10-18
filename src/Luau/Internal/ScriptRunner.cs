@@ -120,10 +120,9 @@ internal sealed class ScriptRunner : IValueTaskSource<int>, IDisposable
                 throw new LuauException(state.Pop().ToString());
         }
 
-        unsafe
-        {
-            argCount = state.GetAbsIndex(state.GetTop()) - prevStackIndex + 1;
-        }
+        var top = state.GetTop();
+        int lastResultIndex = top == 0 ? prevStackIndex - 1 : state.GetAbsIndex(top);
+        argCount = lastResultIndex - prevStackIndex + 1;
 
         return argCount;
     }
@@ -227,10 +226,9 @@ internal sealed class ScriptRunner : IValueTaskSource<int>, IDisposable
                 throw new LuauException(state.Pop().ToString());
         }
 
-        unsafe
-        {
-            argCount = state.GetAbsIndex(state.GetTop()) - prevStackIndex + 1;
-        }
+        var top = state.GetTop();
+        int lastResultIndex = top == 0 ? prevStackIndex - 1 : state.GetAbsIndex(top);
+        argCount = lastResultIndex - prevStackIndex + 1;
 
         return argCount;
     }
