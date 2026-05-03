@@ -10,7 +10,12 @@ namespace Luau.Native
 
     unsafe partial class NativeMethods
     {
-        const string C_RUNTIME_LIB = "libc";
+        const string C_RUNTIME_LIB =
+#if NET8_0_OR_GREATER
+            "libc";
+#else
+            __DllName;
+#endif
 
         [DllImport(C_RUNTIME_LIB, EntryPoint = "malloc", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void* malloc(nuint size);

@@ -1,6 +1,7 @@
 #if NET8_0_OR_GREATER
 
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Luau.Native;
@@ -12,12 +13,7 @@ public partial class NativeMethods
     // win => __DllName, __DllName.dll
     // linux, osx => __DllName.so, __DllName.dylib
 
-    static NativeMethods()
-    {
-        NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, DllImportResolver);
-    }
-
-    static IntPtr DllImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    internal static IntPtr DllImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (libraryName == __DllName)
         {
@@ -63,7 +59,14 @@ public partial class NativeMethods
 
             path += "/native/" + __DllName + extension;
 
-            return NativeLibrary.Load(Path.Combine(AppContext.BaseDirectory, path), assembly, searchPath);
+            var fullPath = Path.Combine(AppContext.BaseDirectory, path);
+
+            if (File.Exists(fullPath))
+            {
+                return NativeLibrary.Load(fullPath, assembly, searchPath);
+            }
+
+            return IntPtr.Zero;
         }
         else if (string.Equals(libraryName, "libc", StringComparison.OrdinalIgnoreCase))
         {
@@ -90,6 +93,15 @@ public partial class NativeMethods
         }
 
         return IntPtr.Zero;
+    }
+}
+
+internal static class NativeMethodsModuleInitializer
+{
+    [ModuleInitializer]
+    internal static void Initialize()
+    {
+        NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, NativeMethods.DllImportResolver);
     }
 }
 

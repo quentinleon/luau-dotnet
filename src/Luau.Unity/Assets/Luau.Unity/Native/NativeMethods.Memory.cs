@@ -10,8 +10,14 @@ namespace Luau.Native
 
     unsafe partial class NativeMethods
     {
-
-        const string C_RUNTIME_LIB = "libc";
+        const string C_RUNTIME_LIB =
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+            "ucrtbase";
+#elif UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+            "libSystem.B.dylib";
+#else
+            "libc";
+#endif
 
         [DllImport(C_RUNTIME_LIB, EntryPoint = "malloc", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern void* malloc(nuint size);

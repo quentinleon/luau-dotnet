@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Luau;
 using Luau.Unity;
 using UnityEngine;
@@ -20,16 +21,33 @@ public class Sandbox : MonoBehaviour
 
         state["print"] = state.CreateFunction(state =>
         {
-            var args = new LuauValue[state.GetTop()];
-            for (int i = 0; i < args.Length; i++)
+            var top = state.GetTop();
+            var parts = new string[top];
+            for (int i = 1; i <= top; i++)
             {
-                args[i] = state.ToValue(-i - 1);
+                parts[i - 1] = ToDisplayString(state, i);
             }
 
-            Debug.Log(string.Join('\t', args));
+            Debug.Log(string.Join('\t', parts));
             return 0;
         });
 
         state.Execute(luauAsset);
+    }
+
+    static string ToDisplayString(LuauState state, int index)
+    {
+        unsafe
+        {
+            var ptr = Luau.Native.NativeMethods.luaL_tolstring(state.AsPointer(), index, null);
+            try
+            {
+                return Marshal.PtrToStringAnsi((nint)ptr) ?? string.Empty;
+            }
+            finally
+            {
+                state.Pop();
+            }
+        }
     }
 }
