@@ -1,15 +1,9 @@
 <Project>
 
-    <PropertyGroup>
-        <!-- NuGet Packaging -->
-        <PackageVersion>0.1.6</PackageVersion>
-        <Authors>nuskey</Authors>
-        <Copyright>© Yusuke Nakada</Copyright>
-        <PackageProjectUrl>https://github.com/nuskey8/luau-dotnet</PackageProjectUrl>
-        <RepositoryUrl>$(PackageProjectUrl)</RepositoryUrl>
-        <RepositoryType>git</RepositoryType>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
-    </PropertyGroup>
+  <PropertyGroup>
+    <!-- This repo is Unity-first. .NET projects are retained as build and test harnesses. -->
+    <RepositoryUrl>https://github.com/nuskey8/luau-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
 
 </Project>

@@ -9,7 +9,6 @@ jobs:
   build:
     name: Build ${{ matrix.target }} on Windows
     runs-on: windows-latest
-    continue-on-error: true
     strategy:
       matrix:
         include:

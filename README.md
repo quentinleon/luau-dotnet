@@ -1,17 +1,17 @@
-# Luau for .NET
- High-level Luau bindings for .NET and Unity
+# Luau for Unity
+
+A Unity-first Luau runtime with a native VM, managed host API, source generators, and platform plugins.
 
 ![header](./docs/images/img-header.png)
 
-[![NuGet](https://img.shields.io/nuget/v/Luau.svg)](https://www.nuget.org/packages/Luau)
 [![Releases](https://img.shields.io/github/release/nuskey8/luau-dotnet.svg)](https://github.com/nuskey8/luau-dotnet/releases)
 [![license](https://img.shields.io/badge/LICENSE-MIT-green.svg)](LICENSE)
 
-English | [日本語](./README_JA.md)
-
 ## Overview
 
-Luau for .NET is a library that enables embedding of the [Luau language](https://luau.org/) into .NET / Unity. It provides both a high-level API with flexible and high-performance async/await support, and a low-level API that is a binding to the C API. Additionally, CLI tools for REPL and type definition file generation are also provided.
+Luau for Unity embeds the [Luau language](https://luau.org/) in Unity applications. The supported product surface is the package under `src/Luau.Unity/Assets/Luau.Unity`; it includes the high-level managed API, low-level native bindings, source-generator support, and native plugins.
+
+The projects under `src/Luau`, `src/Luau.Native`, and `src/Luau.SourceGenerator` remain in this repository as a fast .NET build/test harness and as sources for intentionally copied Unity artifacts. They are not published as NuGet products. The former CLI and console sample are retained only under `tools/legacy` for reference.
 
 > [!CAUTION]
 > This library is currently provided as a preview version. While many APIs are already stable, some features are not yet implemented.
@@ -28,7 +28,7 @@ For detailed information about Luau, please refer to the [official documentation
 
 ## Platforms
 
-Luau for .NET supports the following platforms.
+The Unity package includes native plugins for the following platforms.
 
 | Platform | Architecture            | Support | Notes |
 | -------- | ----------------------- | ------- | ----- |
@@ -47,23 +47,7 @@ Luau for .NET supports the following platforms.
 
 ## Installation
 
-### NuGet packages
-
-To use Luau for .NET, .NET Standard 2.1 or higher is required. Packages can be obtained from NuGet.
-
-### .NET CLI
-
-```ps1
-dotnet add package Luau
-```
-
-### Package Manager
-
-```ps1
-Install-Package Luau
-```
-
-### Unity
+### Unity Package Manager
 
 For Unity, installation from Package Manager is possible.
 
@@ -85,18 +69,17 @@ Alternatively, open Packages/manifest.json and add the following to the dependen
 }
 ```
 
-Adding the [System.Runtime.CompilerServices.Unsafe](https://www.nuget.org/packages/System.Runtime.Compilerservices.Unsafe/) and [System.Text.Json](https://www.nuget.org/packages/System.Text.Json) DLLs as dependencies to your project is also necessary. You can do this by using [NugetForUnity](https://github.com/GlitchEnzo/NuGetForUnity) or by renaming the `.nupkg` file you installed from NuGet to `.zip`, unzipping the folder, and then adding the DLLs from the folder to your Unity project.
-
 ## Quick Start
 
 You can execute Luau scripts from C# using `LuauState`.
 
 ```cs
-using Luau;
+using Luau.Unity;
+using UnityEngine;
 
-using var state = LuauState.Create();
+using var state = LuauUnity.CreateState();
 var results = state.DoString("return 1 + 1");
-Console.WriteLine(results[0]); // 2
+Debug.Log(results[0]); // 2
 ```
 
 > [!WARNING]
@@ -367,21 +350,19 @@ state.OpenStringLibrary();
 state.OpenCoroutineLibrary();
 state.OpenBit32Library();
 state.OpenUtf8Library();
-state.OpenOSLibrary();
-state.OpenDebugLibrary();
 state.OpenBufferLibrary();
 state.OpenVectorLibrary();
 ```
 
-To add all standard libraries at once, use `OpenLibraries()`.
+`OpenOSLibrary()`, `OpenDebugLibrary()`, and `OpenLibraries()` also exist for trusted hosts, but should not be enabled for untrusted scripts. `LuauUnity.CreateState()` opens the Unity-safe standard set without OS or debug libraries.
 
 ```cs
-state.OpenLibraries();
+state.OpenLibraries(); // trusted hosts only
 ```
 
 ### Require Library
 
-Luau's `require()` implementation is significantly different from Lua's. Luau for .NET offers corresponding C\# APIs to handle this.
+Luau's `require()` implementation is significantly different from Lua's. The managed host API provides corresponding C\# hooks for module resolution.
 
 The `LuauRequirer` class abstracts Luau's module resolution, allowing you to customize how `require()` loads modules by implementing it. By default, `FileSystemLuauRequirer` is provided, which searches for `*.luau` and `.luaurc` files starting from a specified directory. Additionally, implementations for loading modules from Resources and Addressables are available for Unity.
 
@@ -464,8 +445,6 @@ foo.echo("foo")       -- foo
 print(foo.getfield()) -- 50
 ```
 
-Additionally, you can automatically generate Luau type definition files using CLI tools. For details, see the [CLI Tools](#cli-tools) section.
-
 ## Bytecode
 
 You can convert Luau scripts to bytecode using `LuauCompiler.Compile()`. This is convenient when you want to pre-compile Luau files.
@@ -509,27 +488,9 @@ var result = state.ToNumber(-1);
 state.Pop(1);
 ```
 
-## Luau.Native
+## Low-level native bindings
 
-Luau's C API bindings are distributed as a separate Luau.Native package on NuGet. You can use this if you don't need the high-level API.
-
-### Installation
-
-#### .NET CLI
-
-```ps1
-dotnet add package Luau.Native
-```
-
-#### Package Manager
-
-```ps1
-Install-Package Luau.Native
-```
-
-#### Unity
-
-In Unity, Luau.Native is distributed in the same package as the regular one.
+The Unity package contains `Luau.Native`, the generated low-level C API bindings used by the high-level runtime. They are an implementation surface for hosts that need direct VM access, not a separately distributed NuGet product.
 
 ### Usage
 
@@ -551,7 +512,7 @@ unsafe
 
 ## Unity
 
-The Luau.Unity package includes several Unity-specific extensions in addition to the regular Luau for .NET functionality.
+The Luau.Unity package includes Unity assets, module resolvers, and convenience APIs in addition to the managed runtime.
 
 ### LuauAsset
 
@@ -574,7 +535,7 @@ public class Example : MonoBehaviour
 
     void Start()
     {
-        using var state = LuauState.Create();
+        using var state = LuauUnity.CreateState();
         state.Execute(script);
     }
 }
@@ -582,7 +543,7 @@ public class Example : MonoBehaviour
 
 ### Resources / Addressables
 
-In Luau.Unity, `LuaRequirer` implementations that support Resources and Addressables*are available.
+In Luau.Unity, `LuauRequirer` implementations that support Resources and Addressables are available.
 
 ```csharp
 state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
@@ -599,74 +560,6 @@ state.OpenRequireLibrary(new ResourcesLuauRequirer
         ["Resources"] = "."
     }
 });
-```
-
-## CLI Tools
-
-Luau for .NET provides a CLI tool that can perform REPL, type checking, and more.
-
-```ps1
-dotnet tool install --global luau-cli
-```
-
-By using this, you can call tools provided by Luau, such as REPL and type checking, from the `dotnet luau` command.
-
-```ps1
-$ dotnet luau
-> 1 + 2
-3
-```
-
-```ps1
-$ dotnet luau analyze test.luau
-test.luau(1,1): TypeError: Type 'number' could not be converted into 'string'
-
-$ dotnet luau ast test.luau
-{"root":{"type":"AstStatBlock","location":"0,0 - 0,12","hasEnd":true,"body":[{"type":"AstStatReturn","location":"0,0 - 0,12","list":[{"type":"AstExprBinary","location":"0,7 - 0,12","op":"Add","left":{"type":"AstExprConstantNumber","location":"0,7 - 0,8","value":1},"right":{"type":"AstExprConstantNumber","location":"0,11 - 0,12","value":2}}]}]},"commentLocations":[]}%       
-
-$ dotnet luau compile test.luau
-Function 0 (??):
-    1: return 1 + 2
-LOADN R0 3
-RETURN R0 1
-```
-
-Also, the `dluau` command has been added as an extension for Luau for .NET. Using this command, you can generate a type definition file based on the `[LuauLibrary]` defined in the project.
-
-```cs
-[LuauLibrary("cmd")]
-partial class Commands
-{
-    [LuauMember]
-    public double foo;
-
-    [LuauMember]
-    public void Hello()
-    {
-        Console.WriteLine("Hello!");
-    }
-
-    [LuauMember("echo")]
-    public static void Echo(string value)
-    {
-        Console.WriteLine(value);
-    }
-}
-```
-
-```ps1
-$ dotnet luau dluau Program.cs -o libs.d.luau
-```
-
-```lua
--- libs.d.luau
-
-declare cmd:
-{
-    foo: number,
-    Hello: () -> (),
-    echo: (value: string) -> (),
-}
 ```
 
 ## License

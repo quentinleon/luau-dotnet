@@ -1,2 +1,18 @@
 .vscode/
+.idea/
 *.DS_STORE
+
+# .NET build output
+bin/
+obj/
+
+# Unity generated state
+src/Luau.Unity/Library/
+src/Luau.Unity/Temp/
+src/Luau.Unity/Logs/
+src/Luau.Unity/UserSettings/
+src/Luau.Unity/.idea/
+src/Luau.Unity/Assets/**/obj/
+src/Luau.Unity/Assets/**/obj.meta
+src/Luau.Unity/Assets/**/bin/
+src/Luau.Unity/Assets/**/bin.meta

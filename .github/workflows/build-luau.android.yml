@@ -8,7 +8,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }} on Android
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: ${{ matrix.target != 'aarch64-linux-android' }}
     strategy:
       matrix:
         include:

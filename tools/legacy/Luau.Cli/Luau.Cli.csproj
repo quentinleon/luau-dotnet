@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net9.0;net8.0;</TargetFrameworks>
+    <ToolCommandName>dotnet-luau</ToolCommandName>
+    <PackAsTool>false</PackAsTool>
+    <IsPackable>false</IsPackable>
+
+    <LangVersion>13</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="ZLinq.FileSystem" Version="1.4.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Luau\Luau.csproj" />
+    <ProjectReference Include="..\..\..\src\Luau.SourceGenerator\Luau.SourceGenerator.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="tools/osx/luau" CopyToOutputDirectory="Always" />
+    <None Include="tools/osx/luau-analyze" CopyToOutputDirectory="Always" />
+    <None Include="tools/osx/luau-ast" CopyToOutputDirectory="Always" />
+    <None Include="tools/osx/luau-compile" CopyToOutputDirectory="Always" />
+
+    <None Include="tools/linux/luau" CopyToOutputDirectory="Always" />
+    <None Include="tools/linux/luau-analyze" CopyToOutputDirectory="Always" />
+    <None Include="tools/linux/luau-ast" CopyToOutputDirectory="Always" />
+    <None Include="tools/linux/luau-compile" CopyToOutputDirectory="Always" />
+
+    <None Include="tools/win/luau.exe" CopyToOutputDirectory="Always" />
+    <None Include="tools/win/luau-analyze.exe" CopyToOutputDirectory="Always" />
+    <None Include="tools/win/luau-ast.exe" CopyToOutputDirectory="Always" />
+    <None Include="tools/win/luau-compile.exe" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+</Project>

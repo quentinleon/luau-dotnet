@@ -9,10 +9,7 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <AnalyzerLanguage>cs</AnalyzerLanguage>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
-    <IncludeBuildOutput>false</IncludeBuildOutput>
-    <DevelopmentDependency>true</DevelopmentDependency>
-    <IncludeSymbols>false</IncludeSymbols>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,20 +19,6 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
 
-    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs"
-      Visible="false" />
   </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="README.md" />
-    <EmbeddedResource Include="..\..\LICENSE" />
-  </ItemGroup>
-
-  <!-- Copy files to Unity project -->
-  <Target Name="CopyDllToUnity" AfterTargets="AfterBuild">
-    <Copy
-      SourceFiles="$(OutputPath)\Luau.SourceGenerator.dll"
-      DestinationFolder="$(ProjectDir)\..\Luau.Unity\Assets\Luau.Unity\Runtime\" />
-  </Target>
 
 </Project>

@@ -2,7 +2,7 @@
     "name": "com.nuskey.luau.unity",
     "version": "0.1.6",
     "displayName": "Luau.Unity",
-    "description": "High-level Luau bindings for .NET and Unity",
+    "description": "Unity-first Luau runtime with managed APIs and native plugins",
     "author": {
         "name": "nuskey"
     }
