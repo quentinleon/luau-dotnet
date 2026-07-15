@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Deliberate regression coverage for transitional unsupported APIs.
+
 using System.Text;
 
 namespace Luau.Tests;

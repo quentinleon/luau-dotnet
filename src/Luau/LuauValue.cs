@@ -34,6 +34,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return new(LuauType.String, default, value);
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public static LuauValue FromLightUserData(IntPtr value)
     {
         return new(LuauType.LightUserData, new() { PointerValue = value }, null);

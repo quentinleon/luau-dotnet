@@ -51,12 +51,21 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
 
     public static LuauState Create(LuauStateOptions options)
     {
+        return Create(options, LuauNativeProtection.AbiVerifier);
+    }
+
+    internal static LuauState Create(LuauStateOptions options, LuauNativeAbiVerifier abiVerifier)
+    {
         if (options == null)
         {
             throw new ArgumentNullException(nameof(options));
         }
+        if (abiVerifier == null)
+        {
+            throw new ArgumentNullException(nameof(abiVerifier));
+        }
         options.Validate();
-        LuauNativeProtection.EnsureAvailable();
+        abiVerifier.EnsureAvailable();
 
         LuauTrackedAllocator? allocator = null;
         lua_State* statePointer;
@@ -180,6 +189,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         this.isMainThread = isMainThread;
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public lua_State* AsPointer()
     {
         ThrowIfDisposed();

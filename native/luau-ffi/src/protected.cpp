@@ -12,12 +12,69 @@
 #include <atomic>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <new>
 #include <string>
+
+struct luau_ffi_abi_info_v2
+{
+    uint32_t struct_size;
+    uint32_t protected_abi_version;
+    uint8_t pointer_size;
+    uint8_t size_t_size;
+    uint8_t little_endian;
+    uint8_t reserved0;
+    uint32_t compile_options_size;
+    uint32_t callbacks_size;
+    int32_t type_nil;
+    int32_t type_boolean;
+    int32_t type_lightuserdata;
+    int32_t type_number;
+    int32_t type_vector;
+    int32_t type_string;
+    int32_t type_table;
+    int32_t type_function;
+    int32_t type_userdata;
+    int32_t type_thread;
+    int32_t type_buffer;
+};
+
+static_assert(sizeof(uint8_t) == 1, "The ABI information record requires 8-bit bytes");
+static_assert(sizeof(uint32_t) == 4, "The ABI information record requires 32-bit uint32_t");
+static_assert(sizeof(int32_t) == 4, "The ABI information record requires 32-bit int32_t");
+static_assert(offsetof(luau_ffi_abi_info_v2, struct_size) == 0, "Unexpected ABI info struct_size offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, protected_abi_version) == 4, "Unexpected ABI info protected_abi_version offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, pointer_size) == 8, "Unexpected ABI info pointer_size offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, size_t_size) == 9, "Unexpected ABI info size_t_size offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, little_endian) == 10, "Unexpected ABI info little_endian offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, reserved0) == 11, "Unexpected ABI info reserved0 offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, compile_options_size) == 12, "Unexpected ABI info compile_options_size offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, callbacks_size) == 16, "Unexpected ABI info callbacks_size offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_nil) == 20, "Unexpected ABI info type_nil offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_boolean) == 24, "Unexpected ABI info type_boolean offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_lightuserdata) == 28, "Unexpected ABI info type_lightuserdata offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_number) == 32, "Unexpected ABI info type_number offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_vector) == 36, "Unexpected ABI info type_vector offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_string) == 40, "Unexpected ABI info type_string offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_table) == 44, "Unexpected ABI info type_table offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_function) == 48, "Unexpected ABI info type_function offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_userdata) == 52, "Unexpected ABI info type_userdata offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_thread) == 56, "Unexpected ABI info type_thread offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_buffer) == 60, "Unexpected ABI info type_buffer offset");
+static_assert(sizeof(luau_ffi_abi_info_v2) == 64, "Unexpected ABI information record size");
+static_assert(sizeof(lua_CompileOptions) <= UINT32_MAX, "lua_CompileOptions size does not fit the ABI record");
+static_assert(sizeof(lua_Callbacks) <= UINT32_MAX, "lua_Callbacks size does not fit the ABI record");
 
 namespace
 {
 using InterruptPoll = int (*)(lua_State* L, int gc);
+
+template<typename T>
+void writeabiinfofield(void* destination, uint32_t destinationSize, size_t offset, const T& value)
+{
+    if (offset <= destinationSize && sizeof(T) <= destinationSize - offset)
+        memcpy(static_cast<uint8_t*>(destination) + offset, &value, sizeof(T));
+}
 
 // Every managed state installs the same static UnmanagedCallersOnly poll
 // function. Keep that process-wide function pointer native so the Luau
@@ -505,6 +562,59 @@ extern "C"
 int luau_ffi_protected_abi_version()
 {
     return 2;
+}
+
+int luau_ffi_protected_abi_info_v2(luau_ffi_abi_info_v2* info, uint32_t infoSize)
+{
+    constexpr int Ok = 0;
+    constexpr int BufferTooSmall = 1;
+    constexpr int InvalidArgument = 2;
+
+    if (!info)
+        return InvalidArgument;
+
+    const uint32_t structSize = uint32_t(sizeof(luau_ffi_abi_info_v2));
+    const uint32_t protectedAbiVersion = 2;
+    const uint8_t pointerSize = uint8_t(sizeof(void*));
+    const uint8_t sizeTSize = uint8_t(sizeof(size_t));
+    const uint16_t endianProbe = 1;
+    const uint8_t littleEndian = *reinterpret_cast<const uint8_t*>(&endianProbe);
+    const uint8_t reserved = 0;
+    const uint32_t compileOptionsSize = uint32_t(sizeof(lua_CompileOptions));
+    const uint32_t callbacksSize = uint32_t(sizeof(lua_Callbacks));
+    const int32_t typeNil = LUA_TNIL;
+    const int32_t typeBoolean = LUA_TBOOLEAN;
+    const int32_t typeLightUserdata = LUA_TLIGHTUSERDATA;
+    const int32_t typeNumber = LUA_TNUMBER;
+    const int32_t typeVector = LUA_TVECTOR;
+    const int32_t typeString = LUA_TSTRING;
+    const int32_t typeTable = LUA_TTABLE;
+    const int32_t typeFunction = LUA_TFUNCTION;
+    const int32_t typeUserdata = LUA_TUSERDATA;
+    const int32_t typeThread = LUA_TTHREAD;
+    const int32_t typeBuffer = LUA_TBUFFER;
+
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, struct_size), structSize);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, protected_abi_version), protectedAbiVersion);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, pointer_size), pointerSize);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, size_t_size), sizeTSize);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, little_endian), littleEndian);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, reserved0), reserved);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, compile_options_size), compileOptionsSize);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, callbacks_size), callbacksSize);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_nil), typeNil);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_boolean), typeBoolean);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_lightuserdata), typeLightUserdata);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_number), typeNumber);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_vector), typeVector);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_string), typeString);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_table), typeTable);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_function), typeFunction);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_userdata), typeUserdata);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_thread), typeThread);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_buffer), typeBuffer);
+
+    return infoSize < sizeof(luau_ffi_abi_info_v2) ? BufferTooSmall : Ok;
 }
 
 int luau_ffi_protected_compile(

@@ -16,7 +16,4 @@ namespace Luau.Native
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public unsafe delegate void lua_Coverage(void* context, char* function, int linedefined, int depth, int* hits, nuint size);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public unsafe delegate void luarequire_Configuration_init(luarequire_Configuration* config);
 }

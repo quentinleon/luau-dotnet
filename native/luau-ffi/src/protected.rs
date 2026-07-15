@@ -7,9 +7,40 @@ pub type luau_ffi_protected_destructor =
 pub const LUAU_PROTECTED_COMPILE_OK: u32 = 0;
 pub const LUAU_PROTECTED_COMPILE_OUT_OF_MEMORY: u32 = 1;
 pub const LUAU_PROTECTED_COMPILE_ERROR: u32 = 2;
+pub const LUAU_ABI_INFO_OK: u32 = 0;
+pub const LUAU_ABI_INFO_BUFFER_TOO_SMALL: u32 = 1;
+pub const LUAU_ABI_INFO_INVALID_ARGUMENT: u32 = 2;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct luau_ffi_abi_info_v2 {
+    pub struct_size: u32,
+    pub protected_abi_version: u32,
+    pub pointer_size: u8,
+    pub size_t_size: u8,
+    pub little_endian: u8,
+    pub reserved0: u8,
+    pub compile_options_size: u32,
+    pub callbacks_size: u32,
+    pub type_nil: i32,
+    pub type_boolean: i32,
+    pub type_lightuserdata: i32,
+    pub type_number: i32,
+    pub type_vector: i32,
+    pub type_string: i32,
+    pub type_table: i32,
+    pub type_function: i32,
+    pub type_userdata: i32,
+    pub type_thread: i32,
+    pub type_buffer: i32,
+}
 
 unsafe extern "C" {
     pub fn luau_ffi_protected_abi_version() -> c_int;
+    pub fn luau_ffi_protected_abi_info_v2(
+        info: *mut luau_ffi_abi_info_v2,
+        infoSize: u32,
+    ) -> c_int;
     pub fn luau_ffi_protected_compile(
         source: *const c_char,
         size: usize,

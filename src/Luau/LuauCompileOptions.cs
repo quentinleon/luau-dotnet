@@ -10,6 +10,7 @@ public record LuauCompileOptions
     {
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCompileOptions)]
     public LuauCompileOptions(lua_CompileOptions options)
     {
         this.options = options;

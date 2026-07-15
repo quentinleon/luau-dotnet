@@ -11,10 +11,12 @@ public sealed class LuauStateOptions
     int? maxSourceBytes;
     int? maxBytecodeBytes;
     LuauExecutionOptions defaultExecutionOptions = LuauExecutionOptions.Default;
-    LuauBytecodePolicy bytecodePolicy;
+    LuauBytecodePolicy bytecodePolicy = LuauBytecodePolicy.Reject;
 
     /// <summary>
-    /// Gets the compatibility-preserving default options.
+    /// Gets the default options. Ordinary host-supplied bytecode is rejected
+    /// unless the host explicitly selects a different policy. Resource limits
+    /// remain host policy and are unbounded unless configured.
     /// </summary>
     public static LuauStateOptions Default { get; } = new();
 
@@ -97,9 +99,10 @@ public sealed class LuauStateOptions
 
     /// <summary>
     /// Gets the policy for host-supplied precompiled bytecode. The default is
-    /// <see cref="LuauBytecodePolicy.AllowUnvalidated"/> for compatibility.
-    /// Hardened hosts should choose <see cref="LuauBytecodePolicy.Reject"/> or
-    /// <see cref="LuauBytecodePolicy.RequireValidator"/>.
+    /// <see cref="LuauBytecodePolicy.Reject"/>. A trusted host must explicitly
+    /// choose <see cref="LuauBytecodePolicy.AllowUnvalidated"/> or configure
+    /// <see cref="LuauBytecodePolicy.RequireValidator"/> with a provenance
+    /// validator.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The assigned enum value is not defined.

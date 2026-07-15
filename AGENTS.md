@@ -9,7 +9,7 @@ The native Luau VM stays. "Drop .NET native stuff" means removing the generic Nu
 ## Major Areas
 
 - `luau/`: Luau C++ submodule. It may be uninitialized in fresh checkouts.
-- `native/luau-ffi/`: Rust/CMake bridge that builds Luau VM/compiler/require and exports the `ffi_*` ABI consumed by C#.
+- `native/luau-ffi/`: Rust/CMake bridge that builds the Luau VM/compiler and exports the `ffi_*` ABI consumed by C#. The separate high-level managed `LuauRequirer` does not use upstream native Require.
 - `src/Luau.Native/`: low-level generated/native interop used by the .NET harness.
 - `src/Luau/`: high-level managed runtime wrapper used by tests and copied into Unity as `Luau.dll`.
 - `src/Luau.SourceGenerator/`: Roslyn generators for `CreateFunction` and `[LuauLibrary]`.

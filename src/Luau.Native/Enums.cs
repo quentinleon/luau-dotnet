@@ -47,20 +47,6 @@ namespace Luau.Native
         // the count of TValue type tags
         LUA_T_COUNT = LUA_TPROTO
     };
-
-    public enum luarequire_NavigateResult
-    {
-        NAVIGATE_SUCCESS,
-        NAVIGATE_AMBIGUOUS,
-        NAVIGATE_NOT_FOUND
-    };
-
-    public enum luarequire_WriteResult
-    {
-        WRITE_SUCCESS,
-        WRITE_BUFFER_TOO_SMALL,
-        WRITE_FAILURE
-    };
 }
 
 #pragma warning restore IDE1006

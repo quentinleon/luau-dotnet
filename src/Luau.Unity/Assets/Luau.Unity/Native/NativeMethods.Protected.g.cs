@@ -22,10 +22,16 @@ namespace Luau.Native
         public const uint LUAU_PROTECTED_COMPILE_OK = 0;
         public const uint LUAU_PROTECTED_COMPILE_OUT_OF_MEMORY = 1;
         public const uint LUAU_PROTECTED_COMPILE_ERROR = 2;
+        public const uint LUAU_ABI_INFO_OK = 0;
+        public const uint LUAU_ABI_INFO_BUFFER_TOO_SMALL = 1;
+        public const uint LUAU_ABI_INFO_INVALID_ARGUMENT = 2;
 
 
         [DllImport(__DllName, EntryPoint = "ffi_luau_ffi_protected_abi_version", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern int luau_ffi_protected_abi_version();
+
+        [DllImport(__DllName, EntryPoint = "ffi_luau_ffi_protected_abi_info_v2", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        public static extern int luau_ffi_protected_abi_info_v2(luau_ffi_abi_info_v2* info, uint infoSize);
 
         [DllImport(__DllName, EntryPoint = "ffi_luau_ffi_protected_compile", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         public static extern int luau_ffi_protected_compile(byte* source, nuint size, lua_CompileOptions* options, byte** output, nuint* outputSize);
@@ -175,6 +181,30 @@ namespace Luau.Native
         public static extern int luau_ffi_protected_sandboxthread(lua_State* L);
 
 
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe partial struct luau_ffi_abi_info_v2
+    {
+        public uint struct_size;
+        public uint protected_abi_version;
+        public byte pointer_size;
+        public byte size_t_size;
+        public byte little_endian;
+        public byte reserved0;
+        public uint compile_options_size;
+        public uint callbacks_size;
+        public int type_nil;
+        public int type_boolean;
+        public int type_lightuserdata;
+        public int type_number;
+        public int type_vector;
+        public int type_string;
+        public int type_table;
+        public int type_function;
+        public int type_userdata;
+        public int type_thread;
+        public int type_buffer;
     }
 
 

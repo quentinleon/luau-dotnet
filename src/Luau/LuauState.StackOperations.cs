@@ -183,7 +183,9 @@ public unsafe partial class LuauState
             case lua_Type.LUA_TBOOLEAN:
                 return LuauValue.FromBoolean(lua_toboolean(l, index) == 1);
             case lua_Type.LUA_TLIGHTUSERDATA:
+#pragma warning disable CS0618 // Transitional internal light-userdata protocol.
                 return LuauValue.FromLightUserData((IntPtr)lua_tolightuserdata(l, index));
+#pragma warning restore CS0618
             case lua_Type.LUA_TNUMBER:
                 return LuauValue.FromNumber(lua_tonumber(l, index));
             case lua_Type.LUA_TVECTOR:
@@ -229,6 +231,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public IntPtr ToLightUserData(int index)
     {
         ThrowIfDisposed();
@@ -385,6 +388,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public lua_CFunction ToCFunction(int index)
     {
         ThrowIfDisposed();
@@ -393,6 +397,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public void* ToPointer(int index)
     {
         ThrowIfDisposed();
@@ -411,7 +416,9 @@ public unsafe partial class LuauState
                 PushBoolean(value.Read<bool>());
                 break;
             case LuauType.LightUserData:
+#pragma warning disable CS0618 // Transitional runtime call; the public pointer API remains unsupported.
                 PushLightUserData(value.Read<IntPtr>().ToPointer());
+#pragma warning restore CS0618
                 break;
             case LuauType.Number:
                 PushNumber(value.Read<double>());
@@ -461,6 +468,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public void PushLightUserData(void* value)
     {
         ThrowIfDisposed();
@@ -638,10 +646,12 @@ public unsafe partial class LuauState
             else
             {
                 LuauNativeProtection.Prepare(context);
+#pragma warning disable CS0618 // Transitional runtime call until Stage 4 internalizes native callback plumbing.
                 var tokenStatus = luau_ffi_protected_pushlightuserdatatagged(
                     l,
                     value.AsPointer(),
                     0);
+#pragma warning restore CS0618
                 LuauNativeProtection.ThrowIfFailed(
                     this,
                     l,
@@ -650,12 +660,14 @@ public unsafe partial class LuauState
             }
 
             LuauNativeProtection.Prepare(context);
+#pragma warning disable CS0618 // Transitional runtime call until Stage 4 internalizes native callback plumbing.
             var closureStatus = luau_ffi_protected_pushcclosurek(
                 l,
                 value.AsCFunction(),
                 null,
                 1,
                 null);
+#pragma warning restore CS0618
             LuauNativeProtection.ThrowIfFailed(
                 this,
                 l,
@@ -665,6 +677,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public void PushCFunction(lua_CFunction value, ReadOnlySpan<byte> debugName = default)
     {
         ThrowIfDisposed();
@@ -704,6 +717,7 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public void PushCClosure(lua_CFunction value, ReadOnlySpan<byte> debugName = default, int upvalues = 0)
     {
         ThrowIfDisposed();

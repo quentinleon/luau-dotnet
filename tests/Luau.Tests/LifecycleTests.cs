@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Deliberate lifetime coverage for transitional pointer escape hatches.
+
 using System.Runtime.CompilerServices;
 
 namespace Luau.Tests;
@@ -109,7 +111,7 @@ public sealed class LifecycleTests
         var table = root.CreateTable();
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.Load(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => 0);
 
         Parallel.For(0, 8, _ => table.Dispose());
@@ -137,7 +139,7 @@ public sealed class LifecycleTests
         var table = root.CreateTable();
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.Load(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => 0);
 
         root.Dispose();
@@ -328,7 +330,7 @@ public sealed class LifecycleTests
             table[1] = 11;
             var userData = root.CreateUserData(123);
             var buffer = root.CreateBuffer(16);
-            var script = root.Load(LuauCompiler.Compile("return 1"u8));
+            var script = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
             var callback = root.CreateFunction(_ => 0);
 
             await RaceUseAndDisposeAsync(() => Assert.Equal(1, table.Count), table.Dispose);
@@ -360,7 +362,7 @@ public sealed class LifecycleTests
         var table = state.CreateTable();
         var userData = state.CreateUserData(123);
         var buffer = state.CreateBuffer(8);
-        var function = state.Load(LuauCompiler.Compile("return 1"u8));
+        var function = state.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
 
         return
         [
@@ -394,7 +396,7 @@ public sealed class LifecycleTests
         var table = root.CreateTable();
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.Load(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => 0);
 
         root.Dispose();

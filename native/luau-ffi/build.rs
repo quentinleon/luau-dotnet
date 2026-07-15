@@ -38,38 +38,45 @@ fn main() {
 
     build_protected_bridge(&target);
 
-    let dst = new_cmake_config().build_target("Luau.Compiler").build();
+    let luau_cmake_output = new_cmake_config().build_target("Luau.Compiler").build();
     println!(
         "cargo:warning=CMake configure (Luau.Compiler) completed: {}",
-        dst.display()
+        luau_cmake_output.display()
     );
 
-    let dst = new_cmake_config().build_target("Luau.Require").build();
+    let vm_cmake_output = new_cmake_config().build_target("Luau.VM").build();
     println!(
-        "cargo:warning=CMake configure (Luau.Require) completed: {}",
-        dst.display()
+        "cargo:warning=CMake configure (Luau.VM) completed: {}",
+        vm_cmake_output.display()
+    );
+    assert_eq!(
+        luau_cmake_output, vm_cmake_output,
+        "Luau.Compiler and Luau.VM must share one CMake output directory"
     );
 
     let target = build_target::target_triple().unwrap();
     if target == "aarch64-unknown-linux-gnu" {
-        println!("cargo:rustc-link-search=native={}/build", dst.display());
+        println!(
+            "cargo:rustc-link-search=native={}/build",
+            luau_cmake_output.display()
+        );
         println!("cargo:rustc-link-lib=dylib=stdc++");
     } else if target == "x86_64-pc-windows-msvc" {
         println!(
             "cargo:rustc-link-search=native={}/build/Release",
-            dst.display()
+            luau_cmake_output.display()
         );
     } else {
-        println!("cargo:rustc-link-search=native={}/build", dst.display());
+        println!(
+            "cargo:rustc-link-search=native={}/build",
+            luau_cmake_output.display()
+        );
         println!("cargo:rustc-link-lib=dylib=c++");
     }
 
     println!("cargo:rustc-link-lib=static=Luau.Ast");
-    println!("cargo:rustc-link-lib=static=Luau.Config");
     println!("cargo:rustc-link-lib=static=Luau.Compiler");
     println!("cargo:rustc-link-lib=static=Luau.VM");
-    println!("cargo:rustc-link-lib=static=Luau.RequireNavigator");
-    println!("cargo:rustc-link-lib=static=Luau.Require");
 
     println!("cargo:rerun-if-env-changed=LUAU_FFI_SKIP_BINDGEN");
     if env::var_os("LUAU_FFI_SKIP_BINDGEN").is_none() {
@@ -85,28 +92,6 @@ fn main() {
             .generate()
             .unwrap()
             .write_to_file("src/luau.rs")
-            .unwrap();
-
-        bindgen::Builder::default()
-            .headers(["../../luau/Require/Runtime/include/Luau/Require.h"])
-            .clang_arg("-x")
-            .clang_arg("c++")
-            .clang_arg("-std=c++17")
-            .clang_arg("-I../../luau/Compiler/include")
-            .clang_arg("-I../../luau/VM/include")
-            .clang_arg("-I../../luau/Require/Runtime/include")
-            .clang_arg("-DLUA_API=extern\"C\"")
-            .allowlist_function("luarequire_.*")
-            .allowlist_function("luaopen_require")
-            .allowlist_type("luarequire_.*")
-            .blocklist_type("lua_State")
-            .raw_line("use super::luau::*;")
-            .clang_arg(format!("--target={}", target))
-            .clang_arg("-fvisibility=default")
-            .layout_tests(false)
-            .generate()
-            .unwrap()
-            .write_to_file("src/luau_require.rs")
             .unwrap();
     }
 
@@ -135,34 +120,6 @@ using lua_getcoverage_callback_delegate = Luau.Native.lua_Coverage;
     cs.csharp_dll_name_if("(UNITY_IOS || UNITY_WEBGL) && !UNITY_EDITOR", "__Internal")
         .generate_csharp_file("../../src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.g.cs")
         .unwrap();
-
-    let cs2 = new_csbindgen_builder("src/luau_require.rs")
-        .rust_file_header(
-            "
-use super::luau::*;
-use super::luau_require::*;
-",
-        )
-        .csharp_disable_emit_dll_name(true)
-        .csharp_file_header(
-            "
-using luarequire_pushrequire_config_init_delegate = Luau.Native.luarequire_Configuration_init;     
-using luaopen_require_config_init_delegate = Luau.Native.luarequire_Configuration_init;    
-using luarequire_pushproxyrequire_config_init_delegate = Luau.Native.luarequire_Configuration_init;   
-",
-        );
-
-    cs2.generate_to_file(
-        "src/luau_require_ffi.rs",
-        "../../src/Luau.Native/NativeMethods.Require.g.cs",
-    )
-    .unwrap();
-    normalize_generated_rust_file("src/luau_require_ffi.rs");
-
-    cs2.generate_csharp_file(
-        "../../src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.Require.g.cs",
-    )
-    .unwrap();
 
     let cs3 = new_csbindgen_builder("src/protected.rs")
         .rust_file_header(

@@ -10,9 +10,22 @@ public unsafe static class LuauCompiler
 
     public static void Compile(IBufferWriter<byte> writer, ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
     {
+        Compile(writer, source, options, LuauNativeProtection.AbiVerifier);
+    }
+
+    internal static void Compile(
+        IBufferWriter<byte> writer,
+        ReadOnlySpan<byte> source,
+        LuauCompileOptions? options,
+        LuauNativeAbiVerifier abiVerifier)
+    {
         if (writer == null)
         {
             throw new ArgumentNullException(nameof(writer));
+        }
+        if (abiVerifier == null)
+        {
+            throw new ArgumentNullException(nameof(abiVerifier));
         }
 
         byte* code;
@@ -21,7 +34,7 @@ public unsafe static class LuauCompiler
         fixed (byte* ptr = source)
         {
             var nativeOptions = (options ?? LuauCompileOptions.Default).options;
-            LuauNativeProtection.EnsureAvailable();
+            abiVerifier.EnsureAvailable();
             var status = luau_ffi_protected_compile(
                 ptr,
                 (nuint)(source.Length * sizeof(byte)),
@@ -51,13 +64,26 @@ public unsafe static class LuauCompiler
 
     public static byte[] Compile(ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
     {
+        return Compile(source, options, LuauNativeProtection.AbiVerifier);
+    }
+
+    internal static byte[] Compile(
+        ReadOnlySpan<byte> source,
+        LuauCompileOptions? options,
+        LuauNativeAbiVerifier abiVerifier)
+    {
+        if (abiVerifier == null)
+        {
+            throw new ArgumentNullException(nameof(abiVerifier));
+        }
+
         byte* code;
         nuint size;
 
         fixed (byte* ptr = source)
         {
             var nativeOptions = (options ?? LuauCompileOptions.Default).options;
-            LuauNativeProtection.EnsureAvailable();
+            abiVerifier.EnsureAvailable();
             var status = luau_ffi_protected_compile(
                 ptr,
                 (nuint)(source.Length * sizeof(byte)),

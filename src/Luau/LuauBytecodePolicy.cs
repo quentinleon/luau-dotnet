@@ -8,8 +8,9 @@ namespace Luau;
 public enum LuauBytecodePolicy
 {
     /// <summary>
-    /// Allows precompiled bytecode without validation. This preserves the
-    /// behavior of existing callers, but is not safe for untrusted bytecode.
+    /// Allows precompiled bytecode without validation. This is an explicit
+    /// trusted-host compatibility capability and is not safe for untrusted
+    /// bytecode.
     /// </summary>
     AllowUnvalidated = 0,
 

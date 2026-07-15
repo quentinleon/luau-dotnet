@@ -140,14 +140,11 @@ public sealed class HardeningRuntimeTests
     }
 
     [Fact]
-    public void RejectPolicyBlocksHostBytecodeButAllowsInternallyCompiledSource()
+    public void DefaultPolicyBlocksHostBytecodeButAllowsInternallyCompiledSource()
     {
         const string chunkName = "@mods/rejected-bytecode.luau";
         var bytecode = LuauCompiler.Compile("return 41"u8);
-        using var state = LuauState.Create(new LuauStateOptions
-        {
-            BytecodePolicy = LuauBytecodePolicy.Reject,
-        });
+        using var state = LuauState.Create();
         var stackTop = state.GetTop();
 
         var exception = Assert.Throws<LuauException>(() => state.Execute(bytecode, chunkName));
@@ -158,6 +155,45 @@ public sealed class HardeningRuntimeTests
         Assert.Equal(stackTop, state.GetTop());
         Assert.Single(sourceResults);
         Assert.Equal(42, sourceResults[0].Read<int>());
+    }
+
+    [Fact]
+    public void TrustedBytecodeStillObservesByteSizeLimit()
+    {
+        const string chunkName = "@host/oversized-bundle.luau";
+        var bytecode = LuauCompiler.Compile("return 1"u8);
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            MaxBytecodeBytes = bytecode.Length - 1,
+        });
+
+        var exception = Assert.Throws<LuauLoadLimitException>(() =>
+            state.ExecuteTrustedBytecode(bytecode, chunkName));
+
+        Assert.Equal(LuauLoadInputKind.Bytecode, exception.InputKind);
+        Assert.Equal(bytecode.Length, exception.ActualBytes);
+        Assert.Equal(bytecode.Length - 1, exception.LimitBytes);
+        Assert.Equal(chunkName, exception.ChunkName);
+    }
+
+    [Fact]
+    public void TrustedBytecodeStillObservesExecutionLimit()
+    {
+        const string chunkName = "@host/bounded-bundle.luau";
+        var bytecode = LuauCompiler.Compile("while true do end"u8);
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            DefaultExecutionOptions = new LuauExecutionOptions
+            {
+                InterruptCountLimit = 1,
+            },
+        });
+
+        var exception = Assert.Throws<LuauExecutionBudgetException>(() =>
+            state.ExecuteTrustedBytecode(bytecode, chunkName));
+
+        Assert.Equal(LuauExecutionBudgetKind.InterruptCount, exception.BudgetKind);
+        Assert.Equal(chunkName, exception.ChunkName);
     }
 
     [Fact]

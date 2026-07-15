@@ -4,6 +4,12 @@ namespace Luau;
 
 unsafe partial class LuauState
 {
+    /// <summary>
+    /// Opens every upstream standard library, including privileged OS and
+    /// debug capabilities. This bypasses the reviewed-library contract and
+    /// must never be exposed to untrusted mods.
+    /// </summary>
+    [Obsolete(LuauCompatibilityDiagnostics.OpenAllLibraries)]
     public void OpenLibraries()
     {
         ThrowIfDisposed();
@@ -57,11 +63,20 @@ unsafe partial class LuauState
         OpenStandardLibrary(ProtectedStandardLibrary.Utf8, "utf8");
     }
 
+    /// <summary>
+    /// Opens the privileged OS library before root sandboxing. This capability
+    /// is host authority and must never be exposed to untrusted mods.
+    /// </summary>
     public void OpenOSLibrary()
     {
         OpenStandardLibrary(ProtectedStandardLibrary.OS, "os");
     }
 
+    /// <summary>
+    /// Opens the privileged debug library before root sandboxing. This
+    /// capability weakens script isolation and must never be exposed to
+    /// untrusted mods.
+    /// </summary>
     public void OpenDebugLibrary()
     {
         OpenStandardLibrary(ProtectedStandardLibrary.Debug, "debug");

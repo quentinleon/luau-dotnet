@@ -63,6 +63,7 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
         return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public void* AsPointer()
     {
         using var access = AcquireReference();

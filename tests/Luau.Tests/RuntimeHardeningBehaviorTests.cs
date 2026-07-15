@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Deliberate native-GC coverage for the transitional pointer escape hatch.
+
 using System.Diagnostics;
 
 namespace Luau.Tests;

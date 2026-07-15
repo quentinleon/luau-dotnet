@@ -70,6 +70,7 @@ public unsafe partial class LuauState
     /// <summary>
     /// Alias for <see cref="SandboxRoot"/>.
     /// </summary>
+    [Obsolete(LuauCompatibilityDiagnostics.SandboxAlias)]
     public void Sandbox()
     {
         SandboxRoot();

@@ -25,12 +25,14 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
         return new(csharpDelegate(access.State));
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public unsafe override void* AsPointer()
     {
         using var access = AcquireFunctionAccess();
         return (void*)(nint)registrationId;
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public unsafe override lua_CFunction AsCFunction()
     {
         using var access = AcquireFunctionAccess();

@@ -9,7 +9,9 @@ A Unity-first Luau runtime with a native VM, managed host API, source generators
 
 ## Overview
 
-Luau for Unity embeds the [Luau language](https://luau.org/) in Unity applications. The supported product surface is the package under `src/Luau.Unity/Assets/Luau.Unity`; it includes the high-level managed API, low-level native bindings, source-generator support, and native plugins.
+Luau for Unity embeds the [Luau language](https://luau.org/) in Unity applications. The supported product surface is the package under `src/Luau.Unity/Assets/Luau.Unity`; it includes the safe high-level managed API, source-generator support, and native plugins.
+
+The package still contains generated `Luau.Native` declarations needed by the runtime. They are unsupported implementation details during the staged migration, even where preview-era accessibility leaves them mechanically public. Consumers should use managed values, reviewed host libraries, source execution, sandboxing, and typed resource-limit failures instead of calling native bindings or retaining VM pointers.
 
 The projects under `src/Luau`, `src/Luau.Native`, and `src/Luau.SourceGenerator` remain in this repository as a fast .NET build/test harness and as sources for intentionally copied Unity artifacts. They are not published as NuGet products. The former CLI and console sample are retained only under `tools/legacy` for reference.
 
@@ -32,10 +34,10 @@ The Unity package includes native plugins for the following platforms.
 
 | Platform | Architecture            | Support | Notes |
 | -------- | ----------------------- | ------- | ----- |
-| Windows  | x64                     | Yes     | Hardened ABI rebuilt and verified |
+| Windows  | x64                     | Yes     | Stage 1 ABI and IL2CPP player smoke verified |
 |          | arm64                   | No      | WIP |
-| Android  | arm64                   | Yes     | API 26 or newer; Quest/player target |
-|          | x64                     | Yes     | API 26 or newer; emulator target |
+| Android  | arm64                   | Build-only | Stage 1 plugin and IL2CPP build verified; runtime smoke pending an authorized device |
+|          | x64                     | Build-only | Stage 1 plugin rebuilt and statically audited; emulator smoke pending |
 | macOS    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 |          | arm64 (Apple Silicon)   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 | Linux    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
@@ -44,9 +46,10 @@ The Unity package includes native plugins for the following platforms.
 |          | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 | Web      | wasm32                  | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 
-The high-level runtime checks the protected native ABI at state creation. A stale
-plugin fails with a clear compatibility error instead of silently bypassing the
-native allocation and long-jump containment layer.
+The high-level runtime performs a protected ABI self-description handshake before
+its first state creation or standalone compilation. It validates layout, pointer
+width, and interpreted type tags, so a stale plugin fails with a clear compatibility
+error instead of silently bypassing the native containment layer.
 
 ## Installation
 
@@ -144,8 +147,10 @@ print repeatedly.
 
 Important trust boundaries:
 
-- Keep `OpenOSLibrary()`, `OpenDebugLibrary()`, and `OpenLibraries()` unavailable to
-  untrusted scripts. Treat every registered managed callback as privileged host code.
+- Keep the privileged `OpenOSLibrary()` and `OpenDebugLibrary()` capabilities
+  unavailable to untrusted scripts. The transitional `OpenLibraries()` method opens
+  everything at once, is unsupported, and is scheduled for removal. Treat every
+  registered managed callback as privileged host code.
 - `SandboxRoot()` freezes the root globals and the directly opened library/API tables;
   it does not recursively freeze arbitrary nested tables supplied by the host. Expose
   nested configuration as per-mod copies, immutable userdata, or explicitly
@@ -162,14 +167,14 @@ Important trust boundaries:
 - `ExecuteTrustedBytecode*`, `LoadTrustedBytecode`, and Unity's `ExecuteTrusted*`
   methods explicitly bypass the ordinary bytecode policy. Use them only for bundled,
   provenance-checked host assets. A size limit is not bytecode validation.
-- The compatibility-oriented core `LuauState.Create()` default permits unvalidated
-  host bytecode. Untrusted hosts must explicitly select `LuauBytecodePolicy.Reject`
-  (the Unity facade does this by default) or supply a real validator.
-- The low-level `Luau.Native` API bypasses high-level lifecycle, quota, scheduler,
-  callback, and protected-call guarantees. It is not an untrusted-mod surface.
-- `LuauState.AsPointer()` and `LuauBuffer.AsSpan()` return borrowed native views. Do
-  not retain them across VM calls, collection, wrapper disposal, or root-state
-  disposal.
+- The core `LuauState.Create()` default rejects host-supplied bytecode. A trusted host
+  must use a specifically named trusted-bytecode API, explicitly select
+  `AllowUnvalidated`, or install a real provenance validator.
+- The unsupported `Luau.Native` API and native-pointer escape hatches bypass
+  high-level lifecycle, quota, scheduler, callback, and protected-call guarantees.
+  They are implementation details scheduled for removal.
+- `LuauBuffer.AsSpan()` is a borrowed VM-memory view. Do not retain it across VM
+  calls, collection, wrapper disposal, or root-state disposal.
 - Managed callbacks that await must preserve or explicitly return to the configured
   continuation scheduler before accessing Unity or Luau state.
 
@@ -446,11 +451,7 @@ state.OpenBufferLibrary();
 state.OpenVectorLibrary();
 ```
 
-`OpenOSLibrary()`, `OpenDebugLibrary()`, and `OpenLibraries()` also exist for trusted hosts, but should not be enabled for untrusted scripts. `LuauUnity.CreateState()` opens the Unity-safe standard set without OS or debug libraries.
-
-```cs
-state.OpenLibraries(); // trusted hosts only
-```
+`OpenOSLibrary()` and `OpenDebugLibrary()` are privileged host operations and must not be enabled for untrusted scripts. The transitional `OpenLibraries()` compatibility method is unsupported because it hides those capabilities behind one broad call and is scheduled for removal. `LuauUnity.CreateState()` opens the Unity-safe standard set without OS or debug libraries.
 
 ### Require Library
 
@@ -539,68 +540,25 @@ print(foo.getfield()) -- 50
 
 ## Bytecode
 
-You can convert Luau scripts to bytecode using `LuauCompiler.Compile()`. This is convenient when you want to pre-compile Luau files.
+Trusted hosts can convert bundled Luau scripts to bytecode using `LuauCompiler.Compile()`. Precompiled bytecode is privileged input: a size bound is not provenance validation, and untrusted mods should enter as source.
 
 ```cs
 byte[] bytecode = LuauCompiler.Compile("return 1 + 2"u8);
 ```
 
-This can be loaded as `LuauFunction` using `state.Load()`.
+Bundled compiler output can be loaded as a `LuauFunction` using the explicitly trusted API. The normal `Load()` and `Execute()` methods apply the state's bytecode policy, which rejects host-supplied bytecode by default.
 
 ```cs
-var func = state.Load(bytecode);
-var results = func.Invoke([]);
+using var func = state.LoadTrustedBytecode(bytecode);
+var results = await func.InvokeAsync([]);
 Console.WriteLine(results[0]); // 3
 ```
 
-## Stack Operations
+## Unsupported low-level migration surface
 
-`LuauState` provides a high-level API that doesn't require complex stack operations, but APIs for directly manipulating the stack are also available.
+Preview-era raw stack methods, native callback delegates, pointer accessors, and the generated `Luau.Native` declarations remain mechanically public where the current assembly split still requires them. They are not supported consumer API and will be internalized or removed in the managed-consolidation stage. Compatibility diagnostics mark native-leaking high-level members where the current runtime can do so without changing packaging.
 
-```cs
-var bytecode = LuauCompiler.Compile(
-    """
-    function add(a: number, b:number): number
-        return a + b
-    end
-    """u8);
-
-state.Load(bytecode);
-
-// Push arguments
-state.Push(state["add"]);
-state.Push(10);
-state.Push(20);
-
-// Call function
-state.Call(2, 1);
-
-// Get result from stack
-var result = state.ToNumber(-1);
-state.Pop(1);
-```
-
-## Low-level native bindings
-
-The Unity package contains `Luau.Native`, the generated low-level C API bindings used by the high-level runtime. They are an implementation surface for hosts that need direct VM access, not a separately distributed NuGet product.
-
-### Usage
-
-```cs 
-using Luau.Native;
-using static Luau.Native.NativeMethods;
-
-unsafe
-{
-    lua_State* l = luaL_newstate();
-    lua_pushnumber(l, 12.3);
-
-    double v = lua_tonumber(l, -1);
-    lua_pop(l, 1);
-
-    lua_close(l);
-}
-```
+Use `LuauValue`, `LuauTable`, `LuauFunction`, `CreateFunction`, `[LuauLibrary]`, `DoString*`, `Execute*`, sandboxing, and the typed hardening options instead. Do not build new integrations on raw stack or native declarations.
 
 ## Unity
 
@@ -612,9 +570,9 @@ By introducing Luau.Unity, you can treat .luau extension files as LuauAsset.
 
 ![img](./docs/images/img-luau-asset-inspector.png)
 
-By checking `Precompile`, you can pre-compile Luau scripts to bytecode. This significantly reduces runtime overhead.
+By checking `Precompile`, you can pre-compile bundled Luau scripts to bytecode. The resulting asset is trusted host content and must not be replaceable by an untrusted mod.
 
-When executing, pass LuauAsset as an argument to `state.Execute()`.
+Execute source/untrusted assets with `state.Execute()`. Execute a bundled asset that may be precompiled with `state.ExecuteTrusted()` so the trust assertion is visible at the call site.
 
 ```cs
 using UnityEngine;
@@ -628,7 +586,7 @@ public class Example : MonoBehaviour
     void Start()
     {
         using var state = LuauUnity.CreateState();
-        state.Execute(script);
+        state.ExecuteTrusted(script);
     }
 }
 ```
@@ -637,20 +595,21 @@ public class Example : MonoBehaviour
 
 In Luau.Unity, `LuauRequirer` implementations that support Resources and Addressables are available.
 
-```csharp
-state.OpenRequireLibrary(ResourcesLuauRequirer.Default);
-state.OpenRequireLibrary(AddressablesLuauRequirer.Default);
-```
-
-However, if you want to use aliases with these Requirers, you need to explicitly pass them.
+`LuauUnity.CreateState()` sandboxes the root before returning it, so configure the resolver during state creation rather than mutating the finished root. For example, a Resources resolver with aliases can be enabled explicitly:
 
 ```csharp
-state.OpenRequireLibrary(new ResourcesLuauRequirer
+var requirer = new ResourcesLuauRequirer
 {
     Aliases =
     {
         ["Resources"] = "."
     }
+};
+
+using var state = LuauUnity.CreateState(new LuauUnityOptions
+{
+    EnableRequire = true,
+    Requirer = requirer,
 });
 ```
 

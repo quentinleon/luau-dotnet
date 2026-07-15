@@ -20,6 +20,18 @@ pub unsafe extern "C" fn ffi_luau_ffi_protected_abi_version(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_luau_ffi_protected_abi_info_v2(
+    info: *mut luau_ffi_abi_info_v2,
+    infoSize: u32
+) -> c_int
+{
+    luau_ffi_protected_abi_info_v2(
+        info,
+        infoSize
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_luau_ffi_protected_compile(
     source: *const c_char,
     size: usize,

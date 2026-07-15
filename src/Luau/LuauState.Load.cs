@@ -9,6 +9,12 @@ public unsafe partial class LuauState
 {
     static readonly byte[] defaultChunkName = [.. "main"u8, 0];
 
+    /// <summary>
+    /// Loads host-supplied bytecode after applying the configured
+    /// <see cref="LuauStateOptions.BytecodePolicy"/> and byte-size limit.
+    /// Untrusted content should normally enter as source through
+    /// <c>DoString</c> instead.
+    /// </summary>
     public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
     {
         ThrowIfDisposed();
@@ -36,6 +42,7 @@ public unsafe partial class LuauState
         }
     }
 
+    /// <inheritdoc cref="Load(ReadOnlySpan{byte}, ReadOnlySpan{char})"/>
     public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
     {
         ThrowIfDisposed();
@@ -44,6 +51,61 @@ public unsafe partial class LuauState
         try
         {
             LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: false);
+            return ToFunction(-1);
+        }
+        finally
+        {
+            lua_settop(l, originalTop);
+        }
+    }
+
+    /// <summary>
+    /// Loads bytecode whose provenance has already been established by the
+    /// host, bypassing <see cref="LuauStateOptions.BytecodePolicy"/> while still
+    /// enforcing the configured bytecode-size limit. Invoking the returned
+    /// function still observes the state's execution limits. A size limit is
+    /// not provenance validation, and untrusted mods must never reach this API.
+    /// </summary>
+    public LuauFunction LoadTrustedBytecode(
+        ReadOnlySpan<byte> bytecode,
+        ReadOnlySpan<char> chunkName)
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        var originalTop = lua_gettop(l);
+
+        var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
+        var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
+        try
+        {
+            var encodedCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
+            LoadInternal(
+                bytecode,
+                chunkBuffer.AsSpan(0, encodedCount),
+                trustedCompilerOutput: true,
+                DecodeChunkName(chunkName));
+            var function = ToFunction(-1);
+            Pop(1);
+            return function;
+        }
+        finally
+        {
+            lua_settop(l, originalTop);
+            ArrayPool<byte>.Shared.Return(chunkBuffer);
+        }
+    }
+
+    /// <inheritdoc cref="LoadTrustedBytecode(ReadOnlySpan{byte}, ReadOnlySpan{char})"/>
+    public LuauFunction LoadTrustedBytecode(
+        ReadOnlySpan<byte> bytecode,
+        ReadOnlySpan<byte> utf8ChunkName = default)
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        var originalTop = lua_gettop(l);
+        try
+        {
+            LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: true);
             return ToFunction(-1);
         }
         finally

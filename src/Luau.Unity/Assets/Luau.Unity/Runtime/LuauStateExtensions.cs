@@ -67,7 +67,10 @@ namespace Luau.Unity
 
         /// <summary>
         /// Executes a bundled asset whose bytecode provenance has been
-        /// established by the host. Never use this for mod-authored assets.
+        /// established by the host. For precompiled assets this bypasses the
+        /// state's normal bytecode policy while preserving byte-size and
+        /// execution limits. A size limit is not provenance validation. Never
+        /// use this for mod-authored assets.
         /// </summary>
         public static int ExecuteTrusted(
             this LuauState state,

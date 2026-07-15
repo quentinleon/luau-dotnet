@@ -50,7 +50,10 @@ public abstract class LuauFunction(LuauState state) : IDisposable
     protected virtual LuauState ResolvePublicState(LuauState owningState) => owningState;
 
     public abstract ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default);
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public unsafe abstract void* AsPointer();
+
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public abstract lua_CFunction AsCFunction();
 
     protected virtual void DisposeCore() { }

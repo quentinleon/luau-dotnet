@@ -313,6 +313,7 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
         return !value.IsNil;
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public void* AsPointer()
     {
         using var access = AcquireReference();

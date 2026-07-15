@@ -11,8 +11,25 @@ namespace Luau.Unity
         public const int DefaultMaxPrintUtf8Bytes = 4 * 1024;
 
         public bool OpenStandardLibraries { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets whether the privileged debug library is opened before
+        /// root sandboxing. Leave disabled for untrusted mods.
+        /// </summary>
         public bool OpenDebugLibrary { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the trusted host installs its configured
+        /// managed module resolver before root sandboxing. Resolver I/O and
+        /// path policy remain host responsibilities.
+        /// </summary>
         public bool EnableRequire { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the root globals and opened API tables are
+        /// frozen after host configuration. Disabling this is a privileged
+        /// host opt-out and must not be used for untrusted mods.
+        /// </summary>
         public bool SandboxRoot { get; set; } = true;
         /// <summary>
         /// Gets or sets whether state creation captures the current Unity
@@ -29,10 +46,7 @@ namespace Luau.Unity
         /// </summary>
         public ILuauContinuationScheduler ContinuationScheduler { get; set; }
 
-        public LuauStateOptions StateOptions { get; set; } = new LuauStateOptions
-        {
-            BytecodePolicy = LuauBytecodePolicy.Reject,
-        };
+        public LuauStateOptions StateOptions { get; set; } = new LuauStateOptions();
         public LuauRequirer Requirer { get; set; }
         public Action<LuauState> ConfigureHostApis { get; set; }
         public Action<string> Log { get; set; }

@@ -3,7 +3,7 @@ namespace Luau.Tests;
 public sealed class HardeningConfigurationTests
 {
     [Fact]
-    public void StateDefaultsPreserveCompatibility()
+    public void StateDefaultsRejectHostBytecode()
     {
         var options = LuauStateOptions.Default;
 
@@ -11,13 +11,13 @@ public sealed class HardeningConfigurationTests
         Assert.Null(options.MaxSourceBytes);
         Assert.Null(options.MaxBytecodeBytes);
         Assert.Same(LuauExecutionOptions.Default, options.DefaultExecutionOptions);
-        Assert.Equal(LuauBytecodePolicy.AllowUnvalidated, options.BytecodePolicy);
+        Assert.Equal(LuauBytecodePolicy.Reject, options.BytecodePolicy);
         Assert.Null(options.BytecodeValidator);
         Assert.Null(options.DefaultExecutionOptions.ContinuationScheduler);
         options.Validate();
 
-        using var compatibilityState = LuauState.Create(options);
-        Assert.False(compatibilityState.MemoryUsage.IsTracked);
+        using var state = LuauState.Create(options);
+        Assert.False(state.MemoryUsage.IsTracked);
     }
 
     [Fact]

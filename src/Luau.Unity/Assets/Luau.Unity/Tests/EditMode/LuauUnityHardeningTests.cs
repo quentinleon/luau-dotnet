@@ -220,5 +220,43 @@ namespace Luau.Unity.Tests
                 UnityEngine.Object.DestroyImmediate(asset);
             }
         }
+
+        [Test]
+        public void TrustedAndUntrustedPrecompiledAssetExecutionRemainDistinct()
+        {
+            var asset = ScriptableObject.CreateInstance<LuauAsset>();
+            try
+            {
+                asset.name = "bundled-host-script";
+                var bytecode = LuauCompiler.Compile(Encoding.UTF8.GetBytes("return 42"));
+                var serialized = new SerializedObject(asset);
+                serialized.FindProperty("isPrecompiled").boolValue = true;
+                serialized.FindProperty("bytes").arraySize = bytecode.Length;
+                for (var index = 0; index < bytecode.Length; index++)
+                {
+                    serialized.FindProperty("bytes")
+                        .GetArrayElementAtIndex(index)
+                        .intValue = bytecode[index];
+                }
+
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+
+                using var root = LuauUnity.CreateState(new LuauUnityOptions
+                {
+                    Log = _ => { },
+                });
+                using var script = root.CreateSandboxedThread();
+
+                Assert.Throws<LuauException>(() => script.Execute(asset));
+
+                var results = script.ExecuteTrusted(asset);
+                Assert.That(results, Has.Length.EqualTo(1));
+                Assert.That(results[0].Read<int>(), Is.EqualTo(42));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
     }
 }

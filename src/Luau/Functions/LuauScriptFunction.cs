@@ -13,12 +13,14 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
     protected override LuauState ResolvePublicState(LuauState owningState) =>
         owningState.GetMainThread();
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public unsafe override lua_CFunction AsCFunction()
     {
         using var access = AcquireFunctionAccess();
         throw new InvalidOperationException("A Luau script function is not a native C callback.");
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public unsafe override void* AsPointer()
     {
         using var access = AcquireReference(Reference);

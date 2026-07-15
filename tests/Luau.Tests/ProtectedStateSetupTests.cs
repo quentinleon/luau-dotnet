@@ -1,3 +1,5 @@
+#pragma warning disable CS0618 // Deliberate regression coverage for transitional unsupported APIs.
+
 using Luau.Native;
 using static Luau.Native.NativeMethods;
 

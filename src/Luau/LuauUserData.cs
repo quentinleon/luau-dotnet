@@ -97,6 +97,7 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
         throw new InvalidOperationException($"Cannot convert {typeof(T)} to {typeof(T).Name}");
     }
 
+    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
     public void* AsPointer()
     {
         using var access = AcquireReference();

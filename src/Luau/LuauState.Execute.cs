@@ -57,7 +57,8 @@ partial class LuauState
     /// Executes bytecode whose provenance has already been established by the
     /// host, bypassing <see cref="LuauStateOptions.BytecodePolicy"/> while still
     /// enforcing the configured bytecode-size and execution limits.
-    /// Never use this API for bytes supplied directly by an untrusted mod.
+    /// A size limit is not provenance validation. Never use this API for bytes
+    /// supplied directly by an untrusted mod.
     /// </summary>
     public LuauValue[] ExecuteTrustedBytecode(
         ReadOnlySpan<byte> bytecode,
