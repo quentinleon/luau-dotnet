@@ -102,8 +102,23 @@ namespace Luau
 
                     var node = (InvocationExpressionSyntax)context.Node;
 
+                    // The generated strongly typed overload accepts exactly
+                    // one delegate argument. Named and other low-level
+                    // LuauState overloads are runtime APIs, not generator input.
+                    if (node.ArgumentList.Arguments.Count != 1)
+                    {
+                        return result;
+                    }
+
                     var model = context.SemanticModel.GetTypeInfo((node.Expression as MemberAccessExpressionSyntax)!.Expression, ct);
                     if (model.Type?.Name is not "LuauState") return result;
+
+                    var boundInvocation = context.SemanticModel.GetSymbolInfo(node, ct).Symbol as IMethodSymbol;
+                    if (boundInvocation is { IsExtensionMethod: false } &&
+                        boundInvocation.ContainingType.Name == "LuauState")
+                    {
+                        return result;
+                    }
 
                     var actionExpression = node.ArgumentList.Arguments[0].Expression;
                     if (actionExpression is CastExpressionSyntax castExpression)
@@ -133,8 +148,15 @@ namespace Luau
                             .Where(x => x != null)
                             .ToArray();
 
-                        var methodSymbol = (IMethodSymbol)context.SemanticModel.GetSymbolInfo(lambda).Symbol!;
-                        result.Method = CreateFunctionMethod.Create(lambda.GetLocation(), methodSymbol.IsAsync, methodSymbol.ReturnType, parameters);
+                        if (context.SemanticModel.GetSymbolInfo(lambda, ct).Symbol is not IMethodSymbol methodSymbol)
+                        {
+                            reporter.ReportDiagnostic(
+                                DiagnosticDescriptors.ArgumentMustBeMethodGroupOrLambda,
+                                actionExpression.GetLocation());
+                            return result;
+                        }
+
+                        result.Method = CreateFunctionMethod.Create(node.GetLocation(), methodSymbol.IsAsync, methodSymbol.ReturnType, parameters);
                     }
                     else
                     {
@@ -175,7 +197,7 @@ namespace Luau
                             var returnType = methodSymbol.ReturnsVoid ? null : methodSymbol.ReturnType;
                             var isAsync = returnType.IsTaskType();
 
-                            result.Method = CreateFunctionMethod.Create(actionExpression.GetLocation(), isAsync, returnType, parameters);
+                            result.Method = CreateFunctionMethod.Create(node.GetLocation(), isAsync, returnType, parameters);
                         }
                         else
                         {
@@ -210,7 +232,7 @@ namespace Luau
             var method = methodContext.Method;
             if (method == null) continue;
 
-            if (!methods.Add(method)) return;
+            if (!methods.Add(method)) continue;
 
             var delegateType = method.HasReturnValue || method.IsAsync
                 ? $"global::System.Func<{string.Join(", ", method.Parameters.Select(x => x.FullTypeName))}, {(method.IsAsync && !method.HasReturnValue ? "global::System.Threading.Tasks.Task" : method.ReturnTypeName)}>"
@@ -219,19 +241,23 @@ namespace Luau
             const string ctType = "global::System.Threading.CancellationToken";
             var parameterCount = method.Parameters.Count(x => x.FullTypeName != ctType && !x.FromLuauState);
 
-            var argsDeclaration = string.Join("\n", method.Parameters.Select((x, i) =>
+            var parameterIndex = 0;
+            var scriptParameterIndex = 0;
+            var argsDeclaration = string.Join("\n", method.Parameters.Select(x =>
             {
+                var argumentIndex = parameterIndex++;
                 if (x.FullTypeName == ctType)
                 {
-                    return $"var arg{i} = ct;";
+                    return $"var arg{argumentIndex} = ct;";
                 }
                 else if (x.FromLuauState)
                 {
-                    return $"var arg{i} = state;";
+                    return $"var arg{argumentIndex} = state;";
                 }
                 else
                 {
-                    return $"var arg{i} = state.ToValue({i - parameterCount}).Read<{x.FullTypeName}>();";
+                    var stackIndex = scriptParameterIndex++ - parameterCount;
+                    return $"var arg{argumentIndex} = state.ToValue({stackIndex}).Read<{x.FullTypeName}>();";
                 }
             }));
 
@@ -272,7 +298,7 @@ namespace Luau
             string filePath, 
             int lineNumber)
         {
-            switch ((filePath, lineNumber))
+            switch ((filePath.Replace('\\', '/'), lineNumber))
             {
 {{cases}}
             }

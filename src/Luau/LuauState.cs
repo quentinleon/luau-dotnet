@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Luau.Native;
 using static Luau.Native.NativeMethods;
@@ -7,89 +6,204 @@ namespace Luau;
 
 public unsafe partial class LuauState : IDisposable, ILuauReference
 {
-    static readonly ConcurrentDictionary<IntPtr, LuauState> cache = new();
-
     lua_State* l;
-    LuauState? from;
+    readonly LuauVmContext context;
+    LuauState? root;
+    readonly bool isMainThread;
     int reference;
-    DisposableBag disposables;
+    int disposeState;
+    WeakReference<LuauState>? cacheEntry;
+    readonly DisposableBag disposables = new();
+    readonly CancellationTokenSource lifetimeCancellationSource = new();
+    int managedResourcesDisposeState;
 
-    public bool IsDisposed => l == null || (from != null && from.IsDisposed);
-    public bool IsMainThread => lua_mainthread(l) == l;
+    public bool IsDisposed => Volatile.Read(ref disposeState) != 0 || context.IsDisposed;
+    public bool IsMainThread => isMainThread;
+    public LuauStateOptions Options => context.Options;
+    public LuauMemoryUsageSnapshot MemoryUsage => context.MemoryUsage;
 
-    int ILuauReference.Reference => reference;
-    LuauState ILuauReference.State => from ?? this;
+    LuauReferenceAccess ILuauReference.AcquireReference()
+    {
+        var access = EnterNativeAccess();
+        return new LuauReferenceAccess(GetRoot(), reference, lifetimeGate: null, access);
+    }
 
-    internal LuauState? From => from;
-
-    internal ScriptRunner? Runner { get; set; }
+    internal LuauState? From => isMainThread ? null : root;
+    internal LuauVmContext Context => context;
+    internal lua_State* PointerUnsafe => l;
+    internal int RegisteredDisposableCount => disposables.Count;
+    internal CancellationToken LifetimeToken => lifetimeCancellationSource.Token;
 
     internal void RegisterDisposable(IDisposable disposable)
     {
         disposables.Add(disposable);
     }
 
+    internal void UnregisterDisposable(IDisposable disposable)
+    {
+        disposables.Remove(disposable);
+    }
+
     public static LuauState Create()
     {
-        var l = luaL_newstate();
-        return CreateStateInternal(l);
+        return Create(LuauStateOptions.Default);
+    }
+
+    public static LuauState Create(LuauStateOptions options)
+    {
+        if (options == null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+        options.Validate();
+        LuauNativeProtection.EnsureAvailable();
+
+        LuauTrackedAllocator? allocator = null;
+        lua_State* statePointer;
+
+        if (options.MemoryLimitBytes is { } memoryLimitBytes)
+        {
+            if ((ulong)memoryLimitBytes >= (ulong)(~(nuint)0))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options),
+                    memoryLimitBytes,
+                    "The memory limit cannot be represented by the native allocator on this platform.");
+            }
+
+            allocator = new LuauTrackedAllocator(checked((nuint)memoryLimitBytes));
+            statePointer = lua_newstate(LuauTrackedAllocator.Callback, allocator.UserData);
+        }
+        else
+        {
+            statePointer = luaL_newstate();
+        }
+
+        if (statePointer == null)
+        {
+            try
+            {
+                if (allocator?.LastFailure == LuauAllocatorFailure.QuotaExceeded)
+                {
+                    var limit = options.MemoryLimitBytes!.Value;
+                    var usage = new LuauMemoryUsageSnapshot(
+                        checked((long)allocator.CurrentBytes),
+                        checked((long)allocator.PeakBytes),
+                        limit);
+                    var attempted = Math.Max(limit + 1, LuauTrackedAllocator.ToDiagnosticByteCount(allocator.LastAttemptedBytes));
+                    throw new LuauMemoryLimitException(null, usage, attempted);
+                }
+
+                throw new OutOfMemoryException("Unable to create a Luau state.");
+            }
+            finally
+            {
+                allocator?.ReleaseAfterFailedStateCreation();
+            }
+        }
+
+        return CreateStateInternal(statePointer, options, allocator);
     }
 
     internal static LuauState GetCachedState(lua_State* l)
     {
-        if (!cache.TryGetValue((IntPtr)l, out var state))
+        if (l == null)
         {
-            state = new LuauState(l, null, -1);
-            cache.TryAdd((IntPtr)l, state);
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
         }
 
-        return state;
+        if (LuauVmContext.TryGetState(l, out var state))
+        {
+            return state;
+        }
+
+        var main = lua_mainthread(l);
+        if (!LuauVmContext.TryGetState(main, out var root))
+        {
+            ThrowHelper.ThrowInvalidOperationException("The Luau VM is not owned by a managed LuauState");
+        }
+
+        using var access = root.context.EnterNativeAccess(root);
+        var originalTop = lua_gettop(l);
+        try
+        {
+            var ignoredIsMainThread = 0;
+            LuauNativeProtection.Prepare(root.context);
+            var status = luau_ffi_protected_pushthread(l, &ignoredIsMainThread);
+            LuauNativeProtection.ThrowIfFailed(root, l, status, "retain the current Luau thread");
+            return root.context.GetOrCreateThread(l, l, -1);
+        }
+        finally
+        {
+            lua_settop(l, originalTop);
+        }
     }
 
     internal static LuauState CreateStateInternal(lua_State* l)
     {
-        return CreateStateInternal(l, null, -1);
+        return CreateStateInternal(l, LuauStateOptions.Default, allocator: null);
     }
 
-    internal static LuauState CreateStateInternal(lua_State* l, lua_State* from, int reference)
+    static LuauState CreateStateInternal(lua_State* l, LuauStateOptions options, LuauTrackedAllocator? allocator)
     {
-        if (cache.ContainsKey((IntPtr)l))
+        if (l == null)
         {
-            throw new InvalidOperationException();
+            throw new OutOfMemoryException("Unable to create a Luau state");
         }
 
-        var state = new LuauState(l, from == null ? null : GetCachedState(from), reference);
-        cache.TryAdd((IntPtr)l, state);
-        return state;
+        if (LuauVmContext.TryGetState(l, out _))
+        {
+            ThrowHelper.ThrowInvalidOperationException("The Luau state is already registered");
+        }
+
+        var context = new LuauVmContext(l, options, allocator);
+        try
+        {
+            var state = new LuauState(l, context, root: null, reference: -1, isMainThread: true);
+            context.RegisterRoot(state);
+            return state;
+        }
+        catch
+        {
+            lua_close(l);
+            allocator?.Dispose();
+            throw;
+        }
     }
 
-    LuauState(lua_State* l, LuauState? from, int reference)
+    internal LuauState(lua_State* l, LuauVmContext context, LuauState? root, int reference, bool isMainThread)
     {
         this.l = l;
-        this.from = from;
+        this.context = context;
+        this.root = root ?? this;
         this.reference = reference;
+        this.isMainThread = isMainThread;
     }
 
     public lua_State* AsPointer()
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return l;
     }
 
     public LuauThreadStatus GetStatus()
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return (LuauThreadStatus)lua_status(l);
     }
 
     public LuauState GetMainThread()
     {
-        return GetCachedState(lua_mainthread(l));
+        ThrowIfDisposed();
+        return GetRoot();
     }
 
     public override unsafe string ToString()
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return LuauReferenceHelper.RefToString(this, reference);
     }
 
@@ -101,26 +215,108 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
 
     void DisposeCore()
     {
-        if (IsDisposed) return;
-        disposables.Dispose();
+        if (Interlocked.Exchange(ref disposeState, 1) != 0)
+        {
+            return;
+        }
 
-        cache.Remove((IntPtr)l, out _);
-
-        if (from != null) lua_close(l);
-        else lua_unref(l, reference);
-
-        l = null;
-        from = null;
+        RequestLifetimeCancellation();
+        try
+        {
+            if (isMainThread)
+            {
+                context.DisposeRoot(this);
+            }
+            else
+            {
+                context.ReleaseChild(this, l, Interlocked.Exchange(ref reference, -1), cacheEntry);
+            }
+        }
+        catch
+        {
+            InvalidateNativeState();
+            DisposeManagedResources();
+        }
     }
 
     ~LuauState()
     {
-        DisposeCore();
+        try
+        {
+            DisposeCore();
+        }
+        catch
+        {
+            // Finalizers must never surface managed or native cleanup failures.
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void ThrowIfDisposed()
     {
         if (IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
+        context.ThrowIfNativeAccessDenied();
+    }
+
+    internal LuauNativeAccess EnterNativeAccess()
+    {
+        return context.EnterNativeAccess(this);
+    }
+
+    internal void TryReleaseReference(int reference)
+    {
+        context.TryReleaseReference(reference);
+    }
+
+    internal void SetCacheEntry(WeakReference<LuauState> entry)
+    {
+        cacheEntry = entry;
+    }
+
+    internal void InvalidateFromRoot()
+    {
+        Interlocked.Exchange(ref disposeState, 1);
+        Interlocked.Exchange(ref reference, -1);
+        InvalidateNativeState();
+        GC.SuppressFinalize(this);
+    }
+
+    internal void InvalidateNativeState()
+    {
+        l = null;
+        cacheEntry = null;
+        if (!isMainThread)
+        {
+            root = null;
+        }
+    }
+
+    internal void DisposeManagedResources()
+    {
+        if (Interlocked.Exchange(ref managedResourcesDisposeState, 1) != 0)
+        {
+            return;
+        }
+
+        disposables.Dispose();
+        lifetimeCancellationSource.Dispose();
+    }
+
+    internal void RequestLifetimeCancellation()
+    {
+        try
+        {
+            lifetimeCancellationSource.Cancel();
+        }
+        catch
+        {
+            // Host cancellation registrations cannot prevent native teardown.
+        }
+    }
+
+    LuauState GetRoot()
+    {
+        ThrowIfDisposed();
+        return root!;
     }
 }

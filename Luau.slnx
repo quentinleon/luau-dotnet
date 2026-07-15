@@ -5,6 +5,7 @@
     <Project Path="src/Luau/Luau.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Luau.SourceGenerator.Tests/Luau.SourceGenerator.Tests.csproj" />
     <Project Path="tests/Luau.Tests/Luau.Tests.csproj" />
   </Folder>
 </Solution>

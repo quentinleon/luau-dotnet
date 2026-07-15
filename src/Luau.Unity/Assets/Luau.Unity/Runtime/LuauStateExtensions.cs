@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,10 +14,8 @@ namespace Luau.Unity
                 return state.Execute(asset.AsSpan(), destination, asset.name);
             }
 
-            Span<byte> buffer = stackalloc byte[asset.name.Length * 3 + 1];
-            var count = Encoding.UTF8.GetBytes(asset.name, buffer);
-            buffer[count] = 0;
-            return state.DoString(asset.AsSpan(), destination, buffer[..count]);
+            var chunkName = Encoding.UTF8.GetBytes(asset.name);
+            return state.DoString(asset.AsSpan(), destination, chunkName);
         }
 
         public static LuauValue[] Execute(this LuauState state, LuauAsset asset)
@@ -28,51 +25,109 @@ namespace Luau.Unity
                 return state.Execute(asset.AsSpan(), asset.name);
             }
 
-            Span<byte> buffer = stackalloc byte[asset.name.Length * 3 + 1];
-            var count = Encoding.UTF8.GetBytes(asset.name, buffer);
-            buffer[count] = 0;
-            return state.DoString(asset.AsSpan(), buffer[..count]);
+            var chunkName = Encoding.UTF8.GetBytes(asset.name);
+            return state.DoString(asset.AsSpan(), chunkName);
         }
 
-        public static ValueTask<int> ExecuteAsync(this LuauState state, LuauAsset asset, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
+        public static async ValueTask<int> ExecuteAsync(this LuauState state, LuauAsset asset, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
         {
             if (asset.IsPrecompiled)
             {
-                return state.ExecuteAsync(asset.AsMemory(), destination, cancellationToken);
+                return await state.ExecuteAsync(
+                    asset.AsMemory(),
+                    destination,
+                    asset.name.AsMemory(),
+                    cancellationToken);
             }
 
-            var buffer = ArrayPool<byte>.Shared.Rent(asset.name.Length * 3 + 1);
-            try
-            {
-                var count = Encoding.UTF8.GetBytes(asset.name, buffer);
-                buffer[count] = 0;
-                return state.DoStringAsync(asset.AsMemory(), destination, buffer.AsMemory()[..count], cancellationToken: cancellationToken);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            var chunkName = Encoding.UTF8.GetBytes(asset.name);
+            return await state.DoStringAsync(
+                asset.AsMemory(),
+                destination,
+                chunkName,
+                cancellationToken: cancellationToken);
         }
 
-        public static ValueTask<LuauValue[]> ExecuteAsync(this LuauState state, LuauAsset asset, CancellationToken cancellationToken = default)
+        public static async ValueTask<LuauValue[]> ExecuteAsync(this LuauState state, LuauAsset asset, CancellationToken cancellationToken = default)
         {
             if (asset.IsPrecompiled)
             {
-                return state.ExecuteAsync(asset.AsMemory(), asset.name.AsMemory(), cancellationToken);
+                return await state.ExecuteAsync(
+                    asset.AsMemory(),
+                    asset.name.AsMemory(),
+                    cancellationToken);
             }
 
+            var chunkName = Encoding.UTF8.GetBytes(asset.name);
+            return await state.DoStringAsync(
+                asset.AsMemory(),
+                chunkName,
+                cancellationToken: cancellationToken);
+        }
 
-            var buffer = ArrayPool<byte>.Shared.Rent(asset.name.Length * 3 + 1);
-            try
+        /// <summary>
+        /// Executes a bundled asset whose bytecode provenance has been
+        /// established by the host. Never use this for mod-authored assets.
+        /// </summary>
+        public static int ExecuteTrusted(
+            this LuauState state,
+            LuauAsset asset,
+            Span<LuauValue> destination)
+        {
+            return asset.IsPrecompiled
+                ? state.ExecuteTrustedBytecode(asset.AsSpan(), destination, asset.name)
+                : state.DoString(asset.AsSpan(), destination, Encoding.UTF8.GetBytes(asset.name));
+        }
+
+        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
+        public static LuauValue[] ExecuteTrusted(this LuauState state, LuauAsset asset)
+        {
+            return asset.IsPrecompiled
+                ? state.ExecuteTrustedBytecode(asset.AsSpan(), asset.name)
+                : state.DoString(asset.AsSpan(), Encoding.UTF8.GetBytes(asset.name));
+        }
+
+        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
+        public static async ValueTask<int> ExecuteTrustedAsync(
+            this LuauState state,
+            LuauAsset asset,
+            Memory<LuauValue> destination,
+            CancellationToken cancellationToken = default)
+        {
+            if (asset.IsPrecompiled)
             {
-                var count = Encoding.UTF8.GetBytes(asset.name, buffer);
-                buffer[count] = 0;
-                return state.DoStringAsync(asset.AsMemory(), buffer.AsMemory()[..count], cancellationToken: cancellationToken);
+                return await state.ExecuteTrustedBytecodeAsync(
+                    asset.AsMemory(),
+                    destination,
+                    asset.name.AsMemory(),
+                    cancellationToken);
             }
-            finally
+
+            return await state.DoStringAsync(
+                asset.AsMemory(),
+                destination,
+                Encoding.UTF8.GetBytes(asset.name),
+                cancellationToken: cancellationToken);
+        }
+
+        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
+        public static async ValueTask<LuauValue[]> ExecuteTrustedAsync(
+            this LuauState state,
+            LuauAsset asset,
+            CancellationToken cancellationToken = default)
+        {
+            if (asset.IsPrecompiled)
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+                return await state.ExecuteTrustedBytecodeAsync(
+                    asset.AsMemory(),
+                    asset.name.AsMemory(),
+                    cancellationToken);
             }
+
+            return await state.DoStringAsync(
+                asset.AsMemory(),
+                Encoding.UTF8.GetBytes(asset.name),
+                cancellationToken: cancellationToken);
         }
     }
 }

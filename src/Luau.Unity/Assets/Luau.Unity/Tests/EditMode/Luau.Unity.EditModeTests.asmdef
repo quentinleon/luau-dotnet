@@ -1,0 +1,23 @@
+{
+    "name": "Luau.Unity.EditModeTests",
+    "rootNamespace": "Luau.Unity.Tests",
+    "references": [
+        "GUID:c727d2ef8dd2e4846ab81fbe6ca1f508"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "Luau.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

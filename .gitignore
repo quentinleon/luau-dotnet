@@ -10,6 +10,7 @@ obj/
 src/Luau.Unity/Library/
 src/Luau.Unity/Temp/
 src/Luau.Unity/Logs/
+src/Luau.Unity/Builds/
 src/Luau.Unity/UserSettings/
 src/Luau.Unity/.idea/
 src/Luau.Unity/Assets/**/obj/

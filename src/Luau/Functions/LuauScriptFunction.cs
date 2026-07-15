@@ -4,57 +4,81 @@ using static Luau.Native.NativeMethods;
 
 namespace Luau;
 
-internal unsafe sealed class LuauScriptFunction(LuauState state, int reference) : LuauFunction(state), ILuauReference
+internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauFunction(state), ILuauReference
 {
-    readonly lua_CFunction cache = (lua_CFunction)Marshal.GetDelegateForFunctionPointer((IntPtr)state.AsPointer(), typeof(lua_CFunction));
-    public int Reference => reference;
+    int reference = reference;
+    public int Reference => Volatile.Read(ref reference);
+    LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference(Reference);
+
+    protected override LuauState ResolvePublicState(LuauState owningState) =>
+        owningState.GetMainThread();
 
     public unsafe override lua_CFunction AsCFunction()
     {
-        ThrowIfDiposed();
-        return cache;
+        using var access = AcquireFunctionAccess();
+        throw new InvalidOperationException("A Luau script function is not a native C callback.");
     }
 
     public unsafe override void* AsPointer()
     {
-        ThrowIfDiposed();
-        return LuauReferenceHelper.GetRefPointer(State, reference);
+        using var access = AcquireReference(Reference);
+        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
     }
 
-    public unsafe override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
+    public override async ValueTask<int> InvokeAsync(
+        int argumentCount,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDiposed();
+        var state = State;
+        using var operation = state.BeginOperation(
+            chunkName: null,
+            options: null,
+            cancellationToken,
+            isAsync: true);
+        using var runner = ScriptRunner.Rent();
+        return await runner.RunCountAsync(operation, argumentCount).ConfigureAwait(false);
+    }
 
-        var statePtr = State.AsPointer();
+    internal async ValueTask<LuauValue[]> InvokeWithArgumentsAsync(
+        ReadOnlyMemory<LuauValue> arguments,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDiposed();
+        var state = State;
+        using var operation = state.BeginOperation(
+            chunkName: null,
+            options: null,
+            cancellationToken,
+            isAsync: true);
+        using var runner = ScriptRunner.Rent();
 
-        int topBefore = lua_gettop(statePtr);
-        var status = lua_pcall(statePtr, argumentCount, -1, 0);
-
-        if (status != (int)lua_Status.LUA_OK)
+        state.Push(this);
+        for (var i = 0; i < arguments.Length; i++)
         {
-            var message = State.Pop().Read<string>();
-            throw new LuauException(message);
+            state.Push(arguments.Span[i]);
         }
 
-        int topAfter = lua_gettop(statePtr);
-        int returnCount = topAfter - topBefore + argumentCount + 1;
-
-        return new ValueTask<int>(returnCount);
+        return await runner.RunAsync(operation, state, arguments.Length).ConfigureAwait(false);
     }
 
     public override string ToString()
     {
-        ThrowIfDiposed();
-        return LuauReferenceHelper.RefToString(State, Reference);
+        using var access = AcquireReference(Reference);
+        return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
     protected override void DisposeCore()
     {
-        lua_unref(State.AsPointer(), reference);
+        var currentReference = Interlocked.Exchange(ref reference, -1);
+        if (currentReference >= 0)
+        {
+            OwningState.TryReleaseReference(currentReference);
+        }
     }
 
     ~LuauScriptFunction()
     {
-        Dispose();
+        DisposeFromFinalizer();
     }
 }

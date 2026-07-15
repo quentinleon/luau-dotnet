@@ -1,286 +1,699 @@
 using System.Collections.Concurrent;
-using System.Threading.Tasks.Sources;
+using System.Text;
 using Luau.Native;
 using static Luau.Native.NativeMethods;
 
 namespace Luau;
 
-internal sealed class ScriptRunner : IValueTaskSource<int>, IDisposable
+internal sealed class ScriptRunner : IDisposable
 {
     static readonly ConcurrentStack<ScriptRunner> pool = new();
 
-    ManualResetValueTaskSourceCore<int> taskSource;
-    bool isAsync;
-    CancellationToken cancellationToken;
-
-    public bool IsYieldFromInterrupt { get; set; }
-    public bool IsAsync => isAsync;
-    public CancellationToken CancellationToken => cancellationToken;
+    int returned;
 
     ScriptRunner()
     {
     }
 
-    public static ScriptRunner Rent()
+    internal static ScriptRunner Rent()
     {
         if (!pool.TryPop(out var runner))
         {
-            runner = new();
+            runner = new ScriptRunner();
         }
 
+        Volatile.Write(ref runner.returned, 0);
         return runner;
     }
 
-    public static void Return(ScriptRunner runner)
+    internal int Run(
+        ScriptOperation operation,
+        LuauState state,
+        int argumentCount,
+        Span<LuauValue> destination,
+        bool hasFunction = true)
     {
-        runner.cancellationToken = default;
-        runner.IsYieldFromInterrupt = false;
-        pool.Push(runner);
-    }
+        var resultCount = RunCore(operation, argumentCount, hasFunction);
+        if (destination.Length < resultCount)
+        {
+            DiscardResults(operation, operation.ThreadPointer, resultCount);
+            throw new ArgumentException("Destination is too short.", nameof(destination));
+        }
 
-    public int Run(LuauState state, int argCount, Span<LuauValue> destination)
-    {
+        var remaining = resultCount;
         try
         {
-            var nResults = RunCore(state, argCount);
-
-            if (destination.Length < nResults)
-            {
-                throw new ArgumentException("Destination is too short");
-            }
-
-            for (int i = nResults - 1; i >= 0; i--)
+            for (var i = resultCount - 1; i >= 0; i--)
             {
                 destination[i] = state.Pop();
+                remaining--;
             }
-
-            return nResults;
         }
-        finally
+        catch
         {
-            state.Runner = null;
+            DiscardResults(operation, operation.ThreadPointer, remaining);
+            throw;
         }
+
+        return resultCount;
     }
 
-    public LuauValue[] Run(LuauState state, int argCount)
+    internal LuauValue[] Run(
+        ScriptOperation operation,
+        LuauState state,
+        int argumentCount,
+        bool hasFunction = true)
     {
+        var resultCount = RunCore(operation, argumentCount, hasFunction);
+        if (resultCount == 0)
+        {
+            return [];
+        }
+
+        LuauValue[] results;
         try
         {
-            var nResults = RunCore(state, argCount);
-            if (nResults == 0) return [];
+            results = new LuauValue[resultCount];
+        }
+        catch
+        {
+            DiscardResults(operation, operation.ThreadPointer, resultCount);
+            throw;
+        }
 
-            var results = new LuauValue[nResults];
-            for (int i = nResults - 1; i >= 0; i--)
+        var remaining = resultCount;
+        try
+        {
+            for (var i = resultCount - 1; i >= 0; i--)
             {
                 results[i] = state.Pop();
+                remaining--;
             }
-
-            return results;
         }
-        finally
+        catch
         {
-            state.Runner = null;
+            DiscardResults(operation, operation.ThreadPointer, remaining);
+            throw;
         }
+
+        return results;
     }
 
-    int RunCore(LuauState state, int argCount)
+    internal async ValueTask<int> RunAsync(
+        ScriptOperation operation,
+        LuauState state,
+        int argumentCount,
+        Memory<LuauValue> destination,
+        bool hasFunction = true)
     {
-        SetRunner(state);
-
-        var prevStackIndex = state.GetAbsIndex(state.GetTop()) - argCount;
-        isAsync = false;
-        int status;
-
-    STATUS_CHECK:
-        IsYieldFromInterrupt = false;
-
-        unsafe
+        var resultCount = await RunAsyncCore(operation, argumentCount, hasFunction).ConfigureAwait(false);
+        if (destination.Length < resultCount)
         {
-            status = lua_resume(state.AsPointer(), state.From == null ? null : state.From.AsPointer(), argCount);
+            await LuauContinuationDispatcher.InvokeAsync(
+                operation.Options.ContinuationScheduler,
+                () => DiscardResults(operation, operation.ThreadPointer, resultCount)).ConfigureAwait(false);
+            throw new ArgumentException("Destination is too short.", nameof(destination));
         }
 
-        switch ((lua_Status)status)
-        {
-            case lua_Status.LUA_OK:
-                break;
-            case lua_Status.LUA_YIELD:
-                if (!IsYieldFromInterrupt) break;
-
+        await LuauContinuationDispatcher.InvokeAsync(
+            operation.Options.ContinuationScheduler,
+            () =>
+            {
+                var remaining = resultCount;
                 try
                 {
-                    // Since this is always a synchronous operation, await is not required (it is wrapped in ValueTask for error handling).
-                    argCount = new ValueTask<int>(this, taskSource.Version).Result;
-                }
-                finally
-                {
-                    taskSource.Reset();
-                }
-                goto STATUS_CHECK;
-            default:
-                throw new LuauException(state.Pop().ToString());
-        }
-
-        var top = state.GetTop();
-        int lastResultIndex = top == 0 ? prevStackIndex - 1 : state.GetAbsIndex(top);
-        argCount = lastResultIndex - prevStackIndex + 1;
-
-        return argCount;
-    }
-
-    public async ValueTask<int> RunAsync(LuauState state, int argCount, Memory<LuauValue> destination, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var nResults = await RunAsyncCore(state, argCount, cancellationToken);
-
-            if (destination.Length < nResults)
-            {
-                throw new ArgumentException("Destination is too short");
-            }
-
-            for (int i = nResults - 1; i >= 0; i--)
-            {
-                destination.Span[i] = state.Pop();
-            }
-
-            return nResults;
-        }
-        finally
-        {
-            state.Runner = null;
-        }
-    }
-
-
-    public async ValueTask<LuauValue[]> RunAsync(LuauState state, int argCount, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var nResults = await RunAsyncCore(state, argCount, cancellationToken);
-            if (nResults == 0) return [];
-
-            var results = new LuauValue[nResults];
-            for (int i = nResults - 1; i >= 0; i--)
-            {
-                results[i] = state.Pop();
-            }
-
-            return results;
-        }
-        finally
-        {
-            state.Runner = null;
-        }
-    }
-
-    async ValueTask<int> RunAsyncCore(LuauState state, int argCount, CancellationToken cancellationToken)
-    {
-        SetRunner(state);
-
-        var prevStackIndex = state.GetAbsIndex(state.GetTop()) - argCount;
-        isAsync = true;
-        this.cancellationToken = cancellationToken;
-
-        int status;
-
-    STATUS_CHECK:
-        IsYieldFromInterrupt = false;
-
-        unsafe
-        {
-            status = lua_resume(state.AsPointer(), state.From == null ? null : state.From.AsPointer(), argCount);
-        }
-
-        switch ((lua_Status)status)
-        {
-            case lua_Status.LUA_OK:
-                break;
-            case lua_Status.LUA_YIELD:
-                if (!IsYieldFromInterrupt) break;
-
-                CancellationTokenRegistration registration = default;
-                if (cancellationToken.CanBeCanceled)
-                {
-#if NET8_0_OR_GREATER
-                    registration = cancellationToken.UnsafeRegister(static (state, cancellationToken) =>
-#else
-                    registration = cancellationToken.UnsafeRegister((state) =>
-#endif
+                    for (var i = resultCount - 1; i >= 0; i--)
                     {
-                        var runner = (ScriptRunner)state!;
-                        runner.TrySetException(new OperationCanceledException(cancellationToken));
-                    }, this);
+                        destination.Span[i] = state.Pop();
+                        remaining--;
+                    }
                 }
+                catch
+                {
+                    DiscardResults(operation, operation.ThreadPointer, remaining);
+                    throw;
+                }
+            }).ConfigureAwait(false);
 
+        return resultCount;
+    }
+
+    internal async ValueTask<LuauValue[]> RunAsync(
+        ScriptOperation operation,
+        LuauState state,
+        int argumentCount,
+        bool hasFunction = true)
+    {
+        var resultCount = await RunAsyncCore(operation, argumentCount, hasFunction).ConfigureAwait(false);
+        if (resultCount == 0)
+        {
+            return [];
+        }
+
+        LuauValue[] results;
+        try
+        {
+            results = new LuauValue[resultCount];
+        }
+        catch
+        {
+            await LuauContinuationDispatcher.InvokeAsync(
+                operation.Options.ContinuationScheduler,
+                () => DiscardResults(operation, operation.ThreadPointer, resultCount)).ConfigureAwait(false);
+            throw;
+        }
+
+        await LuauContinuationDispatcher.InvokeAsync(
+            operation.Options.ContinuationScheduler,
+            () =>
+            {
+                var remaining = resultCount;
                 try
                 {
-                    argCount = await new ValueTask<int>(this, taskSource.Version);
+                    for (var i = resultCount - 1; i >= 0; i--)
+                    {
+                        results[i] = state.Pop();
+                        remaining--;
+                    }
                 }
-                finally
+                catch
                 {
-                    taskSource.Reset();
-                    registration.Dispose();
+                    DiscardResults(operation, operation.ThreadPointer, remaining);
+                    throw;
                 }
-                goto STATUS_CHECK;
-            default:
-                throw new LuauException(state.Pop().ToString());
-        }
+            }).ConfigureAwait(false);
 
-        var top = state.GetTop();
-        int lastResultIndex = top == 0 ? prevStackIndex - 1 : state.GetAbsIndex(top);
-        argCount = lastResultIndex - prevStackIndex + 1;
-
-        return argCount;
+        return results;
     }
 
-    void SetRunner(LuauState state)
+    internal ValueTask<int> RunCountAsync(
+        ScriptOperation operation,
+        int argumentCount,
+        bool hasFunction = true)
     {
-        if (state.Runner != null)
+        return RunAsyncCore(operation, argumentCount, hasFunction);
+    }
+
+    internal int RunToStack(
+        ScriptOperation operation,
+        int argumentCount,
+        bool hasFunction = true)
+    {
+        return RunCore(operation, argumentCount, hasFunction);
+    }
+
+    int RunCore(ScriptOperation operation, int argumentCount, bool hasFunction)
+    {
+        var state = operation.ThreadPointer;
+        var from = operation.FromPointer;
+        var baseTop = GetTop(operation, state) - argumentCount - (hasFunction ? 1 : 0);
+        var resumeWithError = false;
+
+        while (true)
         {
-            ThrowHelper.ThrowInvalidOperationException("LuauState is running");
+            operation.PrepareResume();
+            int status;
+
+            if (resumeWithError)
+            {
+                operation.TakeCallbackFailureForInjection();
+                status = ResumeErrorWithCallbackFailure(operation, state, from);
+                resumeWithError = false;
+            }
+            else
+            {
+                status = Resume(operation, state, from, argumentCount);
+            }
+
+            if ((lua_Status)status == lua_Status.LUA_OK)
+            {
+                operation.ClearInjectedCallbackFailure();
+                ThrowIfHardStopped(operation, state);
+                ThrowIfUninjectedCallbackFailure(operation, state);
+                return GetResultCount(operation, state, baseTop);
+            }
+
+            if ((lua_Status)status != lua_Status.LUA_YIELD)
+            {
+                ThrowExecutionFailure(operation, state);
+            }
+
+            operation.ClearInjectedCallbackFailure();
+            ThrowIfHardStopped(operation, state);
+
+            switch (operation.YieldReason)
+            {
+                case ScriptYieldReason.None:
+                    ThrowIfUninjectedCallbackFailure(operation, state);
+                    return GetResultCount(operation, state, baseTop);
+                case ScriptYieldReason.CallbackFailure:
+                    resumeWithError = true;
+                    argumentCount = 0;
+                    continue;
+                case ScriptYieldReason.HardStop:
+                    ThrowIfHardStopped(operation, state);
+                    throw new LuauException("Luau execution stopped without a reported cause.", operation.ChunkName);
+                case ScriptYieldReason.AsyncCallback:
+                    Abort(operation, state);
+                    throw new LuauException(
+                        LuauDiagnosticMessages.WithChunk(
+                            "An asynchronous managed callback yielded during synchronous execution.",
+                            operation.ChunkName),
+                        operation.ChunkName);
+                default:
+                    Abort(operation, state);
+                    throw new LuauException("Unknown Luau yield reason.", operation.ChunkName);
+            }
         }
-        state.Runner = this;
     }
 
-    public bool TrySetResult(int result)
+    async ValueTask<int> RunAsyncCore(
+        ScriptOperation operation,
+        int argumentCount,
+        bool hasFunction)
     {
-        if (taskSource.GetStatus(taskSource.Version) is ValueTaskSourceStatus.Pending)
+        var state = operation.ThreadPointer;
+        var from = operation.FromPointer;
+        var scheduler = operation.Options.ContinuationScheduler;
+        var baseTop = await LuauContinuationDispatcher.InvokeAsync(
+            scheduler,
+            () => GetTop(operation, state) - argumentCount - (hasFunction ? 1 : 0)).ConfigureAwait(false);
+        var resumeWithError = false;
+
+        while (true)
         {
-            taskSource.SetResult(result);
-            return true;
-        }
+            operation.PrepareResume();
+            int status;
 
-        return false;
+            if (resumeWithError)
+            {
+                operation.TakeCallbackFailureForInjection();
+                status = await LuauContinuationDispatcher.InvokeAsync(
+                    scheduler,
+                    () => ResumeErrorWithCallbackFailure(operation, state, from)).ConfigureAwait(false);
+                resumeWithError = false;
+            }
+            else
+            {
+                var resumeArgumentCount = argumentCount;
+                status = await LuauContinuationDispatcher.InvokeAsync(
+                    scheduler,
+                    () => Resume(operation, state, from, resumeArgumentCount)).ConfigureAwait(false);
+            }
+
+            if ((lua_Status)status == lua_Status.LUA_OK)
+            {
+                operation.ClearInjectedCallbackFailure();
+                return await LuauContinuationDispatcher.InvokeAsync(
+                    scheduler,
+                    () =>
+                    {
+                        ThrowIfHardStopped(operation, state);
+                        ThrowIfUninjectedCallbackFailure(operation, state);
+                        return GetResultCount(operation, state, baseTop);
+                    }).ConfigureAwait(false);
+            }
+
+            if ((lua_Status)status != lua_Status.LUA_YIELD)
+            {
+                await LuauContinuationDispatcher.InvokeAsync(
+                    scheduler,
+                    () => ThrowExecutionFailure(operation, state)).ConfigureAwait(false);
+                throw new LuauException("Luau execution failure handling returned unexpectedly.", operation.ChunkName);
+            }
+
+            operation.ClearInjectedCallbackFailure();
+            await LuauContinuationDispatcher.InvokeAsync(
+                scheduler,
+                () => ThrowIfHardStopped(operation, state)).ConfigureAwait(false);
+
+            switch (operation.YieldReason)
+            {
+                case ScriptYieldReason.None:
+                    return await LuauContinuationDispatcher.InvokeAsync(
+                        scheduler,
+                        () =>
+                        {
+                            ThrowIfUninjectedCallbackFailure(operation, state);
+                            return GetResultCount(operation, state, baseTop);
+                        }).ConfigureAwait(false);
+                case ScriptYieldReason.CallbackFailure:
+                    resumeWithError = true;
+                    argumentCount = 0;
+                    continue;
+                case ScriptYieldReason.HardStop:
+                    await LuauContinuationDispatcher.InvokeAsync(
+                        scheduler,
+                        () => ThrowIfHardStopped(operation, state)).ConfigureAwait(false);
+                    throw new LuauException("Luau execution stopped without a reported cause.", operation.ChunkName);
+                case ScriptYieldReason.AsyncCallback:
+                    operation.MarkAsyncCallbackSuspended();
+                    var pending = operation.TakePendingCallback();
+                    var callbackName = operation.TakePendingCallbackName();
+                    if (pending?.AsynchronousCallback == null)
+                    {
+                        operation.RecordCallbackFailure(
+                            callbackName,
+                            new InvalidOperationException("The pending managed callback was lost."));
+                        resumeWithError = true;
+                        argumentCount = 0;
+                        operation.FinishAsyncCallback();
+                        continue;
+                    }
+
+                    try
+                    {
+                        var callback = pending.AsynchronousCallback;
+                        var invocation = await LuauContinuationDispatcher.InvokeAsync(
+                            scheduler,
+                            () => callback(
+                                operation.State,
+                                operation.CancellationToken)).ConfigureAwait(false);
+                        argumentCount = await invocation.ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        operation.RecordCallbackFailure(callbackName, exception);
+                        argumentCount = 0;
+                        resumeWithError = true;
+                    }
+
+                    await LuauContinuationDispatcher.InvokeAsync(
+                        scheduler,
+                        () => ThrowIfHardStopped(operation, state)).ConfigureAwait(false);
+                    if (!resumeWithError)
+                    {
+                        try
+                        {
+                            var callbackResultCount = argumentCount;
+                            await LuauContinuationDispatcher.InvokeAsync(
+                                scheduler,
+                                () => ValidateResultCount(operation, state, callbackResultCount)).ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            operation.RecordCallbackFailure(callbackName, exception);
+                            argumentCount = 0;
+                            resumeWithError = true;
+                        }
+                    }
+
+                    operation.FinishAsyncCallback();
+                    continue;
+                default:
+                    await LuauContinuationDispatcher.InvokeAsync(
+                        scheduler,
+                        () => Abort(operation, state)).ConfigureAwait(false);
+                    throw new LuauException("Unknown Luau yield reason.", operation.ChunkName);
+            }
+        }
     }
 
-    public bool TrySetException(Exception exception)
+    static int GetResultCount(ScriptOperation operation, IntPtr state, int baseTop)
     {
-        if (taskSource.GetStatus(taskSource.Version) is ValueTaskSourceStatus.Pending)
+        var resultCount = GetTop(operation, state) - baseTop;
+        if (resultCount < 0)
         {
-            taskSource.SetException(exception);
-            return true;
+            Abort(operation, state);
+            throw new LuauException("The Luau stack was corrupted while calculating results.");
         }
 
-        return false;
+        if (operation.Options.MaxResultCount is { } limit && resultCount > limit)
+        {
+            SetTop(operation, state, baseTop);
+            throw new LuauResultLimitException(operation.ChunkName, resultCount, limit);
+        }
+
+        return resultCount;
     }
 
-    int IValueTaskSource<int>.GetResult(short token)
+    static void ThrowIfUninjectedCallbackFailure(ScriptOperation operation, IntPtr state)
     {
-        return taskSource.GetResult(token);
+        var failure = operation.TakeUninjectedCallbackFailure();
+        if (failure == null)
+        {
+            return;
+        }
+
+        Abort(operation, state);
+        throw failure;
     }
 
-    ValueTaskSourceStatus IValueTaskSource<int>.GetStatus(short token)
+    static void DiscardResults(ScriptOperation operation, IntPtr state, int resultCount)
     {
-        return taskSource.GetStatus(token);
+        if (resultCount <= 0)
+        {
+            return;
+        }
+
+        var top = GetTop(operation, state);
+        SetTop(operation, state, Math.Max(0, top - resultCount));
     }
 
-    void IValueTaskSource<int>.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
+    static void ValidateResultCount(ScriptOperation operation, IntPtr state, int resultCount)
     {
-        taskSource.OnCompleted(continuation, state, token, flags);
+        var top = GetTop(operation, state);
+        if (resultCount < 0 || resultCount > top)
+        {
+            throw new LuauException(
+                $"Managed callback returned invalid result count {resultCount} for a stack containing {top} values.");
+        }
+    }
+
+    static void ThrowIfHardStopped(ScriptOperation operation, IntPtr state)
+    {
+        var exception = operation.GetHardStopException();
+        if (exception == null)
+        {
+            return;
+        }
+
+        Abort(operation, state);
+        throw exception;
+    }
+
+    static void ThrowExecutionFailure(ScriptOperation operation, IntPtr state)
+    {
+        var recordedHardStop = operation.YieldReason == ScriptYieldReason.HardStop
+            ? operation.GetHardStopException()
+            : null;
+        var isInjectedCallbackFailure = IsCallbackFailureToken(operation, state);
+        var callbackFailure = isInjectedCallbackFailure
+            ? operation.TakeInjectedCallbackFailure()
+            : operation.TakeUninjectedCallbackFailure();
+        if (!isInjectedCallbackFailure)
+        {
+            operation.ClearInjectedCallbackFailure();
+        }
+
+        string message;
+        try
+        {
+            message = PopError(operation, state);
+        }
+        catch
+        {
+            Abort(operation, state);
+            throw;
+        }
+
+        Abort(operation, state);
+
+        if (callbackFailure != null)
+        {
+            throw callbackFailure;
+        }
+
+        if (recordedHardStop != null)
+        {
+            throw recordedHardStop;
+        }
+
+        if (operation.Context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
+        {
+            throw new LuauMemoryLimitException(
+                operation.ChunkName,
+                operation.Context.MemoryUsage,
+                operation.Context.LastAttemptedAllocationBytes);
+        }
+
+        if (!string.IsNullOrEmpty(operation.ChunkName) &&
+            message.IndexOf(operation.ChunkName, StringComparison.Ordinal) < 0)
+        {
+            message = LuauDiagnosticMessages.WithChunk(message, operation.ChunkName);
+        }
+
+        throw new LuauException(message, operation.ChunkName);
+    }
+
+    static unsafe int ResumeErrorWithCallbackFailure(
+        ScriptOperation operation,
+        IntPtr state,
+        IntPtr from)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        // The value itself is allocation-free, but the protected bridge also
+        // reserves its stack slot inside a native error frame. Rich callback
+        // details remain attached to the managed exception; a Luau pcall
+        // receives only this opaque non-nil failure token.
+        LuauNativeProtection.Prepare(operation.Context);
+        var pushStatus = luau_ffi_protected_pushlightuserdatatagged(
+            (lua_State*)state,
+            operation.CallbackFailureToken.ToPointer(),
+            0);
+        try
+        {
+            LuauNativeProtection.ThrowIfFailed(
+                operation.State,
+                (lua_State*)state,
+                pushStatus,
+                "inject a managed callback failure",
+                operation.ChunkName);
+        }
+        catch
+        {
+            Abort(operation, state);
+            throw;
+        }
+
+        return lua_resumeerror((lua_State*)state, (lua_State*)from);
+    }
+
+    static unsafe bool IsCallbackFailureToken(ScriptOperation operation, IntPtr state)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        return (lua_Type)lua_type((lua_State*)state, -1) == lua_Type.LUA_TLIGHTUSERDATA &&
+            (IntPtr)lua_tolightuserdata((lua_State*)state, -1) == operation.CallbackFailureToken;
+    }
+
+    static unsafe string PopError(ScriptOperation operation, IntPtr state)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        var pointer = (lua_State*)state;
+        try
+        {
+            // lua_tolstring may allocate when coercing numbers. Execution can
+            // arrive here with the allocator exhausted, so only read values
+            // that are already strings and never coerce arbitrary error data.
+            if ((lua_Type)lua_type(pointer, -1) != lua_Type.LUA_TSTRING)
+            {
+                return "Luau execution failed with a non-string error value.";
+            }
+
+            nuint length = 0;
+            var text = lua_tolstring(pointer, -1, &length);
+            if (text == null || length == 0)
+            {
+                return "Luau execution failed without an error message.";
+            }
+
+            if (length > int.MaxValue)
+            {
+                return "Luau execution failed with an oversized error message.";
+            }
+
+            return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, (int)length));
+        }
+        finally
+        {
+            lua_pop(pointer, 1);
+        }
+    }
+
+    static unsafe void Abort(ScriptOperation operation, IntPtr state)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        var status = luau_ffi_protected_resetthread((lua_State*)state);
+        if (status == (int)lua_Status.LUA_OK)
+        {
+            return;
+        }
+
+        // Protected reset contains the native longjmp but cannot restore a
+        // partially reset CallInfo/stack. Capture diagnostics without reading
+        // that stack, poison the whole root, and let EndOperation perform the
+        // only remaining native action: deferred lua_close.
+        Exception? failure = null;
+        try
+        {
+            failure = CreateTerminalResetFailure(operation, status);
+        }
+        finally
+        {
+            try
+            {
+                (operation.State.From ?? operation.State).Dispose();
+            }
+            catch
+            {
+                // The VM is already terminal. Disposal will be retried when
+                // the active operation unwinds.
+            }
+        }
+
+        throw failure;
+    }
+
+    internal static void AbortHostOperation(ScriptOperation operation)
+    {
+        Abort(operation, operation.ThreadPointer);
+    }
+
+    static Exception CreateTerminalResetFailure(ScriptOperation operation, int status)
+    {
+        if (operation.Context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
+        {
+            var usage = operation.Context.MemoryUsage;
+            var limit = usage.LimitBytes!.Value;
+            var attempted = Math.Max(
+                limit + 1,
+                operation.Context.LastAttemptedAllocationBytes);
+            return new LuauMemoryLimitException(operation.ChunkName, usage, attempted);
+        }
+
+        if (operation.Context.AllocatorFailure == LuauAllocatorFailure.SystemOutOfMemory ||
+            status == (int)lua_Status.LUA_ERRMEM)
+        {
+            return new OutOfMemoryException(
+                LuauDiagnosticMessages.WithChunk(
+                    "The Luau VM could not reset after an execution failure and was disposed.",
+                    operation.ChunkName));
+        }
+
+        return new LuauException(
+            LuauDiagnosticMessages.WithChunk(
+                $"The Luau VM reset failed with native status {status} and the VM was disposed.",
+                operation.ChunkName),
+            operation.ChunkName);
+    }
+
+    static unsafe int GetTop(ScriptOperation operation, IntPtr state)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        return lua_gettop((lua_State*)state);
+    }
+
+    static unsafe void SetTop(ScriptOperation operation, IntPtr state, int top)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        lua_settop((lua_State*)state, top);
+    }
+
+    static unsafe int Resume(
+        ScriptOperation operation,
+        IntPtr state,
+        IntPtr from,
+        int argumentCount)
+    {
+        using var access = operation.Context.EnterOperationNativeAccess(operation);
+        return lua_resume((lua_State*)state, (lua_State*)from, argumentCount);
     }
 
     public void Dispose()
     {
-        Return(this);
+        if (Interlocked.Exchange(ref returned, 1) == 0)
+        {
+            pool.Push(this);
+        }
     }
 }

@@ -55,4 +55,18 @@ public readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnume
     {
         return AsSpan().SequenceEqual(other.AsSpan());
     }
+
+    public override int GetHashCode()
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var item in this)
+            {
+                hash = (hash * 31) + (item is null ? 0 : item.GetHashCode());
+            }
+
+            return hash;
+        }
+    }
 }

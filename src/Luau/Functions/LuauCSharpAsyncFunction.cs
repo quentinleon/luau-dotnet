@@ -1,85 +1,116 @@
-using System.Runtime.InteropServices;
 using Luau.Native;
 using static Luau.Native.NativeMethods;
 
 namespace Luau;
 
-internal sealed class LuauCSharpAsyncFunction : LuauFunction
+internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManagedCallbackFunction
 {
+    static readonly lua_CFunction callback = Call;
     readonly Func<LuauState, CancellationToken, ValueTask<int>> csharpDelegate;
-    GCHandle handle;
+    readonly LuauVmContext context;
+    int registrationId;
 
-    public LuauCSharpAsyncFunction(LuauState state, Func<LuauState, CancellationToken, ValueTask<int>> func) : base(state)
+    public LuauCSharpAsyncFunction(
+        LuauState state,
+        Func<LuauState, CancellationToken, ValueTask<int>> func,
+        string? name = null) : base(state)
     {
         csharpDelegate = func;
-        handle = GCHandle.Alloc(this);
-        state.RegisterDisposable(this);
+        context = state.Context;
+        registrationId = context.RegisterManagedCallback(name, func);
     }
+
+    int ILuauManagedCallbackFunction.RegistrationId => Volatile.Read(ref registrationId);
 
     public override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
     {
-        ThrowIfDiposed();
-        return csharpDelegate(State, cancellationToken);
+        using var access = AcquireFunctionAccess();
+        return csharpDelegate(access.State, cancellationToken);
     }
 
     public unsafe override void* AsPointer()
     {
-        ThrowIfDiposed();
-        return GCHandle.ToIntPtr(handle).ToPointer();
+        using var access = AcquireFunctionAccess();
+        return (void*)(nint)registrationId;
     }
 
     public unsafe override lua_CFunction AsCFunction()
     {
-        ThrowIfDiposed();
-        return Call;
+        using var access = AcquireFunctionAccess();
+        return callback;
     }
 
     [AOT.MonoPInvokeCallback(typeof(lua_CFunction))]
-    unsafe static int Call(lua_State* l)
+    static unsafe int Call(lua_State* l)
     {
+        ScriptOperation? operation = null;
+        LuauManagedCallbackRegistration? registration = null;
+
         try
         {
-            var state = LuauState.GetCachedState(l);
-            if (!state.Runner!.IsAsync)
+            if (!LuauVmContext.TryGetContext(l, out var context) ||
+                (operation = context.GetActiveOperation()) == null)
             {
-                state.Runner.TrySetException(new LuauException("An asynchronous function was called within a synchronously called Luau script"));
+                return 0;
             }
 
-            var upval = lua_topointer(l, (int)lua_upvalueindex(1));
-            var func = (LuauCSharpAsyncFunction)GCHandle.FromIntPtr((IntPtr)upval).Target!;
-
-            lua_callbacks(l)->interrupt = Marshal.GetFunctionPointerForDelegate(AsyncFunctionContinution).ToPointer();
-
-            var awaiter = func.csharpDelegate(state, state.Runner.CancellationToken).GetAwaiter();
-            awaiter.UnsafeOnCompleted(() =>
+            var idPointer = (int*)lua_touserdata(l, (int)lua_upvalueindex(1));
+            if (idPointer == null)
             {
-                try
-                {
-                    var result = awaiter.GetResult();
-                    state.Runner.TrySetResult(result);
-                }
-                catch (Exception ex)
-                {
-                    state.Runner.TrySetException(ex);
-                }
-            });
+                operation.RecordCallbackFailure(
+                    null,
+                    new InvalidOperationException("The managed callback registration token is missing."));
+                return YieldFailureIfPossible(l);
+            }
 
-            return 0;
+            var id = *idPointer;
+            if (!context.TryGetManagedCallback(id, out registration) || registration.AsynchronousCallback == null)
+            {
+                operation.RecordCallbackFailure(
+                    registration?.Name,
+                    new ObjectDisposedException(nameof(LuauFunction), "The managed callback is no longer registered."));
+                return YieldFailureIfPossible(l);
+            }
+
+            if (!operation.IsAsync)
+            {
+                operation.RecordCallbackFailure(
+                    registration.Name,
+                    new InvalidOperationException(
+                        "An asynchronous managed callback cannot run inside a synchronous Luau execution."));
+                return YieldFailureIfPossible(l);
+            }
+
+            if (lua_isyieldable(l) == 0)
+            {
+                operation.RecordCallbackFailure(
+                    registration.Name,
+                    new InvalidOperationException(
+                        "An asynchronous managed callback requires yieldable Luau execution."));
+                return 0;
+            }
+
+            // Do not invoke managed user code while lua_resume is still on the
+            // native stack. The runner dispatches the delegate only after it has
+            // observed LUA_YIELD, so synchronous portions and fast continuations
+            // can safely use the callback state.
+            operation.QueueAsyncCallback(registration);
+            // Preserve the Luau arguments as the internal yield payload. The
+            // runner does not expose this yield to the host; it dispatches the
+            // managed callback after lua_resume has unwound, where generated
+            // async wrappers can safely read the original argument stack.
+            return lua_yield(l, lua_gettop(l));
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
-            throw;
+            operation?.RecordCallbackFailure(registration?.Name, ex);
+            return YieldFailureIfPossible(l);
         }
     }
 
-    [AOT.MonoPInvokeCallback(typeof(lua_Continuation))]
-    static unsafe void AsyncFunctionContinution(lua_State* l, int gc)
+    static unsafe int YieldFailureIfPossible(lua_State* state)
     {
-        if (gc >= 0) return;
-        lua_callbacks(l)->interrupt = null;
-        LuauState.GetCachedState(l).Runner!.IsYieldFromInterrupt = true;
-        lua_yield(l, 0);
+        return lua_isyieldable(state) != 0 ? lua_yield(state, 0) : 0;
     }
 
     public override string ToString()
@@ -89,6 +120,26 @@ internal sealed class LuauCSharpAsyncFunction : LuauFunction
 
     protected override void DisposeCore()
     {
-        handle.Free();
+        var id = Interlocked.Exchange(ref registrationId, 0);
+        if (id != 0)
+        {
+            context.ReleaseManagedCallbackWrapper(id, disable: true);
+        }
+    }
+
+    ~LuauCSharpAsyncFunction()
+    {
+        try
+        {
+            var id = Interlocked.Exchange(ref registrationId, 0);
+            if (id != 0)
+            {
+                context.ReleaseManagedCallbackWrapper(id, disable: false);
+            }
+        }
+        catch
+        {
+            // Finalizers must never surface registration cleanup failures.
+        }
     }
 }

@@ -32,18 +32,21 @@ The Unity package includes native plugins for the following platforms.
 
 | Platform | Architecture            | Support | Notes |
 | -------- | ----------------------- | ------- | ----- |
-| Windows  | x64                     | ✅       |       |
-|          | arm64                   | ❌       | WIP   |
-| macOS    | x64                     | ✅       |       |
-|          | arm64 (Apple Silicon)   | ✅       |       |
-|          | Universal (x64 + arm64) | ✅       |       |
-| Linux    | x64                     | ✅       |       |
-|          | arm64                   | ✅       |       |
-| iOS      | arm64                   | ✅       |       |
-|          | x64                     | ✅       |       |
-| Android  | arm64                   | ✅       |       |
-|          | x64                     | ✅       |       |
-| Web      | wasm32                  | ✅       |       |
+| Windows  | x64                     | Yes     | Hardened ABI rebuilt and verified |
+|          | arm64                   | No      | WIP |
+| Android  | arm64                   | Yes     | API 26 or newer; Quest/player target |
+|          | x64                     | Yes     | API 26 or newer; emulator target |
+| macOS    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+|          | arm64 (Apple Silicon)   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+| Linux    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+|          | arm64                   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+| iOS      | arm64                   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+|          | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+| Web      | wasm32                  | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+
+The high-level runtime checks the protected native ABI at state creation. A stale
+plugin fails with a clear compatibility error instead of silently bypassing the
+native allocation and long-jump containment layer.
 
 ## Installation
 
@@ -83,7 +86,96 @@ Debug.Log(results[0]); // 2
 ```
 
 > [!WARNING]
-> `LuauState` is not thread-safe. Do not access it from multiple threads simultaneously.
+> Operations on one root state and its child threads are serialized. Independent
+> root states may execute concurrently. When a continuation scheduler is
+> configured, create and access the state only from that scheduler; Unity captures
+> its main-thread synchronization context by default.
+
+## Security model for untrusted mods
+
+The native Luau sandbox is one layer of the host security boundary, not a complete
+policy by itself. For untrusted mods, the host must set finite memory, input,
+execution, and result limits; expose only reviewed managed APIs; and load source
+instead of accepting arbitrary precompiled bytecode.
+
+`LuauUnity.CreateState()` starts from a conservative Unity surface: it opens the
+base, math, table, string, coroutine, bit32, UTF-8, buffer, and vector libraries;
+omits OS and debug; disables `require()`; rejects ordinary host-supplied bytecode;
+sandboxes the root environment; and captures the Unity synchronization context.
+Limits remain host policy and are intentionally not hard-coded. For example:
+
+```cs
+using Luau;
+using Luau.Unity;
+
+using var state = LuauUnity.CreateState(new LuauUnityOptions
+{
+    StateOptions = new LuauStateOptions
+    {
+        MemoryLimitBytes = 16 * 1024 * 1024,
+        MaxSourceBytes = 1024 * 1024,
+        MaxBytecodeBytes = 1024 * 1024,
+        BytecodePolicy = LuauBytecodePolicy.Reject,
+        DefaultExecutionOptions = new LuauExecutionOptions
+        {
+            WallClockLimit = TimeSpan.FromMilliseconds(50),
+            InterruptCountLimit = 10_000,
+            MaxResultCount = 64,
+        },
+    },
+});
+
+var results = await state.DoStringAsync(
+    untrustedSource,
+    "@mod/main.luau".AsMemory(),
+    cancellationToken: cancellationToken);
+```
+
+The values above are illustrative. Choose limits from representative NervBox mod
+workloads, measure rejection rates and native-memory telemetry, and keep a host-side
+cancellation path. Memory accounting covers native VM allocations, not arbitrary
+managed allocations performed by callbacks.
+
+Unity's default `print` callback formats at most 32 arguments and emits at most
+4,096 UTF-8 bytes per call, appending `...` when content is omitted. Hosts can
+tune those per-call bounds with `LuauUnityOptions.MaxPrintArguments` and
+`MaxPrintUtf8Bytes`; they should still rate-limit or redirect logs when mods can
+print repeatedly.
+
+Important trust boundaries:
+
+- Keep `OpenOSLibrary()`, `OpenDebugLibrary()`, and `OpenLibraries()` unavailable to
+  untrusted scripts. Treat every registered managed callback as privileged host code.
+- `SandboxRoot()` freezes the root globals and the directly opened library/API tables;
+  it does not recursively freeze arbitrary nested tables supplied by the host. Expose
+  nested configuration as per-mod copies, immutable userdata, or explicitly
+  deep-frozen data rather than shared mutable tables.
+- `OpenRequireLibrary()` is currently a trusted-host feature. Its nested module load
+  is synchronous, and resolver path policy plus filesystem, Addressables, or Resources
+  I/O occurs outside the VM allocator. Use an allowlist, enforce module byte limits,
+  and avoid host filesystem resolution for untrusted mods; the Unity default leaves it
+  disabled.
+- `MaxSourceBytes` bounds input before compilation, but the native compiler's own CPU
+  time and temporary allocations are not charged to the VM allocator or interrupt
+  watchdog. Keep source limits conservative and move compilation off latency-critical
+  host threads when accepting hostile source.
+- `ExecuteTrustedBytecode*`, `LoadTrustedBytecode`, and Unity's `ExecuteTrusted*`
+  methods explicitly bypass the ordinary bytecode policy. Use them only for bundled,
+  provenance-checked host assets. A size limit is not bytecode validation.
+- The compatibility-oriented core `LuauState.Create()` default permits unvalidated
+  host bytecode. Untrusted hosts must explicitly select `LuauBytecodePolicy.Reject`
+  (the Unity facade does this by default) or supply a real validator.
+- The low-level `Luau.Native` API bypasses high-level lifecycle, quota, scheduler,
+  callback, and protected-call guarantees. It is not an untrusted-mod surface.
+- `LuauState.AsPointer()` and `LuauBuffer.AsSpan()` return borrowed native views. Do
+  not retain them across VM calls, collection, wrapper disposal, or root-state
+  disposal.
+- Managed callbacks that await must preserve or explicitly return to the configured
+  continuation scheduler before accessing Unity or Luau state.
+
+Quota, cancellation, callback, load, and result-limit failures are reported as typed
+managed exceptions. The VM remains usable after controlled failures unless the host
+chooses to dispose it.
 
 ## LuauValue
 

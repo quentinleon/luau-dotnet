@@ -9,6 +9,7 @@ public class Sandbox : MonoBehaviour
     {
         using var state = LuauUnity.CreateState(new LuauUnityOptions
         {
+            EnableRequire = true,
             Requirer = new ResourcesLuauRequirer
             {
                 Aliases =
@@ -18,6 +19,9 @@ public class Sandbox : MonoBehaviour
             }
         });
 
-        state.Execute(luauAsset);
+        using var script = state.CreateSandboxedThread();
+        // This sample asset is bundled with the application. Mod-provided
+        // Addressables must use Execute so the state's bytecode policy applies.
+        script.ExecuteTrusted(luauAsset);
     }
 }

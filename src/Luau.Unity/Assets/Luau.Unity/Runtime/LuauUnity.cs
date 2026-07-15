@@ -1,16 +1,54 @@
 using System;
-using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using UnityEngine;
 
 namespace Luau.Unity
 {
     public sealed class LuauUnityOptions
     {
+        public const int DefaultMaxPrintArguments = 32;
+        public const int DefaultMaxPrintUtf8Bytes = 4 * 1024;
+
         public bool OpenStandardLibraries { get; set; } = true;
         public bool OpenDebugLibrary { get; set; }
-        public bool EnableRequire { get; set; } = true;
+        public bool EnableRequire { get; set; }
+        public bool SandboxRoot { get; set; } = true;
+        /// <summary>
+        /// Gets or sets whether state creation captures the current Unity
+        /// synchronization context when no continuation scheduler is already
+        /// configured. Enabled by default so asynchronous Luau execution
+        /// resumes on the Unity main thread.
+        /// </summary>
+        public bool CaptureUnitySynchronizationContext { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets an explicit continuation scheduler. When set, this
+        /// overrides the scheduler in
+        /// <see cref="LuauStateOptions.DefaultExecutionOptions"/>.
+        /// </summary>
+        public ILuauContinuationScheduler ContinuationScheduler { get; set; }
+
+        public LuauStateOptions StateOptions { get; set; } = new LuauStateOptions
+        {
+            BytecodePolicy = LuauBytecodePolicy.Reject,
+        };
         public LuauRequirer Requirer { get; set; }
+        public Action<LuauState> ConfigureHostApis { get; set; }
         public Action<string> Log { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of values formatted by one call to
+        /// the default Unity <c>print</c> function. Additional values are
+        /// replaced by a truncation marker.
+        /// </summary>
+        public int MaxPrintArguments { get; set; } = DefaultMaxPrintArguments;
+
+        /// <summary>
+        /// Gets or sets the maximum UTF-8 size of the message emitted by one
+        /// call to the default Unity <c>print</c> function.
+        /// </summary>
+        public int MaxPrintUtf8Bytes { get; set; } = DefaultMaxPrintUtf8Bytes;
     }
 
     public static class LuauUnity
@@ -19,7 +57,8 @@ namespace Luau.Unity
         {
             options = options ?? new LuauUnityOptions();
 
-            var state = LuauState.Create();
+            var stateOptions = ResolveStateOptions(options);
+            var state = LuauState.Create(stateOptions);
             try
             {
                 if (options.OpenStandardLibraries)
@@ -32,11 +71,22 @@ namespace Luau.Unity
                     state.OpenDebugLibrary();
                 }
 
-                RegisterPrint(state, options.Log);
+                RegisterPrint(
+                    state,
+                    options.Log,
+                    options.MaxPrintArguments,
+                    options.MaxPrintUtf8Bytes);
 
                 if (options.EnableRequire)
                 {
                     state.OpenRequireLibrary(options.Requirer ?? ResourcesLuauRequirer.Default);
+                }
+
+                options.ConfigureHostApis?.Invoke(state);
+
+                if (options.SandboxRoot)
+                {
+                    state.SandboxRoot();
                 }
 
                 return state;
@@ -48,11 +98,94 @@ namespace Luau.Unity
             }
         }
 
+        static LuauStateOptions ResolveStateOptions(LuauUnityOptions options)
+        {
+            var stateOptions = options.StateOptions
+                ?? throw new ArgumentNullException(nameof(options.StateOptions));
+            var executionOptions = stateOptions.DefaultExecutionOptions;
+            var scheduler = options.ContinuationScheduler
+                ?? executionOptions.ContinuationScheduler;
+
+            if (scheduler == null && options.CaptureUnitySynchronizationContext)
+            {
+                var synchronizationContext = SynchronizationContext.Current;
+                if (synchronizationContext == null)
+                {
+                    throw new InvalidOperationException(
+                        "No Unity SynchronizationContext is available. Create the Luau state on the Unity main thread, " +
+                        "provide a continuation scheduler, or explicitly disable synchronization-context capture.");
+                }
+
+                scheduler = new LuauSynchronizationContextScheduler(synchronizationContext);
+            }
+
+            if (scheduler == null || ReferenceEquals(scheduler, executionOptions.ContinuationScheduler))
+            {
+                return stateOptions;
+            }
+
+            var effectiveExecutionOptions = new LuauExecutionOptions
+            {
+                WallClockLimit = executionOptions.WallClockLimit,
+                InterruptCountLimit = executionOptions.InterruptCountLimit,
+                MaxResultCount = executionOptions.MaxResultCount,
+                ContinuationScheduler = scheduler,
+            };
+
+            return new LuauStateOptions
+            {
+                MemoryLimitBytes = stateOptions.MemoryLimitBytes,
+                MaxSourceBytes = stateOptions.MaxSourceBytes,
+                MaxBytecodeBytes = stateOptions.MaxBytecodeBytes,
+                DefaultExecutionOptions = effectiveExecutionOptions,
+                BytecodePolicy = stateOptions.BytecodePolicy,
+                BytecodeValidator = stateOptions.BytecodeValidator,
+            };
+        }
+
         public static void RegisterPrint(LuauState state, Action<string> log = null)
         {
+            RegisterPrint(
+                state,
+                log,
+                LuauUnityOptions.DefaultMaxPrintArguments,
+                LuauUnityOptions.DefaultMaxPrintUtf8Bytes);
+        }
+
+        /// <summary>
+        /// Registers a bounded Unity logging implementation of Luau's
+        /// <c>print</c> function.
+        /// </summary>
+        public static void RegisterPrint(
+            LuauState state,
+            Action<string> log,
+            int maxArguments,
+            int maxUtf8Bytes)
+        {
+            if (state == null)
+            {
+                throw new ArgumentNullException(nameof(state));
+            }
+
+            if (maxArguments <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxArguments),
+                    maxArguments,
+                    "The print argument limit must be positive.");
+            }
+
+            if (maxUtf8Bytes <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxUtf8Bytes),
+                    maxUtf8Bytes,
+                    "The print output limit must be positive.");
+            }
+
             log = log ?? Debug.Log;
 
-            state["print"] = state.CreateFunction(l =>
+            state["print"] = state.CreateFunction("print", l =>
             {
                 var top = l.GetTop();
                 if (top == 0)
@@ -61,15 +194,105 @@ namespace Luau.Unity
                     return 0;
                 }
 
-                var parts = new string[top];
-                for (var i = 1; i <= top; i++)
-                {
-                    parts[i - 1] = ToDisplayString(l, i);
-                }
-
-                log(string.Join("\t", parts));
+                log(FormatPrintMessage(l, top, maxArguments, maxUtf8Bytes));
                 return 0;
             });
+        }
+
+        static string FormatPrintMessage(
+            LuauState state,
+            int valueCount,
+            int maxArguments,
+            int maxUtf8Bytes)
+        {
+            var builder = new StringBuilder(Math.Min(maxUtf8Bytes, 256));
+            var emittedUtf8Bytes = 0;
+            var valuesToFormat = Math.Min(valueCount, maxArguments);
+            var truncated = valueCount > valuesToFormat;
+
+            for (var index = 1; index <= valuesToFormat; index++)
+            {
+                if (index > 1)
+                {
+                    if (emittedUtf8Bytes == maxUtf8Bytes)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    builder.Append('\t');
+                    emittedUtf8Bytes++;
+                }
+
+                var remainingUtf8Bytes = maxUtf8Bytes - emittedUtf8Bytes;
+                if (remainingUtf8Bytes == 0)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                var value = state.ToDisplayString(
+                    index,
+                    remainingUtf8Bytes,
+                    out var valueWasTruncated);
+                builder.Append(value);
+                emittedUtf8Bytes += Encoding.UTF8.GetByteCount(value);
+
+                if (valueWasTruncated)
+                {
+                    truncated = true;
+                    break;
+                }
+            }
+
+            if (truncated)
+            {
+                AppendTruncationMarker(builder, ref emittedUtf8Bytes, maxUtf8Bytes);
+            }
+
+            return builder.ToString();
+        }
+
+        static void AppendTruncationMarker(
+            StringBuilder builder,
+            ref int emittedUtf8Bytes,
+            int maxUtf8Bytes)
+        {
+            var markerBytes = Math.Min(3, maxUtf8Bytes);
+            while (emittedUtf8Bytes > maxUtf8Bytes - markerBytes && builder.Length > 0)
+            {
+                var lastIndex = builder.Length - 1;
+                var characterCount = 1;
+                var byteCount = GetUtf8ByteCount(builder[lastIndex]);
+
+                if (char.IsLowSurrogate(builder[lastIndex]) &&
+                    lastIndex > 0 &&
+                    char.IsHighSurrogate(builder[lastIndex - 1]))
+                {
+                    characterCount = 2;
+                    byteCount = 4;
+                }
+
+                builder.Length -= characterCount;
+                emittedUtf8Bytes -= byteCount;
+            }
+
+            for (var index = 0; index < markerBytes; index++)
+            {
+                builder.Append('.');
+            }
+
+            emittedUtf8Bytes += markerBytes;
+        }
+
+        static int GetUtf8ByteCount(char character)
+        {
+            if (character <= '\u007f')
+            {
+                return 1;
+            }
+
+            return character <= '\u07ff' ? 2 : 3;
         }
 
         static void OpenUnityStandardLibraries(LuauState state)
@@ -83,19 +306,6 @@ namespace Luau.Unity
             state.OpenUtf8Library();
             state.OpenBufferLibrary();
             state.OpenVectorLibrary();
-        }
-
-        static unsafe string ToDisplayString(LuauState state, int index)
-        {
-            var ptr = Luau.Native.NativeMethods.luaL_tolstring(state.AsPointer(), index, null);
-            try
-            {
-                return Marshal.PtrToStringAnsi((IntPtr)ptr) ?? string.Empty;
-            }
-            finally
-            {
-                state.Pop();
-            }
         }
     }
 }

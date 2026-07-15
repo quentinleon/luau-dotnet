@@ -4,6 +4,11 @@ public static class LuauFunctionExtensions
 {
     public static async ValueTask<LuauValue[]> InvokeAsync(this LuauFunction function, LuauValue[] arguments, CancellationToken cancellationToken = default)
     {
+        if (function is LuauScriptFunction scriptFunction)
+        {
+            return await scriptFunction.InvokeWithArgumentsAsync(arguments, cancellationToken).ConfigureAwait(false);
+        }
+
         function.State.Push(function);
 
         foreach (var arg in arguments)
@@ -11,7 +16,7 @@ public static class LuauFunctionExtensions
             function.State.Push(arg);
         }
 
-        var nResults = await function.InvokeAsync(arguments.Length, cancellationToken);
+        var nResults = await function.InvokeAsync(arguments.Length, cancellationToken).ConfigureAwait(false);
 
         if (nResults == 0) return [];
 

@@ -6,24 +6,44 @@ namespace Luau;
 
 public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 {
-    LuauState state;
+    LuauState? state;
     int reference;
+    int disposeState;
+    readonly object lifetimeGate = new();
 
-    public bool IsDisposed => state == null || state.IsDisposed;
+    public bool IsDisposed
+    {
+        get
+        {
+            if (Volatile.Read(ref disposeState) != 0)
+            {
+                return true;
+            }
 
-    LuauState ILuauReference.State => state;
-    int ILuauReference.Reference => reference;
+            var currentState = Volatile.Read(ref state);
+            return currentState == null || currentState.IsDisposed;
+        }
+    }
+
+    LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference();
 
     public int Size
     {
         get
         {
-            ThrowIfDisposed();
-            var l = state.AsPointer();
-            lua_getref(l, reference);
-            var size = lua_objlen(l, -1);
-            lua_pop(l, 1);
-            return size;
+            using var access = AcquireReference();
+            var state = access.State;
+            var pointer = state.PointerUnsafe;
+            var originalTop = lua_gettop(pointer);
+            try
+            {
+                LuauReferenceHelper.PushReference(state, access.Reference, "read Luau userdata");
+                return lua_objlen(pointer, -1);
+            }
+            finally
+            {
+                lua_settop(pointer, originalTop);
+            }
         }
     }
 
@@ -35,7 +55,8 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     public bool TryRead<T>([NotNullWhen(true)] out T? result)
     {
-        ThrowIfDisposed();
+        using var access = AcquireReference();
+        var state = access.State;
 
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
         {
@@ -44,22 +65,28 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
         }
 
 #pragma warning disable CS8500
-        var l = state.AsPointer();
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
 
-        lua_getref(l, reference);
-        var size = lua_objlen(l, -1);
-
-        if (size != sizeof(T))
+        try
         {
-            result = default;
-            return false;
+            LuauReferenceHelper.PushReference(state, access.Reference, "read Luau userdata");
+            var size = lua_objlen(pointer, -1);
+
+            if (size != sizeof(T))
+            {
+                result = default;
+                return false;
+            }
+
+            var ptr = (T*)lua_touserdata(pointer, -1);
+            result = *ptr;
+            return true;
         }
-
-        var ptr = (T*)lua_touserdata(l, -1);
-        result = *ptr;
-        lua_pop(l, 1);
-
-        return true;
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
 #pragma warning restore CS8500
 
     }
@@ -72,27 +99,72 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     public void* AsPointer()
     {
-        ThrowIfDisposed();
-        return LuauReferenceHelper.GetRefPointer(state, reference);
+        using var access = AcquireReference();
+        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
     }
 
     public override string ToString()
     {
-        ThrowIfDisposed();
-        return LuauReferenceHelper.RefToString(state, reference);
+        using var access = AcquireReference();
+        return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
     public void Dispose()
     {
-        if (!IsDisposed)
+        DisposeCore();
+        GC.SuppressFinalize(this);
+    }
+
+    void DisposeCore()
+    {
+        lock (lifetimeGate)
         {
-            lua_unref(state.AsPointer(), reference);
-            state = null!;
+            if (Interlocked.Exchange(ref disposeState, 1) != 0)
+            {
+                return;
+            }
+
+            var owningState = Interlocked.Exchange(ref state, null);
+            var currentReference = Interlocked.Exchange(ref reference, -1);
+            if (owningState != null && currentReference >= 0)
+            {
+                owningState.TryReleaseReference(currentReference);
+            }
         }
     }
 
-    void ThrowIfDisposed()
+    ~LuauUserData()
     {
-        if (IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(LuauTable));
+        try
+        {
+            DisposeCore();
+        }
+        catch
+        {
+            // Finalizers must not surface cleanup failures.
+        }
+    }
+
+    LuauReferenceAccess AcquireReference()
+    {
+        Monitor.Enter(lifetimeGate);
+        try
+        {
+            var currentState = state;
+            var currentReference = reference;
+            if (disposeState != 0 || currentState == null || currentReference < 0 || currentState.IsDisposed)
+            {
+                ThrowHelper.ThrowObjectDisposedException(nameof(LuauUserData));
+            }
+
+            var referenceState = currentState!.GetMainThread();
+            var nativeAccess = currentState.EnterNativeAccess();
+            return new LuauReferenceAccess(referenceState, currentReference, lifetimeGate, nativeAccess);
+        }
+        catch
+        {
+            Monitor.Exit(lifetimeGate);
+            throw;
+        }
     }
 }

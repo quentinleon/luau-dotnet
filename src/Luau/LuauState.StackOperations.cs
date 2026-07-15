@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Text;
 using Luau.Native;
 using static Luau.Native.NativeMethods;
@@ -10,16 +9,50 @@ namespace Luau;
 
 public unsafe partial class LuauState
 {
-    public void Call(int numOfargs, int numOfresults)
+    public void Call(
+        int numOfargs,
+        int numOfresults,
+        LuauExecutionOptions? executionOptions = null)
     {
         ThrowIfDisposed();
-        var status = lua_pcall(l, numOfargs, numOfresults, 0);
-
-        if (status != (int)lua_Status.LUA_OK)
+        if (numOfargs < 0)
         {
-            var message = ToString(-1);
-            lua_pop(l, 1);
-            throw new LuauException(message);
+            throw new ArgumentOutOfRangeException(nameof(numOfargs));
+        }
+
+        if (numOfresults < -1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(numOfresults));
+        }
+
+        using var operation = BeginOperation(
+            chunkName: null,
+            options: executionOptions,
+            cancellationToken: default,
+            isAsync: false);
+        var baseTop = GetTop() - numOfargs - 1;
+        if (baseTop < 0)
+        {
+            throw new InvalidOperationException("The Luau stack does not contain a function and the requested arguments.");
+        }
+
+        using var runner = ScriptRunner.Rent();
+        var actualResults = runner.RunToStack(operation, numOfargs);
+
+        if (numOfresults < 0 || actualResults == numOfresults)
+        {
+            return;
+        }
+
+        if (actualResults > numOfresults)
+        {
+            SetTop(baseTop + numOfresults);
+            return;
+        }
+
+        for (var i = actualResults; i < numOfresults; i++)
+        {
+            PushNil();
         }
     }
 
@@ -27,6 +60,7 @@ public unsafe partial class LuauState
     public int GetTop()
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return lua_gettop(l);
     }
 
@@ -34,6 +68,7 @@ public unsafe partial class LuauState
     public void SetTop(int top)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         lua_settop(l, top);
     }
 
@@ -41,12 +76,14 @@ public unsafe partial class LuauState
     public int GetAbsIndex(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return lua_absindex(l, index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Insert(LuauValue value, int index)
     {
+        using var access = EnterNativeAccess();
         Push(value);
         lua_insert(l, index);
     }
@@ -55,12 +92,14 @@ public unsafe partial class LuauState
     public void Insert(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         lua_insert(l, index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Replace(LuauValue value, int index)
     {
+        using var access = EnterNativeAccess();
         Push(value);
         lua_replace(l, index);
     }
@@ -69,6 +108,7 @@ public unsafe partial class LuauState
     public void Replace(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         lua_replace(l, index);
     }
 
@@ -76,6 +116,7 @@ public unsafe partial class LuauState
     public void Remove(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         lua_remove(l, index);
     }
 
@@ -83,12 +124,27 @@ public unsafe partial class LuauState
     public void CheckStack(int size)
     {
         ThrowIfDisposed();
-        lua_checkstack(l, size);
+        if (size < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        using var access = EnterNativeAccess();
+        var result = 0;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_checkstack(l, size, &result);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "grow the Luau stack");
+
+        if (result == 0)
+        {
+            throw new InvalidOperationException($"The Luau stack cannot grow by {size} slots.");
+        }
     }
 
     public unsafe LuauType GetLuauType(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         var type = lua_type(l, index);
 
@@ -115,6 +171,7 @@ public unsafe partial class LuauState
     public unsafe LuauValue ToValue(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         var type = lua_type(l, index);
 
@@ -133,22 +190,29 @@ public unsafe partial class LuauState
                 var vecPtr = lua_tovector(l, index);
                 return LuauValue.FromVector(new(vecPtr[0], vecPtr[1], vecPtr[2]));
             case lua_Type.LUA_TSTRING:
-                var str = Marshal.PtrToStringAnsi((IntPtr)lua_tostring(l, index));
-                return LuauValue.FromString(str!);
+                return LuauValue.FromString(ReadStackString(index, "read a Luau string"));
             case lua_Type.LUA_TTABLE:
-                var table = new LuauTable(this, lua_ref(l, index));
+                var table = new LuauTable(
+                    this,
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau table"));
                 return LuauValue.FromTable(table);
             case lua_Type.LUA_TFUNCTION:
-                var function = new LuauScriptFunction(this, lua_ref(l, index));
+                var function = new LuauScriptFunction(
+                    this,
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau function"));
                 return LuauValue.FromFunction(function);
             case lua_Type.LUA_TUSERDATA:
-                var userData = new LuauUserData(this, lua_ref(l, index));
+                var userData = new LuauUserData(
+                    this,
+                    LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"));
                 return LuauValue.FromUserData(userData);
             case lua_Type.LUA_TTHREAD:
-                var thread = GetCachedState(lua_tothread(l, index));
+                var thread = context.GetOrCreateThread(l, lua_tothread(l, index), index);
                 return LuauValue.FromThread(thread);
             case lua_Type.LUA_TBUFFER:
-                var buffer = new LuauBuffer(this, lua_ref(l, index));
+                var buffer = new LuauBuffer(
+                    this,
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau buffer"));
                 return LuauValue.FromBuffer(buffer);
         }
 
@@ -160,6 +224,7 @@ public unsafe partial class LuauState
     public bool ToBoolean(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return lua_toboolean(l, index) == 1;
     }
 
@@ -167,6 +232,7 @@ public unsafe partial class LuauState
     public IntPtr ToLightUserData(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return (IntPtr)lua_tolightuserdata(l, index);
     }
 
@@ -174,6 +240,7 @@ public unsafe partial class LuauState
     public double ToNumber(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         int isNum;
         var result = lua_tonumberx(l, index, &isNum);
@@ -190,6 +257,7 @@ public unsafe partial class LuauState
     public int ToInteger(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         int isNum;
         var result = lua_tointegerx(l, index, &isNum);
@@ -206,6 +274,7 @@ public unsafe partial class LuauState
     public uint ToUnsigned(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         int isNum;
         var result = lua_tounsignedx(l, index, &isNum);
@@ -222,6 +291,7 @@ public unsafe partial class LuauState
     public Vector3 ToVector(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         var ptr = lua_tovector(l, index);
         return new(ptr[0], ptr[1], ptr[2]);
@@ -231,42 +301,78 @@ public unsafe partial class LuauState
     public string ToString(int index)
     {
         ThrowIfDisposed();
-        return Marshal.PtrToStringAnsi((IntPtr)lua_tostring(l, index))!;
+        using var access = EnterNativeAccess();
+        return ReadStackString(index, "convert a Luau value to a string");
+    }
+
+    string ReadStackString(int index, string operation)
+    {
+        byte* text = null;
+        nuint length = 0;
+
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_tolstring(l, index, &text, &length);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
+
+        if (text == null)
+        {
+            throw new InvalidOperationException($"The value at {index} cannot be converted to a string.");
+        }
+
+        if (length > int.MaxValue)
+        {
+            throw new InvalidOperationException("The Luau string is too large for a managed string.");
+        }
+
+        return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, (int)length));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauTable ToTable(int index)
     {
         ThrowIfDisposed();
-        return new LuauTable(this, lua_ref(l, index));
+        using var access = EnterNativeAccess();
+        return new LuauTable(
+            this,
+            LuauReferenceHelper.CreateReference(this, index, "retain a Luau table"));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauFunction ToFunction(int index)
     {
         ThrowIfDisposed();
-        return new LuauScriptFunction(this, lua_ref(l, index));
+        using var access = EnterNativeAccess();
+        return new LuauScriptFunction(
+            this,
+            LuauReferenceHelper.CreateReference(this, index, "retain a Luau function"));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauState ToThread(int index)
     {
         ThrowIfDisposed();
-        return GetCachedState(lua_tothread(l, index));
+        using var access = EnterNativeAccess();
+        return context.GetOrCreateThread(l, lua_tothread(l, index), index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauBuffer ToBuffer(int index)
     {
         ThrowIfDisposed();
-        return new LuauBuffer(this, lua_ref(l, index));
+        using var access = EnterNativeAccess();
+        return new LuauBuffer(
+            this,
+            LuauReferenceHelper.CreateReference(this, index, "retain a Luau buffer"));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauUserData ToUserData(int index)
     {
         ThrowIfDisposed();
-        return new LuauUserData(this, lua_ref(l, index));
+        using var access = EnterNativeAccess();
+        return new LuauUserData(
+            this,
+            LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -274,6 +380,7 @@ public unsafe partial class LuauState
         where T : unmanaged
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return *(T*)lua_touserdata(l, index);
     }
 
@@ -281,6 +388,7 @@ public unsafe partial class LuauState
     public lua_CFunction ToCFunction(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return lua_tocfunction(l, index);
     }
 
@@ -288,6 +396,7 @@ public unsafe partial class LuauState
     public void* ToPointer(int index)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         return lua_topointer(l, index);
     }
 
@@ -335,63 +444,89 @@ public unsafe partial class LuauState
     public void PushNil()
     {
         ThrowIfDisposed();
-        lua_pushnil(l);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushnil(l);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push nil onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushBoolean(bool value)
     {
         ThrowIfDisposed();
-        lua_pushboolean(l, value ? 1 : 0);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushboolean(l, value ? 1 : 0);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push a boolean onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushLightUserData(void* value)
     {
         ThrowIfDisposed();
-        lua_pushlightuserdata(l, value);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushlightuserdatatagged(l, value, 0);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push light userdata onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushInteger(int value)
     {
         ThrowIfDisposed();
-        lua_pushinteger(l, value);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushinteger(l, value);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push an integer onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushUnsigned(uint value)
     {
         ThrowIfDisposed();
-        lua_pushunsigned(l, value);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushunsigned(l, value);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push an unsigned integer onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushNumber(double value)
     {
         ThrowIfDisposed();
-        lua_pushnumber(l, value);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushnumber(l, value);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push a number onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushVector(Vector3 value)
     {
         ThrowIfDisposed();
-        lua_pushvector(l, value.X, value.Y, value.Z);
+        using var access = EnterNativeAccess();
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_pushvector(l, value.X, value.Y, value.Z);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push a vector onto the Luau stack");
     }
 
     public void PushString(string value)
     {
         ThrowIfDisposed();
+        if (value == null) throw new ArgumentNullException(nameof(value));
 
-        var buffer = ArrayPool<byte>.Shared.Rent(value.Length * 3 + 1);
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, byteCount));
         try
         {
             var utf8Count = Encoding.UTF8.GetBytes(value, buffer);
-            var stringPtr = (byte*)malloc((nuint)(utf8Count + 1));
-            buffer.AsSpan(0, utf8Count).CopyTo(new Span<byte>(stringPtr, utf8Count));
-            stringPtr[utf8Count] = 0;
-            lua_pushstring(l, stringPtr);
+            using var access = EnterNativeAccess();
+            fixed (byte* stringPtr = buffer)
+            {
+                LuauNativeProtection.Prepare(context);
+                var status = luau_ffi_protected_pushlstring(l, stringPtr, (nuint)utf8Count);
+                LuauNativeProtection.ThrowIfFailed(this, l, status, "push a string onto the Luau stack");
+            }
         }
         finally
         {
@@ -401,9 +536,14 @@ public unsafe partial class LuauState
 
     public void PushString(ReadOnlySpan<byte> utf8Value)
     {
-        var stringPtr = (byte*)malloc((nuint)utf8Value.Length);
-        utf8Value.CopyTo(new Span<byte>(stringPtr, utf8Value.Length));
-        lua_pushstring(l, stringPtr);
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        fixed (byte* stringPtr = utf8Value)
+        {
+            LuauNativeProtection.Prepare(context);
+            var status = luau_ffi_protected_pushlstring(l, stringPtr, (nuint)utf8Value.Length);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "push a string onto the Luau stack");
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -434,23 +574,93 @@ public unsafe partial class LuauState
     public void PushUserData<T>(T value)
         where T : unmanaged
     {
-        var ptr = (T*)lua_newuserdata(l, (nuint)sizeof(T));
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        void* rawPointer = null;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_newuserdatatagged(
+            l,
+            (nuint)sizeof(T),
+            0,
+            &rawPointer);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create Luau userdata");
+
+        var ptr = (T*)rawPointer;
         *ptr = value;
     }
 
     public void PushFunction(LuauFunction value)
     {
+        ThrowIfDisposed();
+        using var functionAccess = value.AcquireForPush();
+        using var access = EnterNativeAccess();
         if (value is LuauScriptFunction scriptFunc)
         {
             PushReference(scriptFunc);
         }
         else
         {
-            ThrowIfDisposed();
+            // Managed callbacks carry a full-userdata registration token so
+            // Luau GC can release the managed delegate as soon as the native
+            // closure becomes unreachable. Custom LuauFunction subclasses keep
+            // the legacy light-userdata upvalue contract.
+            if (value is ILuauManagedCallbackFunction managedCallback)
+            {
+                if (!ReferenceEquals(functionAccess.State.Context, context))
+                {
+                    throw new InvalidOperationException("Cannot push a managed callback from another Luau VM.");
+                }
 
-            // Create C-Closure
-            lua_pushlightuserdata(l, value.AsPointer());
-            lua_pushcclosure(l, value.AsCFunction(), null, 1);
+                var registrationId = managedCallback.RegistrationId;
+                if (registrationId == 0)
+                {
+                    ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
+                }
+
+                void* rawToken = null;
+                LuauNativeProtection.Prepare(context);
+                var tokenStatus = luau_ffi_protected_newuserdatadtor(
+                    l,
+                    (nuint)sizeof(int),
+                    LuauManagedCallbackLifetime.Destructor,
+                    &rawToken);
+                LuauNativeProtection.ThrowIfFailed(
+                    this,
+                    l,
+                    tokenStatus,
+                    "create a managed callback registration token");
+
+                var token = (int*)rawToken;
+                *token = 0;
+                context.AddManagedCallbackNativeReference(registrationId);
+                *token = registrationId;
+            }
+            else
+            {
+                LuauNativeProtection.Prepare(context);
+                var tokenStatus = luau_ffi_protected_pushlightuserdatatagged(
+                    l,
+                    value.AsPointer(),
+                    0);
+                LuauNativeProtection.ThrowIfFailed(
+                    this,
+                    l,
+                    tokenStatus,
+                    "push a managed callback token");
+            }
+
+            LuauNativeProtection.Prepare(context);
+            var closureStatus = luau_ffi_protected_pushcclosurek(
+                l,
+                value.AsCFunction(),
+                null,
+                1,
+                null);
+            LuauNativeProtection.ThrowIfFailed(
+                this,
+                l,
+                closureStatus,
+                "create a managed callback closure");
         }
     }
 
@@ -461,13 +671,34 @@ public unsafe partial class LuauState
 
         if (debugName.IsEmpty)
         {
-            lua_pushcfunction(l, value, null);
+            using var access = EnterNativeAccess();
+            LuauNativeProtection.Prepare(context);
+            var status = luau_ffi_protected_pushcclosurek(l, value, null, 0, null);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
         }
         else
         {
-            fixed (byte* d = debugName)
+            if (debugName.IndexOf((byte)0) >= 0)
             {
-                lua_pushcfunction(l, value, d);
+                throw new ArgumentException("Debug names cannot contain a NUL byte.", nameof(debugName));
+            }
+
+            var buffer = ArrayPool<byte>.Shared.Rent(checked(debugName.Length + 1));
+            try
+            {
+                debugName.CopyTo(buffer);
+                buffer[debugName.Length] = 0;
+                using var access = EnterNativeAccess();
+                fixed (byte* d = buffer)
+                {
+                    LuauNativeProtection.Prepare(context);
+                    var status = luau_ffi_protected_pushcclosurek(l, value, d, 0, null);
+                    LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
     }
@@ -476,16 +707,51 @@ public unsafe partial class LuauState
     public void PushCClosure(lua_CFunction value, ReadOnlySpan<byte> debugName = default, int upvalues = 0)
     {
         ThrowIfDisposed();
+        if (upvalues < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(upvalues));
+        }
 
         if (debugName.IsEmpty)
         {
-            lua_pushcclosure(l, value, null, upvalues);
+            using var access = EnterNativeAccess();
+            if (lua_gettop(l) < upvalues)
+            {
+                throw new InvalidOperationException("The Luau stack does not contain the requested closure upvalues.");
+            }
+
+            LuauNativeProtection.Prepare(context);
+            var status = luau_ffi_protected_pushcclosurek(l, value, null, upvalues, null);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
         }
         else
         {
-            fixed (byte* d = debugName)
+            if (debugName.IndexOf((byte)0) >= 0)
             {
-                lua_pushcclosure(l, value, d, upvalues);
+                throw new ArgumentException("Debug names cannot contain a NUL byte.", nameof(debugName));
+            }
+
+            var buffer = ArrayPool<byte>.Shared.Rent(checked(debugName.Length + 1));
+            try
+            {
+                debugName.CopyTo(buffer);
+                buffer[debugName.Length] = 0;
+                using var access = EnterNativeAccess();
+                fixed (byte* d = buffer)
+                {
+                    if (lua_gettop(l) < upvalues)
+                    {
+                        throw new InvalidOperationException("The Luau stack does not contain the requested closure upvalues.");
+                    }
+
+                    LuauNativeProtection.Prepare(context);
+                    var status = luau_ffi_protected_pushcclosurek(l, value, d, upvalues, null);
+                    LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
     }
@@ -493,18 +759,23 @@ public unsafe partial class LuauState
     void PushReference<T>(T value)
         where T : ILuauReference
     {
-        if (value.IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(T));
-        if (value.State != this)
+        ThrowIfDisposed();
+        using var referenceAccess = value.AcquireReference();
+        if (!ReferenceEquals(referenceAccess.State.Context, context))
         {
-            throw new InvalidOperationException("Cannot push the table to another LuauState");
+            throw new InvalidOperationException("Cannot push a reference from another Luau VM.");
         }
 
-        lua_getref(l, value.Reference);
+        LuauReferenceHelper.PushReference(
+            this,
+            referenceAccess.Reference,
+            "push a managed Luau reference");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public LuauValue Pop()
     {
+        using var access = EnterNativeAccess();
         var value = ToValue(-1);
         lua_pop(l, 1);
         return value;
@@ -514,6 +785,7 @@ public unsafe partial class LuauState
     public void Pop(int n)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
         lua_pop(l, n);
     }
 
@@ -521,6 +793,7 @@ public unsafe partial class LuauState
     public void Pop(int n, Span<LuauValue> destination)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         if (destination.Length < n)
         {
@@ -538,8 +811,16 @@ public unsafe partial class LuauState
 
     public void XMove(LuauState destination, int n)
     {
-        var from = AsPointer();
-        var to = destination.AsPointer();
+        if (destination == null) throw new ArgumentNullException(nameof(destination));
+        using var access = EnterNativeAccess();
+        destination.ThrowIfDisposed();
+        if (!ReferenceEquals(context, destination.context))
+        {
+            throw new InvalidOperationException("Cannot move values between independent Luau VMs.");
+        }
+
+        var from = l;
+        var to = destination.l;
         lua_xmove(from, to, n);
     }
 }

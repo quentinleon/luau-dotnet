@@ -58,7 +58,11 @@ public sealed class FileSystemLuauRequirer : LuauRequirer
         Span<byte> utf8ChunkName = stackalloc byte[targetFileName.Length * 3];
         var utf8ChunkNameCount = Encoding.UTF8.GetBytes(targetFileName, utf8ChunkName);
 
-        var results = state.DoString(writer.WrittenSpan, utf8ChunkName[..utf8ChunkNameCount], CompileOptions);
+        var results = ExecuteModuleSource(
+            state,
+            writer.WrittenSpan,
+            utf8ChunkName[..utf8ChunkNameCount],
+            CompileOptions);
         if (results.Length != 1)
         {
             throw new LuauException($"Module '{requireArgument}' does not return exactly 1 value. It cannot be required.");

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using Luau.Native;
 using static Luau.Native.NativeMethods;
 
 namespace Luau;
@@ -8,24 +9,28 @@ unsafe partial class LuauState
 {
     public LuauTable CreateTable()
     {
-        ThrowIfDisposed();
-
-        lua_newtable(l);
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
-
-        return new(this, reference);
+        return CreateTable(0, 0);
     }
 
     public LuauTable CreateTable(int nArr, int nRec)
     {
         ThrowIfDisposed();
+        if (nArr < 0) throw new ArgumentOutOfRangeException(nameof(nArr));
+        if (nRec < 0) throw new ArgumentOutOfRangeException(nameof(nRec));
+        using var access = EnterNativeAccess();
 
-        lua_createtable(l, nArr, nRec);
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_createtable(l, nArr, nRec);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create a table");
 
-        return new(this, reference);
+        try
+        {
+            return new(this, ReferenceTopValue("retain a table"));
+        }
+        finally
+        {
+            lua_pop(l, 1);
+        }
     }
 
     public LuauTable CreateTable(ReadOnlySpan<LuauValue> values)
@@ -54,78 +59,127 @@ unsafe partial class LuauState
 
     public LuauFunction CreateFunction(Func<LuauState, int> func)
     {
-        ThrowIfDisposed();
+        return CreateFunction(name: null, func);
+    }
 
-        var function = new LuauCSharpFunction(this, func);
+    public LuauFunction CreateFunction(string? name, Func<LuauState, int> func)
+    {
+        ThrowIfDisposed();
+        if (func == null) throw new ArgumentNullException(nameof(func));
+
+        var function = new LuauCSharpFunction(this, func, name);
         return function;
     }
 
     public LuauFunction CreateFunction(Func<LuauState, CancellationToken, ValueTask<int>> func)
     {
-        ThrowIfDisposed();
+        return CreateFunction(name: null, func);
+    }
 
-        var function = new LuauCSharpAsyncFunction(this, func);
+    public LuauFunction CreateFunction(
+        string? name,
+        Func<LuauState, CancellationToken, ValueTask<int>> func)
+    {
+        ThrowIfDisposed();
+        if (func == null) throw new ArgumentNullException(nameof(func));
+
+        var function = new LuauCSharpAsyncFunction(this, func, name);
         return function;
     }
 
     public LuauState CreateThread()
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
-        var threadPtr = lua_newthread(l);
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
+        lua_State* threadPtr = null;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_newthread(l, &threadPtr);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create a Luau thread");
 
-        return CreateStateInternal(threadPtr, l, reference);
+        try
+        {
+            return context.GetOrCreateThread(l, threadPtr, -1);
+        }
+        finally
+        {
+            lua_pop(l, 1);
+        }
     }
 
     public LuauBuffer CreateBuffer(int size)
     {
         ThrowIfDisposed();
         if (size < 0) ThrowHelper.ThrowArgumentException(nameof(size), "Buffer size must be greater than 0");
+        using var access = EnterNativeAccess();
 
-        lua_newbuffer(l, (nuint)size);
+        void* data = null;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_newbuffer(l, (nuint)size, &data);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create a buffer");
 
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
-
-        return new LuauBuffer(this, reference);
+        try
+        {
+            return new LuauBuffer(this, ReferenceTopValue("retain a buffer"));
+        }
+        finally
+        {
+            lua_pop(l, 1);
+        }
     }
 
     public LuauBuffer CreateBuffer(ReadOnlySpan<byte> str)
     {
-        var data = lua_newbuffer(l, (nuint)str.Length);
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        void* data = null;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_newbuffer(l, (nuint)str.Length, &data);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create a buffer");
 
-        fixed (byte* val = str)
+        try
         {
-            Unsafe.CopyBlock(data, val, (uint)str.Length);
+            fixed (byte* val = str)
+            {
+                Unsafe.CopyBlock(data, val, (uint)str.Length);
+            }
+
+            return new LuauBuffer(this, ReferenceTopValue("retain a buffer"));
         }
-
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
-
-        return new LuauBuffer(this, reference);
+        finally
+        {
+            lua_pop(l, 1);
+        }
     }
 
     public LuauUserData CreateUserData<T>(T value)
         where T : unmanaged
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         var size = sizeof(T);
-        var ptr = lua_newuserdata(l, (nuint)size);
+        void* ptr = null;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_newuserdatatagged(l, (nuint)size, 0, &ptr);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
 
-        Unsafe.CopyBlock(ptr, &value, (uint)size);
+        try
+        {
+            Unsafe.CopyBlock(ptr, &value, (uint)size);
 
-        var reference = lua_ref(l, -1);
-        lua_pop(l, 1);
-
-        return new LuauUserData(this, reference);
+            return new LuauUserData(this, ReferenceTopValue("retain userdata"));
+        }
+        finally
+        {
+            lua_pop(l, 1);
+        }
     }
 
     public LuauValue CreateFrom<T>(T? value)
     {
         ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
         if (value == null) return LuauValue.Nil;
 
@@ -155,18 +209,35 @@ unsafe partial class LuauState
         {
 #pragma warning disable CS8500
             var size = sizeof(T);
-            var ptr = lua_newuserdata(l, (nuint)size);
+            void* ptr = null;
+            LuauNativeProtection.Prepare(context);
+            var status = luau_ffi_protected_newuserdatatagged(l, (nuint)size, 0, &ptr);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
 
-            Unsafe.CopyBlock(ptr, &value, (uint)size);
+            try
+            {
+                Unsafe.CopyBlock(ptr, &value, (uint)size);
 
-            var reference = lua_ref(l, -1);
-            lua_pop(l, 1);
-
-            return LuauValue.FromUserData(new LuauUserData(this, reference));
+                var reference = ReferenceTopValue("retain userdata");
+                return LuauValue.FromUserData(new LuauUserData(this, reference));
+            }
+            finally
+            {
+                lua_pop(l, 1);
+            }
 #pragma warning restore CS8500
         }
 
         ThrowHelper.ThrowArgumentException(nameof(value), $"Cannot convert {typeof(T).Name} to LuauValue");
         return default; // dummy
+    }
+
+    int ReferenceTopValue(string operation)
+    {
+        var reference = -1;
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_ref(l, -1, &reference);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
+        return reference;
     }
 }

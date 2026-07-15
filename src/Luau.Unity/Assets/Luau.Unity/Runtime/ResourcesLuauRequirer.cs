@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 namespace Luau.Unity
@@ -21,7 +22,10 @@ namespace Luau.Unity
                 return false;
             }
 
-            var results = state.Execute(asset);
+            var chunkName = Encoding.UTF8.GetBytes(asset.name);
+            var results = asset.IsPrecompiled
+                ? ExecuteModuleBytecode(state, asset.AsSpan(), chunkName)
+                : ExecuteModuleSource(state, asset.AsSpan(), chunkName);
 
             if (results.Length != 1)
             {

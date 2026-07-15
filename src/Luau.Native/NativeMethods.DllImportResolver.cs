@@ -98,7 +98,9 @@ public partial class NativeMethods
 
 internal static class NativeMethodsModuleInitializer
 {
+#pragma warning disable CA2255 // The harness library owns resolution of its bundled native runtime artifacts.
     [ModuleInitializer]
+#pragma warning restore CA2255
     internal static void Initialize()
     {
         NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, NativeMethods.DllImportResolver);

@@ -1,3 +1,5 @@
+using Luau;
+
 namespace Luau.Tests;
 
 public sealed class EngineTests
@@ -98,6 +100,23 @@ public sealed class EngineTests
 
         Assert.Single(results);
         Assert.Equal(7, results[0].Read<int>());
+    }
+
+    [Fact]
+    public async Task GeneratedAsyncCallbackReceivesArgumentsAfterNativeYield()
+    {
+        using var state = LuauState.Create();
+        state["addLater"] = state.CreateFunction(
+            async (CancellationToken cancellationToken, double lhs, double rhs) =>
+            {
+                await Task.Yield();
+                cancellationToken.ThrowIfCancellationRequested();
+                return lhs + rhs;
+            });
+
+        var results = await state.DoStringAsync("return addLater(19, 23)");
+
+        Assert.Equal(42, Assert.Single(results).Read<int>());
     }
 
     [Fact]

@@ -80,5 +80,3 @@ pub unsafe extern "C" fn ffi_luarequire_clearcache(
         L
     )
 }
-
-    

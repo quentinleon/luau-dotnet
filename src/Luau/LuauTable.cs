@@ -28,32 +28,120 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
         }
     }
 
-    LuauState state;
+    LuauState? state;
     int reference;
+    int disposeState;
+    readonly object lifetimeGate = new();
 
-    public bool IsDisposed => state == null || state.IsDisposed;
+    public bool IsDisposed
+    {
+        get
+        {
+            if (Volatile.Read(ref disposeState) != 0)
+            {
+                return true;
+            }
 
-    LuauState ILuauReference.State => state;
-    int ILuauReference.Reference => reference;
+            var currentState = Volatile.Read(ref state);
+            return currentState == null || currentState.IsDisposed;
+        }
+    }
+
+    LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference();
 
     public LuauValue this[LuauValue key]
     {
         get
         {
-            state.Push(this);
-            state.Push(key);
-            lua_gettable(state.AsPointer(), -2);
-            var result = state.Pop();
-            return result;
+            using var access = AcquireReference();
+            var state = access.State;
+            using var hostOperation = state.BeginHostOperationIfNeeded();
+            var pointer = state.PointerUnsafe;
+            var originalTop = lua_gettop(pointer);
+            var restoreStack = true;
+            var resetAttempted = false;
+            try
+            {
+                state.Push(this);
+                state.Push(key);
+
+                var ignoredType = 0;
+                LuauNativeProtection.Prepare(state.Context);
+                var status = luau_ffi_protected_gettable(pointer, -2, &ignoredType);
+                LuauNativeProtection.ThrowIfFailed(state, pointer, status, "read a Luau table value");
+                if (hostOperation.IsOwnedOperationSuspended)
+                {
+                    restoreStack = false;
+                    resetAttempted = true;
+                    hostOperation.AbortSuspendedOperation();
+                    throw new LuauException("A direct host table read cannot yield or suspend the Luau thread.");
+                }
+
+                return state.ToValue(-1);
+            }
+            catch
+            {
+                if (!resetAttempted && hostOperation.IsOwnedOperationSuspended)
+                {
+                    restoreStack = false;
+                    resetAttempted = true;
+                    hostOperation.AbortSuspendedOperation();
+                }
+
+                throw;
+            }
+            finally
+            {
+                if (restoreStack)
+                {
+                    lua_settop(pointer, originalTop);
+                }
+            }
         }
         set
         {
-            var ptr = state!.AsPointer();
-            state.Push(this);
-            state.Push(key);
-            state.Push(value);
-            lua_settable(ptr, -3);
-            lua_pop(ptr, 1);
+            using var access = AcquireReference();
+            var state = access.State;
+            using var hostOperation = state.BeginHostOperationIfNeeded();
+            var pointer = state.PointerUnsafe;
+            var originalTop = lua_gettop(pointer);
+            var restoreStack = true;
+            var resetAttempted = false;
+            try
+            {
+                state.Push(this);
+                state.Push(key);
+                state.Push(value);
+
+                LuauNativeProtection.Prepare(state.Context);
+                var status = luau_ffi_protected_settable(pointer, -3);
+                LuauNativeProtection.ThrowIfFailed(state, pointer, status, "write a Luau table value");
+                if (hostOperation.IsOwnedOperationSuspended)
+                {
+                    restoreStack = false;
+                    resetAttempted = true;
+                    hostOperation.AbortSuspendedOperation();
+                    throw new LuauException("A direct host table write cannot yield or suspend the Luau thread.");
+                }
+            }
+            catch
+            {
+                if (!resetAttempted && hostOperation.IsOwnedOperationSuspended)
+                {
+                    restoreStack = false;
+                    resetAttempted = true;
+                    hostOperation.AbortSuspendedOperation();
+                }
+
+                throw;
+            }
+            finally
+            {
+                if (restoreStack)
+                {
+                    lua_settop(pointer, originalTop);
+                }
+            }
         }
     }
 
@@ -61,10 +149,19 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
     {
         get
         {
-            state.Push(this);
-            lua_objlen(state.AsPointer(), -1);
-            var len = state.Pop().Read<int>();
-            return len;
+            using var access = AcquireReference();
+            var state = access.State;
+            var pointer = state.PointerUnsafe;
+            var originalTop = lua_gettop(pointer);
+            try
+            {
+                state.Push(this);
+                return lua_objlen(pointer, -1);
+            }
+            finally
+            {
+                lua_settop(pointer, originalTop);
+            }
         }
     }
 
@@ -76,34 +173,59 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     public LuauTable Clone()
     {
-        state.Push(this);
-        lua_clonetable(state.AsPointer(), -1);
-        return state.Pop().Read<LuauTable>();
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
+        try
+        {
+            state.Push(this);
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_ffi_protected_clonetable(pointer, -1);
+            LuauNativeProtection.ThrowIfFailed(state, pointer, status, "clone a Luau table");
+            return state.ToTable(-1);
+        }
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
     }
 
     public bool TryMoveNext(LuauValue key, out KeyValuePair<LuauValue, LuauValue> result)
     {
-        ThrowIfDisposed();
+        using var access = AcquireReference();
+        var state = access.State;
 
-        var ptr = state.AsPointer();
-
-        state.Push(this);
-        state.Push(key);
-
-        var status = lua_next(ptr, -2);
-        if (status == 0)
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
+        try
         {
-            lua_pop(ptr, 1);
-            result = default;
-            return false;
+            state.Push(this);
+            state.Push(key);
+
+            var hasNext = 0;
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_ffi_protected_next(pointer, -2, &hasNext);
+            LuauNativeProtection.ThrowIfFailed(
+                state,
+                pointer,
+                status,
+                "enumerate a Luau table");
+            if (hasNext == 0)
+            {
+                result = default;
+                return false;
+            }
+
+            var value = state.ToValue(-1);
+            var nextKey = state.ToValue(-2);
+            result = new(nextKey, value);
+            return true;
         }
-
-        var value = state.Pop();
-        var nextKey = state.Pop();
-        lua_pop(ptr, 1);
-
-        result = new(nextKey, value);
-        return true;
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
     }
 
     public void Add(LuauValue key, LuauValue value)
@@ -118,11 +240,21 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     public void Clear()
     {
-        ThrowIfDisposed();
-
-        var ptr = state.AsPointer();
-        lua_getref(ptr, reference);
-        lua_cleartable(ptr, -1);
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
+        try
+        {
+            LuauReferenceHelper.PushReference(state, access.Reference, "clear a Luau table");
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_ffi_protected_cleartable(pointer, -1);
+            LuauNativeProtection.ThrowIfFailed(state, pointer, status, "clear a Luau table");
+        }
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
     }
 
     public bool ContainsKey(LuauValue key)
@@ -132,27 +264,47 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     public LuauValue RawGet(LuauValue key)
     {
-        ThrowIfDisposed();
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
+        try
+        {
+            state.Push(this);
+            state.Push(key);
 
-        state.Push(this);
-        state.Push(key);
-
-        var ptr = state.AsPointer();
-        lua_rawget(ptr, -2);
-        return state.Pop();
+            var ignoredType = 0;
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_ffi_protected_rawget(pointer, -2, &ignoredType);
+            LuauNativeProtection.ThrowIfFailed(state, pointer, status, "read a raw Luau table value");
+            return state.ToValue(-1);
+        }
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
     }
 
     public void RawSet(LuauValue key, LuauValue value)
     {
-        ThrowIfDisposed();
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = lua_gettop(pointer);
+        try
+        {
+            state.Push(this);
+            state.Push(key);
+            state.Push(value);
 
-        state.Push(this);
-        state.Push(key);
-        state.Push(value);
-
-        var ptr = state.AsPointer();
-        lua_rawset(ptr, -3);
-        lua_pop(ptr, 1);
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_ffi_protected_rawset(pointer, -3);
+            LuauNativeProtection.ThrowIfFailed(state, pointer, status, "write a raw Luau table value");
+        }
+        finally
+        {
+            lua_settop(pointer, originalTop);
+        }
     }
 
     public bool TryGetValue(LuauValue key, [MaybeNullWhen(false)] out LuauValue value)
@@ -163,14 +315,14 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     public void* AsPointer()
     {
-        ThrowIfDisposed();
-        return LuauReferenceHelper.GetRefPointer(state, reference);
+        using var access = AcquireReference();
+        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
     }
 
     public override string ToString()
     {
-        ThrowIfDisposed();
-        return LuauReferenceHelper.RefToString(state, reference);
+        using var access = AcquireReference();
+        return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
     public Enumerator GetEnumerator()
@@ -190,15 +342,60 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     public void Dispose()
     {
-        if (!IsDisposed)
+        DisposeCore();
+        GC.SuppressFinalize(this);
+    }
+
+    void DisposeCore()
+    {
+        lock (lifetimeGate)
         {
-            lua_unref(state.AsPointer(), reference);
-            state = null!;
+            if (Interlocked.Exchange(ref disposeState, 1) != 0)
+            {
+                return;
+            }
+
+            var owningState = Interlocked.Exchange(ref state, null);
+            var currentReference = Interlocked.Exchange(ref reference, -1);
+            if (owningState != null && currentReference >= 0)
+            {
+                owningState.TryReleaseReference(currentReference);
+            }
         }
     }
 
-    void ThrowIfDisposed()
+    ~LuauTable()
     {
-        if (IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(LuauTable));
+        try
+        {
+            DisposeCore();
+        }
+        catch
+        {
+            // Finalizers must not surface cleanup failures.
+        }
+    }
+
+    LuauReferenceAccess AcquireReference()
+    {
+        Monitor.Enter(lifetimeGate);
+        try
+        {
+            var currentState = state;
+            var currentReference = reference;
+            if (disposeState != 0 || currentState == null || currentReference < 0 || currentState.IsDisposed)
+            {
+                ThrowHelper.ThrowObjectDisposedException(nameof(LuauTable));
+            }
+
+            var referenceState = currentState!.GetMainThread();
+            var nativeAccess = currentState.EnterNativeAccess();
+            return new LuauReferenceAccess(referenceState, currentReference, lifetimeGate, nativeAccess);
+        }
+        catch
+        {
+            Monitor.Exit(lifetimeGate);
+            throw;
+        }
     }
 }

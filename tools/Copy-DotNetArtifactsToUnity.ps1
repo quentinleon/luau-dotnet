@@ -29,6 +29,10 @@ $artifacts = @(
     @{
         Source = "src/Luau.Native/NativeMethods.Macros.cs"
         Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.Macros.cs"
+    },
+    @{
+        Source = "src/Luau.Native/NativeMethods.Memory.cs"
+        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.Memory.cs"
     }
 )
 

@@ -1,48 +1,96 @@
 namespace Luau;
 
-internal struct DisposableBag(int capacity) : IDisposable
+internal sealed class DisposableBag : IDisposable
 {
-    IDisposable[]? items = new IDisposable[capacity];
-    bool isDisposed;
-    int count;
+    readonly object gate = new();
+    List<IDisposable>? items = [];
+
+    internal int Count
+    {
+        get
+        {
+            lock (gate)
+            {
+                return items?.Count ?? 0;
+            }
+        }
+    }
 
     public void Add(IDisposable item)
     {
-        if (isDisposed)
+        lock (gate)
         {
-            item.Dispose();
-            return;
+            if (items != null)
+            {
+                items.Add(item);
+                return;
+            }
         }
 
-        if (items == null)
-        {
-            items = new IDisposable[4];
-        }
-        else if (count == items.Length)
-        {
-            Array.Resize(ref items, count * 2);
-        }
-
-        items[count++] = item;
+        DisposeNoThrow(item);
     }
 
     public void Clear()
     {
-        if (items != null)
+        List<IDisposable>? snapshot;
+
+        lock (gate)
         {
-            for (int i = 0; i < count; i++)
+            if (items == null)
             {
-                items[i]?.Dispose();
+                return;
             }
 
-            items = null;
-            count = 0;
+            snapshot = items;
+            items = [];
+        }
+
+        DisposeAll(snapshot);
+    }
+
+    public void Remove(IDisposable item)
+    {
+        lock (gate)
+        {
+            items?.Remove(item);
         }
     }
 
     public void Dispose()
     {
-        Clear();
-        isDisposed = true;
+        List<IDisposable>? snapshot;
+
+        lock (gate)
+        {
+            snapshot = items;
+            items = null;
+        }
+
+        DisposeAll(snapshot);
+    }
+
+    static void DisposeAll(List<IDisposable>? snapshot)
+    {
+        if (snapshot == null)
+        {
+            return;
+        }
+
+        foreach (var item in snapshot)
+        {
+            DisposeNoThrow(item);
+        }
+    }
+
+    static void DisposeNoThrow(IDisposable item)
+    {
+        try
+        {
+            item.Dispose();
+        }
+        catch
+        {
+            // State shutdown must continue so native resources are not leaked.
+        }
     }
 }

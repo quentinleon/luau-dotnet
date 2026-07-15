@@ -1,0 +1,333 @@
+using System.Diagnostics.CodeAnalysis;
+
+namespace Luau.Tests;
+
+public sealed class SandboxTests
+{
+    [Fact]
+    public void RootSandboxRejectsMissingBaseLibraryBeforeFreezingState()
+    {
+        using var root = LuauState.Create();
+
+        var exception = Assert.Throws<InvalidOperationException>(root.SandboxRoot);
+
+        Assert.Contains("OpenBaseLibrary", exception.Message);
+        Assert.False(root.IsRootSandboxed);
+
+        root.OpenBaseLibrary();
+        root.SandboxRoot();
+        using var child = root.CreateSandboxedThread();
+
+        Assert.Equal(3, Assert.Single(child.DoString("return 1 + 2")).Read<int>());
+    }
+
+    [Fact]
+    public void RootSandboxRejectsReplacedGlobalEnvironmentBeforeFreezingState()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        using var replacement = root.CreateTable();
+        root["_G"] = replacement;
+
+        var exception = Assert.Throws<InvalidOperationException>(root.SandboxRoot);
+
+        Assert.Contains("OpenBaseLibrary", exception.Message);
+        Assert.False(root.IsRootSandboxed);
+        root.OpenBaseLibrary();
+        root.SandboxRoot();
+    }
+
+    [Fact]
+    public void SandboxedSiblingsHaveIsolatedGlobals()
+    {
+        using var root = CreateSandboxedRoot();
+        using var first = root.CreateSandboxedThread();
+        using var second = root.CreateSandboxedThread();
+
+        var firstResults = first.DoString("scriptValue = 41; return scriptValue");
+        var secondResults = second.DoString("return scriptValue == nil");
+        var firstAgainResults = first.DoString("return scriptValue");
+
+        Assert.Equal(41, Assert.Single(firstResults).Read<int>());
+        Assert.True(Assert.Single(secondResults).Read<bool>());
+        Assert.Equal(41, Assert.Single(firstAgainResults).Read<int>());
+    }
+
+    [Fact]
+    public void SandboxedChildCanReadButCannotReplaceProtectedRootGlobal()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        root["hostAnswer"] = 42;
+        root.SandboxRoot();
+        using var child = root.CreateSandboxedThread();
+
+        Assert.Equal(42, Assert.Single(child.DoString("return hostAnswer")).Read<int>());
+
+        var exception = Assert.Throws<LuauException>(
+            () => child.DoString("hostAnswer = 99"));
+
+        Assert.Contains("protected host global 'hostAnswer'", exception.Message);
+        Assert.Equal(42, Assert.Single(child.DoString("return hostAnswer")).Read<int>());
+    }
+
+    [Fact]
+    public void ProtectedRootAssignmentFailsInsidePcallWithoutChangingRootValue()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        root["hostAnswer"] = 42;
+        root.SandboxRoot();
+        using var child = root.CreateSandboxedThread();
+
+        var results = child.DoString(
+            """
+            local ok, message = pcall(function()
+                hostAnswer = 99
+            end)
+
+            return ok, tostring(message), hostAnswer
+            """);
+
+        Assert.Equal(3, results.Length);
+        Assert.False(results[0].Read<bool>());
+        Assert.Contains("protected host global 'hostAnswer'", results[1].Read<string>());
+        Assert.Equal(42, results[2].Read<int>());
+    }
+
+    [Fact]
+    public void RootApiTablesAreReadOnlyFromSandboxedChildren()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        using var hostApi = root.CreateTable();
+        hostApi["answer"] = 42;
+        root["hostApi"] = hostApi;
+        root.SandboxRoot();
+        using var child = root.CreateSandboxedThread();
+
+        var results = child.DoString(
+            """
+            local ok, message = pcall(function()
+                hostApi.answer = 99
+            end)
+
+            return ok, tostring(message), hostApi.answer
+            """);
+
+        Assert.Equal(3, results.Length);
+        Assert.False(results[0].Read<bool>());
+        Assert.Contains("readonly", results[1].Read<string>(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(42, results[2].Read<int>());
+    }
+
+    [Fact]
+    public void EnvironmentMutationFunctionsAreUnavailableInSandboxedChildren()
+    {
+        using var root = CreateSandboxedRoot();
+        using var child = root.CreateSandboxedThread();
+
+        var results = child.DoString("return getfenv == nil, setfenv == nil");
+
+        Assert.Equal(2, results.Length);
+        Assert.True(results[0].Read<bool>());
+        Assert.True(results[1].Read<bool>());
+    }
+
+    [Fact]
+    public void NewSandboxedChildGlobalsRemainWritable()
+    {
+        using var root = CreateSandboxedRoot();
+        using var child = root.CreateSandboxedThread();
+
+        var results = child.DoString(
+            "scriptValue = 1; scriptValue = scriptValue + 1; return scriptValue");
+
+        Assert.Equal(2, Assert.Single(results).Read<int>());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SandboxedStatesCanBeDisposedInEitherOrder(bool disposeChildFirst)
+    {
+        var root = CreateSandboxedRoot();
+        var child = root.CreateSandboxedThread();
+
+        try
+        {
+            if (disposeChildFirst)
+            {
+                child.Dispose();
+
+                Assert.True(child.IsDisposed);
+                Assert.False(root.IsDisposed);
+                Assert.Equal(7, Assert.Single(root.DoString("return 7")).Read<int>());
+
+                root.Dispose();
+            }
+            else
+            {
+                root.Dispose();
+
+                Assert.True(root.IsDisposed);
+                Assert.True(child.IsDisposed);
+                child.Dispose();
+            }
+
+            Assert.True(root.IsDisposed);
+            Assert.True(child.IsDisposed);
+        }
+        finally
+        {
+            child.Dispose();
+            root.Dispose();
+        }
+    }
+
+    [Fact]
+    public void RequireCacheIsSharedAcrossSandboxedSiblings()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        var requirer = new CountingRequirer();
+        root.OpenRequireLibrary(requirer);
+        root.SandboxRoot();
+        using var first = root.CreateSandboxedThread();
+        using var second = root.CreateSandboxedThread();
+
+        var firstResults = first.DoString("return require('shared-module')");
+        var secondResults = second.DoString("return require('shared-module')");
+
+        Assert.Equal(73, Assert.Single(firstResults).Read<int>());
+        Assert.Equal(73, Assert.Single(secondResults).Read<int>());
+        Assert.Equal(1, requirer.LoadCount);
+    }
+
+    [Fact]
+    public void CachedModuleClosureDoesNotCaptureFirstSandboxedSiblingEnvironment()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        var requirer = new PrivateGlobalClosureRequirer();
+        root.OpenRequireLibrary(requirer);
+        root.SandboxRoot();
+        using var first = root.CreateSandboxedThread();
+        using var second = root.CreateSandboxedThread();
+
+        var firstResults = first.DoString(
+            "privateGlobal = 'first-only'; local readPrivate = require('closure-module'); return readPrivate() == nil, privateGlobal");
+        var secondResults = second.DoString(
+            "local readPrivate = require('closure-module'); return readPrivate() == nil, privateGlobal == nil");
+
+        Assert.Equal(2, firstResults.Length);
+        Assert.True(firstResults[0].Read<bool>());
+        Assert.Equal("first-only", firstResults[1].Read<string>());
+        Assert.Equal(2, secondResults.Length);
+        Assert.True(secondResults[0].Read<bool>());
+        Assert.True(secondResults[1].Read<bool>());
+        Assert.Equal(1, requirer.LoadCount);
+    }
+
+    [Fact]
+    public void SandboxedContextRejectsLibraryRegistrationFromChild()
+    {
+        using var root = CreateSandboxedRoot();
+        using var child = root.CreateSandboxedThread();
+        var requirer = new CountingRequirer();
+        var customLibrary = new TrackingLibrary();
+
+        var osError = Assert.Throws<InvalidOperationException>(child.OpenOSLibrary);
+        var debugError = Assert.Throws<InvalidOperationException>(child.OpenDebugLibrary);
+        var requireError = Assert.Throws<InvalidOperationException>(
+            () => child.OpenRequireLibrary(requirer));
+        var customError = Assert.Throws<InvalidOperationException>(
+            () => child.OpenLibrary(customLibrary));
+
+        Assert.All(
+            [osError, debugError, requireError, customError],
+            error => Assert.Contains("before SandboxRoot", error.Message));
+        Assert.Equal(0, customLibrary.RegisterCount);
+
+        var results = child.DoString(
+            "return os == nil, debug == nil, require == nil");
+
+        Assert.Equal(3, results.Length);
+        Assert.All(results, result => Assert.True(result.Read<bool>()));
+    }
+
+    static LuauState CreateSandboxedRoot()
+    {
+        var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        root.SandboxRoot();
+        return root;
+    }
+
+    sealed class CountingRequirer : LuauRequirer
+    {
+        int loadCount;
+
+        public int LoadCount => Volatile.Read(ref loadCount);
+
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument)
+        {
+            Interlocked.Increment(ref loadCount);
+            state.PushNumber(73);
+            return true;
+        }
+
+        protected override bool TryGetAliasPath(
+            string alias,
+            [NotNullWhen(true)] out string? path)
+        {
+            path = null;
+            return false;
+        }
+    }
+
+    sealed class PrivateGlobalClosureRequirer : LuauRequirer
+    {
+        int loadCount;
+
+        public int LoadCount => Volatile.Read(ref loadCount);
+
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument)
+        {
+            Interlocked.Increment(ref loadCount);
+            var results = ExecuteModuleSource(
+                state,
+                "return function() return privateGlobal end"u8,
+                "@closure-module"u8);
+
+            state.Push(Assert.Single(results));
+            return true;
+        }
+
+        protected override bool TryGetAliasPath(
+            string alias,
+            [NotNullWhen(true)] out string? path)
+        {
+            path = null;
+            return false;
+        }
+    }
+
+    sealed class TrackingLibrary : ILuauLibrary
+    {
+        int registerCount;
+
+        public int RegisterCount => Volatile.Read(ref registerCount);
+
+        public void RegisterTo(LuauState state)
+        {
+            Interlocked.Increment(ref registerCount);
+        }
+    }
+}

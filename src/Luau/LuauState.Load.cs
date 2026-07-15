@@ -1,42 +1,78 @@
 using System.Buffers;
-using System.Runtime.CompilerServices;
 using System.Text;
+using Luau.Native;
 using static Luau.Native.NativeMethods;
 
 namespace Luau;
 
-public partial class LuauState
+public unsafe partial class LuauState
 {
-    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
+    static readonly byte[] defaultChunkName = [.. "main"u8, 0];
+
+    public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
     {
         ThrowIfDisposed();
-        LoadInternal(bytecode, chunkName);
-        var func = ToFunction(-1);
-        return func;
+        using var access = EnterNativeAccess();
+        var originalTop = lua_gettop(l);
+
+        var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
+        var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
+        try
+        {
+            var encodedCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
+            LoadInternal(
+                bytecode,
+                chunkBuffer.AsSpan(0, encodedCount),
+                trustedCompilerOutput: false,
+                DecodeChunkName(chunkName));
+            var function = ToFunction(-1);
+            Pop(1);
+            return function;
+        }
+        finally
+        {
+            lua_settop(l, originalTop);
+            ArrayPool<byte>.Shared.Return(chunkBuffer);
+        }
     }
 
-    public unsafe LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
+    public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
     {
         ThrowIfDisposed();
-        LoadInternal(bytecode, utf8ChunkName);
-        var func = ToFunction(-1);
-        return func;
+        using var access = EnterNativeAccess();
+        var originalTop = lua_gettop(l);
+        try
+        {
+            LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: false);
+            return ToFunction(-1);
+        }
+        finally
+        {
+            lua_settop(l, originalTop);
+        }
     }
 
-    unsafe void LoadInternal(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
+    unsafe void LoadInternal(
+        ReadOnlySpan<byte> bytecode,
+        ReadOnlySpan<char> chunkName,
+        bool trustedCompilerOutput = false)
     {
         if (chunkName.IsEmpty)
         {
-            LoadInternal(bytecode, ReadOnlySpan<byte>.Empty);
+            LoadInternal(bytecode, ReadOnlySpan<byte>.Empty, trustedCompilerOutput);
             return;
         }
 
-        var buffer = ArrayPool<byte>.Shared.Rent(chunkName.Length * 3 + 1);
+        var byteCount = Encoding.UTF8.GetByteCount(chunkName);
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, byteCount));
         try
         {
-            var utf8Count = Encoding.UTF8.GetBytes(chunkName, buffer);
-            buffer[utf8Count] = 0;
-            LoadInternal(bytecode, buffer.AsSpan(0, utf8Count));
+            var encodedCount = Encoding.UTF8.GetBytes(chunkName, buffer);
+            LoadInternal(
+                bytecode,
+                buffer.AsSpan(0, encodedCount),
+                trustedCompilerOutput,
+                DecodeChunkName(chunkName));
         }
         finally
         {
@@ -44,30 +80,173 @@ public partial class LuauState
         }
     }
 
-    unsafe void LoadInternal(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> chunkName)
+    unsafe void LoadInternal(
+        ReadOnlySpan<byte> bytecode,
+        ReadOnlySpan<byte> utf8ChunkName,
+        bool trustedCompilerOutput = false,
+        string? decodedChunkName = null)
     {
-        var bytecodeSize = (nuint)(bytecode.Length * sizeof(byte));
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
 
-        int status;
-        if (chunkName.IsEmpty)
+        decodedChunkName ??= DecodeChunkName(utf8ChunkName);
+        ValidateBytecode(bytecode, utf8ChunkName, decodedChunkName, trustedCompilerOutput);
+        LuauNativeProtection.Prepare(context);
+
+        var nameBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, utf8ChunkName.Length + 1));
+        try
         {
-            var defaultChunkName = "main"u8;
-            fixed (byte* ptr = bytecode, namePtr = defaultChunkName)
+            ReadOnlySpan<byte> nullTerminatedName;
+            if (utf8ChunkName.IsEmpty)
             {
-                status = luau_load(l, namePtr, ptr, bytecodeSize, 0);
+                nullTerminatedName = defaultChunkName;
             }
+            else
+            {
+                utf8ChunkName.CopyTo(nameBuffer);
+                nameBuffer[utf8ChunkName.Length] = 0;
+                nullTerminatedName = nameBuffer.AsSpan(0, utf8ChunkName.Length + 1);
+            }
+
+            int status;
+            fixed (byte* bytecodePointer = bytecode)
+            fixed (byte* namePointer = nullTerminatedName)
+            {
+                int loadStatus = 0;
+                var protectedStatus = luau_ffi_protected_load(
+                    l,
+                    namePointer,
+                    bytecodePointer,
+                    (nuint)bytecode.Length,
+                    0,
+                    &loadStatus);
+                LuauNativeProtection.ThrowIfFailed(
+                    this,
+                    l,
+                    protectedStatus,
+                    "load bytecode",
+                    decodedChunkName);
+                status = loadStatus;
+            }
+
+            if (status == 0)
+            {
+                return;
+            }
+
+            var message = ReadAndPopError();
+            if (context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
+            {
+                throw new LuauMemoryLimitException(
+                    decodedChunkName,
+                    context.MemoryUsage,
+                    context.LastAttemptedAllocationBytes);
+            }
+
+            if (context.AllocatorFailure == LuauAllocatorFailure.SystemOutOfMemory)
+            {
+                throw new OutOfMemoryException(
+                    LuauDiagnosticMessages.WithChunk("The Luau VM could not allocate memory while loading bytecode.", decodedChunkName));
+            }
+
+            if (!string.IsNullOrEmpty(decodedChunkName) &&
+                message.IndexOf(decodedChunkName, StringComparison.Ordinal) < 0)
+            {
+                message = LuauDiagnosticMessages.WithChunk(message, decodedChunkName);
+            }
+
+            throw new LuauException(message, decodedChunkName);
         }
-        else
+        finally
         {
-            fixed (byte* ptr = bytecode, namePtr = chunkName)
-            {
-                status = luau_load(l, namePtr, ptr, bytecodeSize, 0);
-            }
+            ArrayPool<byte>.Shared.Return(nameBuffer);
+        }
+    }
+
+    internal void ValidateSourceSize(int sourceBytes, string? chunkName)
+    {
+        if (Options.MaxSourceBytes is { } limit && sourceBytes > limit)
+        {
+            throw new LuauLoadLimitException(
+                chunkName,
+                LuauLoadInputKind.Source,
+                sourceBytes,
+                limit);
+        }
+    }
+
+    void ValidateBytecode(
+        ReadOnlySpan<byte> bytecode,
+        ReadOnlySpan<byte> utf8ChunkName,
+        string? decodedChunkName,
+        bool trustedCompilerOutput)
+    {
+        if (Options.MaxBytecodeBytes is { } limit && bytecode.Length > limit)
+        {
+            throw new LuauLoadLimitException(
+                decodedChunkName,
+                LuauLoadInputKind.Bytecode,
+                bytecode.Length,
+                limit);
         }
 
-        if (status != 0)
+        if (trustedCompilerOutput)
         {
-            throw new LuauException(Pop().ToString());
+            return;
+        }
+
+        switch (Options.BytecodePolicy)
+        {
+            case LuauBytecodePolicy.AllowUnvalidated:
+                return;
+            case LuauBytecodePolicy.Reject:
+                throw new LuauException(
+                    LuauDiagnosticMessages.WithChunk(
+                        "Host-supplied precompiled bytecode is disabled for this state.",
+                        decodedChunkName),
+                    decodedChunkName);
+            case LuauBytecodePolicy.RequireValidator:
+                if (Options.BytecodeValidator!.IsValid(bytecode, utf8ChunkName))
+                {
+                    return;
+                }
+
+                throw new LuauException(
+                    LuauDiagnosticMessages.WithChunk(
+                        "Host-supplied precompiled bytecode was rejected by the configured validator.",
+                        decodedChunkName),
+                    decodedChunkName);
+            default:
+                throw new InvalidOperationException("Unknown bytecode policy.");
+        }
+    }
+
+    unsafe string ReadAndPopError()
+    {
+        try
+        {
+            // Reading an existing string is allocation-free. Do not ask
+            // lua_tolstring to coerce an arbitrary error object here: coercion
+            // can allocate and must never long-jump across this managed frame.
+            if (lua_gettop(l) == 0 || (lua_Type)lua_type(l, -1) != lua_Type.LUA_TSTRING)
+            {
+                return "Luau loading failed without a string error message.";
+            }
+
+            nuint length = 0;
+            var pointer = lua_tolstring(l, -1, &length);
+            return pointer == null || length == 0
+                ? "Luau loading failed without an error message."
+                : length > int.MaxValue
+                    ? "Luau loading failed with an oversized error message."
+                    : Encoding.UTF8.GetString(new ReadOnlySpan<byte>(pointer, (int)length));
+        }
+        finally
+        {
+            if (lua_gettop(l) > 0)
+            {
+                lua_pop(l, 1);
+            }
         }
     }
 }
