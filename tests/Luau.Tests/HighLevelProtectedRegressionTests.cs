@@ -7,6 +7,18 @@ namespace Luau.Tests;
 public sealed class HighLevelProtectedRegressionTests
 {
     [Fact]
+    public void InvalidStringIndexDoesNotConsumeAnUnrelatedStackValue()
+    {
+        using var state = LuauState.Create();
+        state.PushInteger(42);
+
+        Assert.Throws<InvalidOperationException>(() => state.ToString(2));
+
+        Assert.Equal(1, state.GetTop());
+        Assert.Equal(42, state.Pop().Read<int>());
+    }
+
+    [Fact]
     public void NonYieldableTostringMetamethodBudgetIsTypedAndVmRecovers()
     {
         const string chunkName = "@budgets/non-yieldable-tostring.luau";
@@ -189,5 +201,51 @@ public sealed class HighLevelProtectedRegressionTests
         state.PushNumber(42);
         Assert.Equal(42, state.Pop().Read<int>());
         Assert.Equal(0, state.GetTop());
+    }
+
+    [Fact]
+    public void PublicSetTopQuotaFailurePreservesStackAndTypedDiagnostics()
+    {
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            MemoryLimitBytes = 8_388_608,
+            BytecodePolicy = LuauBytecodePolicy.Reject,
+        });
+        var originalTop = state.GetTop();
+        state.Context.ArmQuotaFailureOnNextGrowth();
+
+        Assert.Throws<LuauMemoryLimitException>(() => state.SetTop(4_096));
+
+        Assert.Equal(originalTop, state.GetTop());
+        state.PushInteger(42);
+        Assert.Equal(42, state.Pop().Read<int>());
+        Assert.Equal(originalTop, state.GetTop());
+    }
+
+    [Fact]
+    public void PublicXMoveQuotaFailurePreservesBothStacksAndTypedDiagnostics()
+    {
+        using var root = LuauState.Create(new LuauStateOptions
+        {
+            MemoryLimitBytes = 8_388_608,
+            BytecodePolicy = LuauBytecodePolicy.Reject,
+        });
+        using var child = root.CreateThread();
+        root.SetTop(0);
+        child.SetTop(0);
+        for (var index = 0; index < 1_024; index++)
+        {
+            root.PushInteger(index);
+        }
+
+        var sourceTop = root.GetTop();
+        var destinationTop = child.GetTop();
+        root.Context.ArmQuotaFailureOnNextGrowth();
+
+        Assert.Throws<LuauMemoryLimitException>(() => root.XMove(child, sourceTop));
+
+        Assert.Equal(sourceTop, root.GetTop());
+        Assert.Equal(destinationTop, child.GetTop());
+        Assert.Equal(1_023, root.ToInteger(-1));
     }
 }

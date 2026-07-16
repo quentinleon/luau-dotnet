@@ -6,42 +6,41 @@ using System.Runtime.InteropServices;
 
 namespace Luau.Native;
 
-public partial class NativeMethods
+internal static class NativeMethodsDllImportResolver
 {
     // https://docs.microsoft.com/en-us/dotnet/standard/native-interop/cross-platform
     // Library path will search
     // win => __DllName, __DllName.dll
     // linux, osx => __DllName.so, __DllName.dylib
 
-    internal static IntPtr DllImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    const string LogicalLibraryName = "luau_host";
+
+    internal static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
-        if (libraryName == __DllName)
+        if (libraryName == LogicalLibraryName)
         {
+            var physicalFileName = GetPhysicalFileName(libraryName);
 #if DEBUG
-            var combinedPath = Path.Combine(AppContext.BaseDirectory, libraryName);
-            if (File.Exists(combinedPath) || File.Exists(combinedPath + ".dll"))
+            var combinedPath = Path.Combine(AppContext.BaseDirectory, physicalFileName);
+            if (File.Exists(combinedPath))
             {
                 return NativeLibrary.Load(combinedPath, assembly, searchPath);
             }
 #endif
 
             var path = "runtimes/";
-            var extension = "";
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 path += "win-";
-                extension = ".dll";
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 path += "osx-";
-                extension = ".dylib";
             }
             else
             {
                 path += "linux-";
-                extension = ".so";
             }
 
             if (RuntimeInformation.OSArchitecture == Architecture.X86)
@@ -57,7 +56,7 @@ public partial class NativeMethods
                 path += "arm64";
             }
 
-            path += "/native/" + __DllName + extension;
+            path += "/native/" + physicalFileName;
 
             var fullPath = Path.Combine(AppContext.BaseDirectory, path);
 
@@ -68,31 +67,20 @@ public partial class NativeMethods
 
             return IntPtr.Zero;
         }
-        else if (string.Equals(libraryName, "libc", StringComparison.OrdinalIgnoreCase))
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                if (NativeLibrary.TryLoad("ucrtbase.dll", assembly, searchPath, out var handle) ||
-                    NativeLibrary.TryLoad("msvcrt.dll", assembly, searchPath, out handle))
-                {
-                    return handle;
-                }
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                return NativeLibrary.Load("libSystem.B.dylib", assembly, searchPath);
-            }
-            else
-            {
-                if (NativeLibrary.TryLoad("libc.so.6", assembly, searchPath, out var handle) ||
-                    NativeLibrary.TryLoad("libc.so", assembly, searchPath, out handle))
-                {
-                    return handle;
-                }
-            }
-        }
 
         return IntPtr.Zero;
+    }
+
+    static string GetPhysicalFileName(string libraryName)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return libraryName + ".dll";
+        }
+
+        var prefix = libraryName.StartsWith("lib", StringComparison.Ordinal) ? "" : "lib";
+        var extension = RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? ".dylib" : ".so";
+        return prefix + libraryName + extension;
     }
 }
 
@@ -103,7 +91,9 @@ internal static class NativeMethodsModuleInitializer
 #pragma warning restore CA2255
     internal static void Initialize()
     {
-        NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, NativeMethods.DllImportResolver);
+        NativeLibrary.SetDllImportResolver(
+            typeof(NativeMethods).Assembly,
+            NativeMethodsDllImportResolver.Resolve);
     }
 }
 

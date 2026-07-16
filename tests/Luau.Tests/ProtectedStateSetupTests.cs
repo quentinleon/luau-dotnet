@@ -125,8 +125,7 @@ public sealed unsafe class ProtectedStateSetupTests
     [Fact]
     public void ProtectedCheckStackReportsAnImpossibleGrowthWithoutDamagingTheState()
     {
-        using var allocator = new LuauTrackedAllocator();
-        var pointer = lua_newstate(LuauTrackedAllocator.Callback, allocator.UserData);
+        var pointer = luaL_newstate();
         Assert.NotEqual(IntPtr.Zero, (IntPtr)pointer);
 
         try

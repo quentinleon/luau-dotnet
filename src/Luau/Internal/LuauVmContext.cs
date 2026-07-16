@@ -8,6 +8,13 @@ namespace Luau;
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 internal unsafe delegate int LuauInterrupt(lua_State* state, int gcState);
 
+internal enum LuauAllocatorFailure
+{
+    None = 0,
+    QuotaExceeded = 1,
+    SystemOutOfMemory = 2,
+}
+
 internal sealed unsafe class LuauVmContext
 {
     static readonly ConcurrentDictionary<IntPtr, WeakReference<LuauState>> globalStates = new();
@@ -27,7 +34,6 @@ internal sealed unsafe class LuauVmContext
     readonly Dictionary<string, LuauValue> moduleCache = new(StringComparer.Ordinal);
     readonly HashSet<IntPtr> sandboxedThreads = [];
     readonly List<int> deferredReferences = [];
-    readonly LuauTrackedAllocator? allocator;
     readonly CancellationTokenSource disposalCancellationSource = new();
 
     IntPtr mainPointer;
@@ -38,11 +44,13 @@ internal sealed unsafe class LuauVmContext
     int releasedReferenceCount;
     int closeCount;
 
-    internal LuauVmContext(lua_State* main, LuauStateOptions options, LuauTrackedAllocator? allocator)
+    LuauHostMemoryInfo finalMemoryInfo;
+    bool hasFinalMemoryInfo;
+
+    internal LuauVmContext(lua_State* main, LuauStateOptions options)
     {
         mainPointer = (IntPtr)main;
         Options = options;
-        this.allocator = allocator;
     }
 
     internal LuauStateOptions Options { get; }
@@ -83,25 +91,117 @@ internal sealed unsafe class LuauVmContext
         {
             lock (nativeGate)
             {
-                var tracked = allocator;
-                return tracked == null
-                    ? LuauMemoryUsageSnapshot.Untracked
-                    : new LuauMemoryUsageSnapshot(
-                        checked((long)tracked.CurrentBytes),
-                        checked((long)tracked.PeakBytes),
-                        tracked.LimitBytes is { } limit ? checked((long)limit) : null);
+                var info = ReadMemoryInfo();
+                if (info.tracked == 0)
+                {
+                    return LuauMemoryUsageSnapshot.Untracked;
+                }
+
+                long? limit = info.limit_bytes == 0
+                    ? null
+                    : ToDiagnosticByteCount(info.limit_bytes);
+                return new LuauMemoryUsageSnapshot(
+                    ToDiagnosticByteCount(info.current_bytes),
+                    ToDiagnosticByteCount(info.peak_bytes),
+                    limit);
             }
         }
     }
 
-    internal LuauAllocatorFailure AllocatorFailure => allocator?.LastFailure ?? LuauAllocatorFailure.None;
-    internal long LastAttemptedAllocationBytes => allocator == null
-        ? 0
-        : LuauTrackedAllocator.ToDiagnosticByteCount(allocator.LastAttemptedBytes);
+    internal LuauAllocatorFailure AllocatorFailure
+    {
+        get
+        {
+            lock (nativeGate)
+            {
+                return ReadMemoryInfo().failure switch
+                {
+                    LuauHostAllocatorFailure.None => LuauAllocatorFailure.None,
+                    LuauHostAllocatorFailure.Quota => LuauAllocatorFailure.QuotaExceeded,
+                    LuauHostAllocatorFailure.System => LuauAllocatorFailure.SystemOutOfMemory,
+                    var failure => throw new LuauException(
+                        $"The Luau host returned unknown allocator failure {failure}.")
+                };
+            }
+        }
+    }
+
+    internal long LastAttemptedAllocationBytes
+    {
+        get
+        {
+            lock (nativeGate)
+            {
+                return ToDiagnosticByteCount(ReadMemoryInfo().last_attempted_bytes);
+            }
+        }
+    }
 
     internal void ResetAllocatorFailure()
     {
-        allocator?.ResetLastFailure();
+        lock (nativeGate)
+        {
+            if (mainPointer == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var status = luau_host_memory_reset_failure((lua_State*)mainPointer);
+            if (status != LuauHostStatus.Ok)
+            {
+                throw new LuauException(
+                    $"The Luau host could not reset allocator diagnostics (status {(int)status}).");
+            }
+        }
+    }
+
+    internal void ArmQuotaFailureOnNextGrowth()
+    {
+        lock (nativeGate)
+        {
+            if (mainPointer == IntPtr.Zero)
+            {
+                ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
+            }
+
+            var status = luau_host_memory_arm_quota_failure((lua_State*)mainPointer);
+            if (status == LuauHostStatus.Unsupported)
+            {
+                throw new InvalidOperationException(
+                    "A finite native memory limit is required before quota fault injection can be armed.");
+            }
+            if (status != LuauHostStatus.Ok)
+            {
+                throw new LuauException(
+                    $"The Luau host could not arm quota fault injection (status {(int)status}).");
+            }
+        }
+    }
+
+    LuauHostMemoryInfo ReadMemoryInfo()
+    {
+        if (mainPointer == IntPtr.Zero)
+        {
+            return hasFinalMemoryInfo ? finalMemoryInfo : default;
+        }
+
+        var info = new LuauHostMemoryInfo
+        {
+            struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
+        };
+        var status = luau_host_memory_get((lua_State*)mainPointer, &info);
+        if (status != LuauHostStatus.Ok)
+        {
+            throw new LuauException(
+                $"The Luau host could not report allocator diagnostics (status {(int)status}).");
+        }
+
+        return info;
+    }
+
+    internal static long ToDiagnosticByteCount(ulong value)
+    {
+        return value > long.MaxValue ? long.MaxValue : (long)value;
     }
 
     internal ScriptOperation BeginOperation(
@@ -334,17 +434,12 @@ internal sealed unsafe class LuauVmContext
         }
     }
 
-    internal void ReleaseManagedCallbackWrapper(int id, bool disable)
+    internal void ReleaseManagedCallbackWrapper(int id)
     {
         var removeGlobalOwner = false;
         lock (lifecycleGate)
         {
             managedCallbackWrapperOwners.Remove(id);
-            if (disable)
-            {
-                managedCallbacks.Remove(id);
-            }
-
             removeGlobalOwner = RemoveManagedCallbackIfUnownedLocked(id);
         }
 
@@ -689,13 +784,27 @@ internal sealed unsafe class LuauVmContext
     {
         try
         {
-            lua_close((lua_State*)pointer);
+            var closingMemoryInfo = new LuauHostMemoryInfo
+            {
+                struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
+            };
+            var preserveMemoryInfo =
+                luau_host_memory_get((lua_State*)pointer, &closingMemoryInfo) == LuauHostStatus.Ok;
+            luau_host_state_close((lua_State*)pointer);
+            if (preserveMemoryInfo)
+            {
+                // lua_close releases every VM allocation. Preserve the peak,
+                // configured limit, and final diagnostics after the native
+                // allocator context itself has been destroyed.
+                closingMemoryInfo.current_bytes = 0;
+                finalMemoryInfo = closingMemoryInfo;
+                hasFinalMemoryInfo = true;
+            }
             Interlocked.Increment(ref closeCount);
         }
         finally
         {
             globalContexts.TryRemove(pointer, out _);
-            allocator?.Dispose();
             disposalCancellationSource.Dispose();
             Volatile.Write(ref lifecycleState, 2);
         }

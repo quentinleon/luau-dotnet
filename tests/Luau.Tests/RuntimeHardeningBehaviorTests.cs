@@ -435,22 +435,30 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
-    public void RepeatedManagedCallbackDisposalDoesNotRetainRegistrationsOrOwners()
+    public unsafe void DisposingManagedCallbackWrappersKeepsNativeClosuresAliveUntilLuauGc()
     {
         using var state = LuauState.Create();
 
         for (var i = 0; i < 1_000; i++)
         {
-            using var callback = state.CreateFunction($"callback-{i}", _ => 0);
+            using var callback = state.CreateFunction(
+                $"callback-{i}",
+                callbackState =>
+                {
+                    callbackState.PushInteger(0);
+                    return 1;
+                });
             state["callback"] = callback;
         }
 
-        Assert.Equal(0, state.Context.ManagedCallbackCount);
         Assert.Equal(0, state.RegisteredDisposableCount);
+        Assert.Equal(0, Assert.Single(state.DoString("return callback()", "@callbacks/retained.luau")).Read<int>());
 
-        var exception = Assert.Throws<LuauManagedCallbackException>(
-            () => state.DoString("callback()", "@callbacks/disposed.luau"));
-        Assert.IsType<ObjectDisposedException>(exception.InnerException);
+        state["callback"] = LuauValue.Nil;
+        Luau.Native.NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
+        ForceManagedFinalizers();
+
+        Assert.Equal(0, state.Context.ManagedCallbackCount);
     }
 
     [Fact]

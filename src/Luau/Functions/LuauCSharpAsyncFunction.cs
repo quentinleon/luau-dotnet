@@ -125,7 +125,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
         var id = Interlocked.Exchange(ref registrationId, 0);
         if (id != 0)
         {
-            context.ReleaseManagedCallbackWrapper(id, disable: true);
+            context.ReleaseManagedCallbackWrapper(id);
         }
     }
 
@@ -136,7 +136,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
             var id = Interlocked.Exchange(ref registrationId, 0);
             if (id != 0)
             {
-                context.ReleaseManagedCallbackWrapper(id, disable: false);
+                context.ReleaseManagedCallbackWrapper(id);
             }
         }
         catch

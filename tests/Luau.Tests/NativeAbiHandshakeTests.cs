@@ -1,111 +1,71 @@
 using Luau.Native;
 using static Luau.Native.NativeMethods;
 
+
 namespace Luau.Tests;
 
 public sealed unsafe class NativeAbiHandshakeTests
 {
     [Fact]
-    public void CurrentPluginReportsMatchingProtectedAbiLayoutAndTypeTags()
+    public void CurrentPluginReportsMatchingHostAbiLayoutFeaturesTagsAndFingerprints()
     {
-        var info = default(luau_ffi_abi_info_v2);
+        var info = LuauNativeProtection.AbiVerifier.Info;
 
-        var status = luau_ffi_protected_abi_info_v2(
-            &info,
-            checked((uint)sizeof(luau_ffi_abi_info_v2)));
-
-        Assert.Equal((int)LUAU_ABI_INFO_OK, status);
-        Assert.Equal(76, sizeof(luau_ffi_abi_info_v2));
-        Assert.Equal((uint)sizeof(luau_ffi_abi_info_v2), info.struct_size);
-        Assert.Equal(LuauNativeProtection.ExpectedAbiVersion, info.protected_abi_version);
+        Assert.Equal(112, sizeof(LuauNativeAbiInfo));
+        Assert.Equal(LuauNativeProtection.ExpectedAbiRecordSize, info.struct_size);
+        Assert.Equal(LuauNativeProtection.ExpectedAbiMagic, info.magic);
+        Assert.Equal(LuauNativeProtection.ExpectedAbiMajor, info.abi_major);
+        Assert.True(info.abi_minor >= LuauNativeProtection.MinimumAbiMinor);
+        Assert.Equal(
+            LuauNativeProtection.ExpectedFeatureFlags,
+            info.feature_flags & LuauNativeProtection.ExpectedFeatureFlags);
         Assert.Equal((byte)sizeof(void*), info.pointer_size);
         Assert.Equal((byte)sizeof(nuint), info.size_t_size);
         Assert.Equal((byte)1, info.little_endian);
-        Assert.Equal((uint)sizeof(lua_CompileOptions), info.compile_options_size);
-        Assert.Equal((uint)sizeof(lua_Callbacks), info.callbacks_size);
-        Assert.Equal((int)lua_Type.LUA_TNIL, info.type_nil);
-        Assert.Equal((int)lua_Type.LUA_TBOOLEAN, info.type_boolean);
-        Assert.Equal((int)lua_Type.LUA_TLIGHTUSERDATA, info.type_lightuserdata);
-        Assert.Equal((int)lua_Type.LUA_TNUMBER, info.type_number);
-        Assert.Equal((int)lua_Type.LUA_TINTEGER, info.type_integer);
-        Assert.Equal((int)lua_Type.LUA_TVECTOR, info.type_vector);
-        Assert.Equal((int)lua_Type.LUA_TSTRING, info.type_string);
-        Assert.Equal((int)lua_Type.LUA_TTABLE, info.type_table);
-        Assert.Equal((int)lua_Type.LUA_TFUNCTION, info.type_function);
-        Assert.Equal((int)lua_Type.LUA_TUSERDATA, info.type_userdata);
-        Assert.Equal((int)lua_Type.LUA_TTHREAD, info.type_thread);
-        Assert.Equal((int)lua_Type.LUA_TBUFFER, info.type_buffer);
-        Assert.Equal((int)lua_Type.LUA_TCLASS, info.type_class);
-        Assert.Equal((int)lua_Type.LUA_TOBJECT, info.type_object);
+        Assert.Equal((uint)32, info.compile_options_size);
+        Assert.Equal((uint)(IntPtr.Size == 8 ? 48 : 40), info.callback_table_size);
+        Assert.Equal((uint)16, info.state_options_size);
+        Assert.Equal((uint)48, info.memory_info_size);
+        Assert.Equal((uint)16, info.buffer_size);
+        Assert.Equal(LuauNativeProtection.ExpectedUpstreamRevisionHash, info.upstream_revision_hash);
+        Assert.Equal(LuauNativeProtection.ExpectedHostBuildFingerprint, info.host_build_fingerprint);
 
         LuauNativeAbiVerifier.Validate(info);
     }
 
     [Fact]
-    public void NativeQueryPartiallyInitializesOnlyTheCallerBuffer()
-    {
-        const int callerSize = 8;
-        var buffer = stackalloc byte[callerSize + 1];
-        new Span<byte>(buffer, callerSize + 1).Fill(0xcc);
-
-        var status = luau_ffi_protected_abi_info_v2(
-            (luau_ffi_abi_info_v2*)buffer,
-            callerSize);
-
-        Assert.Equal((int)LUAU_ABI_INFO_BUFFER_TOO_SMALL, status);
-        Assert.Equal((uint)sizeof(luau_ffi_abi_info_v2), *(uint*)buffer);
-        Assert.Equal(LuauNativeProtection.ExpectedAbiVersion, *(uint*)(buffer + sizeof(uint)));
-        Assert.Equal(0xcc, buffer[callerSize]);
-
-        new Span<byte>(buffer, callerSize + 1).Fill(0xcc);
-        status = luau_ffi_protected_abi_info_v2((luau_ffi_abi_info_v2*)buffer, 3);
-
-        Assert.Equal((int)LUAU_ABI_INFO_BUFFER_TOO_SMALL, status);
-        Assert.Equal(new byte[] { 0xcc, 0xcc, 0xcc }, new ReadOnlySpan<byte>(buffer, 3).ToArray());
-        Assert.Equal(0xcc, buffer[3]);
-    }
-
-    [Fact]
-    public void RootCreationRejectsWrongProtectedAbiVersionBeforeNativeStateCreation()
+    public void RootCreationRejectsWrongHostAbiMajorBeforeNativeStateCreation()
     {
         var info = CreateMatchingInfo();
-        info.protected_abi_version++;
+        info.abi_major++;
         var verifier = CreateVerifier(info);
 
         var exception = Assert.Throws<PlatformNotSupportedException>(
             () => LuauState.Create(LuauStateOptions.Default, verifier));
 
-        Assert.Contains("protected-call ABI", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("host ABI", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Upstream fingerprint", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("host build fingerprint", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RootCreationRejectsStageOneRecordAndStaleTypeTagsBeforeNativeStateCreation()
+    public void RootCreationRejectsMissingRequiredFeatureBeforeNativeStateCreation()
     {
         var info = CreateMatchingInfo();
-        info.struct_size = 64;
-        info.type_vector = 4;
-        info.type_string = 5;
-        info.type_table = 6;
-        info.type_function = 7;
-        info.type_userdata = 8;
-        info.type_thread = 9;
-        info.type_buffer = 10;
-        info.type_integer = 0;
-        info.type_class = 0;
-        info.type_object = 0;
+        info.feature_flags &= ~(1U << 2);
         var verifier = CreateVerifier(info);
 
         var exception = Assert.Throws<PlatformNotSupportedException>(
             () => LuauState.Create(LuauStateOptions.Default, verifier));
 
-        Assert.Contains("ABI information record", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("host-owned compiler buffers", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("integer")]
     [InlineData("class")]
     [InlineData("object")]
-    public void RootCreationRejectsWrongStageTwoTypeTagBeforeNativeStateCreation(string tag)
+    public void RootCreationRejectsWrongHostTypeTagBeforeNativeStateCreation(string tag)
     {
         var info = CreateMatchingInfo();
         switch (tag)
@@ -124,7 +84,7 @@ public sealed unsafe class NativeAbiHandshakeTests
     }
 
     [Fact]
-    public void VerifierRejectsWrongPointerSize()
+    public void VerifierRejectsWrongPointerSizeWithFingerprintDiagnostics()
     {
         var info = CreateMatchingInfo();
         info.pointer_size = info.pointer_size == 8 ? (byte)4 : (byte)8;
@@ -133,19 +93,55 @@ public sealed unsafe class NativeAbiHandshakeTests
         var exception = Assert.Throws<PlatformNotSupportedException>(verifier.EnsureAvailable);
 
         Assert.Contains("pointer size", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{LuauNativeProtection.ExpectedHostBuildFingerprint:x16}",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
-    public void StandaloneCompilerRejectsWrongTypeTagBeforeNativeCompilation()
+    public void VerifierRejectsWrongOfficialUpstreamFingerprint()
     {
         var info = CreateMatchingInfo();
-        info.type_function++;
+        info.upstream_revision_hash++;
+        var verifier = CreateVerifier(info);
+
+        var exception = Assert.Throws<PlatformNotSupportedException>(verifier.EnsureAvailable);
+
+        Assert.Contains("upstream fingerprint", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            $"{LuauNativeProtection.ExpectedUpstreamRevisionHash:x16}",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VerifierRejectsWrongHostBuildFingerprint()
+    {
+        var info = CreateMatchingInfo();
+        info.host_build_fingerprint++;
+        var verifier = CreateVerifier(info);
+
+        var exception = Assert.Throws<PlatformNotSupportedException>(verifier.EnsureAvailable);
+
+        Assert.Contains("build fingerprint", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            $"{LuauNativeProtection.ExpectedHostBuildFingerprint:x16}",
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StandaloneCompilerRejectsWrongMagicBeforeNativeCompilation()
+    {
+        var info = CreateMatchingInfo();
+        info.magic++;
         var verifier = CreateVerifier(info);
 
         var exception = Assert.Throws<PlatformNotSupportedException>(
             () => LuauCompiler.Compile("return 42"u8, options: null, verifier));
 
-        Assert.Contains("function type tag", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ABI magic", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -157,7 +153,24 @@ public sealed unsafe class NativeAbiHandshakeTests
 
         var exception = Assert.Throws<PlatformNotSupportedException>(verifier.EnsureAvailable);
 
-        Assert.Contains("ABI information record", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ABI record", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InvalidQueryStatusReportsCallerAndHostRecordSizes()
+    {
+        var verifier = new LuauNativeAbiVerifier((output, _) =>
+        {
+            output->struct_size = 144;
+            output->upstream_revision_hash = LuauNativeProtection.ExpectedUpstreamRevisionHash;
+            output->host_build_fingerprint = 1;
+            return LuauNativeProtection.AbiQueryInvalidArgument;
+        });
+
+        var exception = Assert.Throws<PlatformNotSupportedException>(verifier.EnsureAvailable);
+
+        Assert.Contains("112-byte caller record", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("144 bytes", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -191,37 +204,39 @@ public sealed unsafe class NativeAbiHandshakeTests
     }
 
     static LuauNativeAbiVerifier CreateVerifier(
-        luau_ffi_abi_info_v2 info,
+        LuauNativeAbiInfo info,
         Action? beforeQuery = null)
     {
         return new LuauNativeAbiVerifier((output, outputSize) =>
         {
             beforeQuery?.Invoke();
-            if (output == null)
+            if (output == null || outputSize < sizeof(LuauNativeAbiInfo))
             {
-                return (int)LUAU_ABI_INFO_INVALID_ARGUMENT;
-            }
-            if (outputSize < sizeof(luau_ffi_abi_info_v2))
-            {
-                return (int)LUAU_ABI_INFO_BUFFER_TOO_SMALL;
+                return LuauNativeProtection.AbiQueryInvalidArgument;
             }
 
             *output = info;
-            return (int)LUAU_ABI_INFO_OK;
+            return LuauNativeProtection.AbiQueryOk;
         });
     }
 
-    static luau_ffi_abi_info_v2 CreateMatchingInfo()
+    static LuauNativeAbiInfo CreateMatchingInfo()
     {
-        return new luau_ffi_abi_info_v2
+        return new LuauNativeAbiInfo
         {
-            struct_size = checked((uint)sizeof(luau_ffi_abi_info_v2)),
-            protected_abi_version = LuauNativeProtection.ExpectedAbiVersion,
+            struct_size = checked((uint)sizeof(LuauNativeAbiInfo)),
+            magic = LuauNativeProtection.ExpectedAbiMagic,
+            abi_major = LuauNativeProtection.ExpectedAbiMajor,
+            abi_minor = LuauNativeProtection.MinimumAbiMinor,
+            feature_flags = LuauNativeProtection.ExpectedFeatureFlags,
             pointer_size = checked((byte)sizeof(void*)),
             size_t_size = checked((byte)sizeof(nuint)),
             little_endian = BitConverter.IsLittleEndian ? (byte)1 : (byte)0,
-            compile_options_size = checked((uint)sizeof(lua_CompileOptions)),
-            callbacks_size = checked((uint)sizeof(lua_Callbacks)),
+            compile_options_size = 32,
+            callback_table_size = checked((uint)(IntPtr.Size == 8 ? 48 : 40)),
+            state_options_size = 16,
+            memory_info_size = 48,
+            buffer_size = 16,
             type_nil = (int)lua_Type.LUA_TNIL,
             type_boolean = (int)lua_Type.LUA_TBOOLEAN,
             type_lightuserdata = (int)lua_Type.LUA_TLIGHTUSERDATA,
@@ -236,6 +251,8 @@ public sealed unsafe class NativeAbiHandshakeTests
             type_buffer = (int)lua_Type.LUA_TBUFFER,
             type_class = (int)lua_Type.LUA_TCLASS,
             type_object = (int)lua_Type.LUA_TOBJECT,
+            upstream_revision_hash = LuauNativeProtection.ExpectedUpstreamRevisionHash,
+            host_build_fingerprint = LuauNativeProtection.ExpectedHostBuildFingerprint,
         };
     }
 }

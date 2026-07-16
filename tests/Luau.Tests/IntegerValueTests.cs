@@ -153,10 +153,10 @@ public sealed class IntegerValueTests
     }
 
     [Theory]
-    [InlineData(lua_Type.LUA_TCLASS, "class")]
-    [InlineData(lua_Type.LUA_TOBJECT, "object")]
+    [InlineData((int)lua_Type.LUA_TCLASS, "class")]
+    [InlineData((int)lua_Type.LUA_TOBJECT, "object")]
     public void UnsupportedUpstreamObjectKindsFailDeliberately(
-        lua_Type nativeType,
+        int nativeType,
         string expectedKind)
     {
         using var state = LuauState.Create();
@@ -164,7 +164,7 @@ public sealed class IntegerValueTests
         var originalTop = state.GetTop();
 
         var exception = Assert.Throws<LuauUnsupportedValueException>(
-            () => state.ToValueForNativeTypeFixture(-1, nativeType));
+            () => state.ToValueForNativeTypeFixture(-1, (lua_Type)nativeType));
 
         Assert.Equal(expectedKind, exception.ValueKind);
         Assert.Contains(expectedKind, exception.Message, StringComparison.Ordinal);

@@ -1,0 +1,6 @@
+{
+    global:
+        luau_host_*;
+    local:
+        *;
+};

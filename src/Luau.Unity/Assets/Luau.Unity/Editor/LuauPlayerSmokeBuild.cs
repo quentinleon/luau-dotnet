@@ -30,14 +30,39 @@ namespace Luau.Unity.Editor
         [MenuItem("Luau/Verification/Build Android ARM64 IL2CPP Smoke Player")]
         public static void BuildAndroidArm64Il2Cpp()
         {
-            Build(
-                BuildTarget.Android,
-                Path.Combine("Builds", "LuauSmoke", "Android", "LuauSmoke.apk"));
+            BuildAndroid(
+                AndroidArchitecture.ARM64,
+                Path.Combine("Builds", "LuauSmoke", "Android-arm64", "LuauSmoke.apk"));
         }
 
-        static void Build(BuildTarget target, string defaultOutput)
+        [MenuItem("Luau/Verification/Build Android x64 IL2CPP Smoke Player")]
+        public static void BuildAndroidX64Il2Cpp()
         {
-            ValidateTarget(target);
+            BuildAndroid(
+                AndroidArchitecture.X86_64,
+                Path.Combine("Builds", "LuauSmoke", "Android-x64", "LuauSmoke.apk"));
+        }
+
+        static void BuildAndroid(AndroidArchitecture architecture, string defaultOutput)
+        {
+            var previousArchitecture = PlayerSettings.Android.targetArchitectures;
+            try
+            {
+                PlayerSettings.Android.targetArchitectures = architecture;
+                Build(BuildTarget.Android, defaultOutput, architecture);
+            }
+            finally
+            {
+                PlayerSettings.Android.targetArchitectures = previousArchitecture;
+            }
+        }
+
+        static void Build(
+            BuildTarget target,
+            string defaultOutput,
+            AndroidArchitecture? requiredAndroidArchitecture = null)
+        {
+            ValidateTarget(target, requiredAndroidArchitecture);
 
             var output = GetOutputPath(defaultOutput);
             var outputDirectory = Path.GetDirectoryName(output);
@@ -110,7 +135,9 @@ namespace Luau.Unity.Editor
             }
         }
 
-        static void ValidateTarget(BuildTarget target)
+        static void ValidateTarget(
+            BuildTarget target,
+            AndroidArchitecture? requiredAndroidArchitecture)
         {
             if (EditorUserBuildSettings.activeBuildTarget != target)
             {
@@ -128,11 +155,11 @@ namespace Luau.Unity.Editor
                     "The " + target + " player must already be configured to use IL2CPP.");
             }
 
-            if (target == BuildTarget.Android &&
-                PlayerSettings.Android.targetArchitectures != AndroidArchitecture.ARM64)
+            if (target == BuildTarget.Android && requiredAndroidArchitecture.HasValue &&
+                PlayerSettings.Android.targetArchitectures != requiredAndroidArchitecture.Value)
             {
                 throw new BuildFailedException(
-                    "The Android smoke player must target ARM64 only because the package does not ship an ARMv7 plugin.");
+                    "The Android smoke player must target exactly " + requiredAndroidArchitecture.Value + ".");
             }
         }
 

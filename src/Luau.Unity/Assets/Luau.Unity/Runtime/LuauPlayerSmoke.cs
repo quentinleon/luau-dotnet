@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Threading.Tasks;
+using Luau;
 using UnityEngine;
 
 namespace Luau.Unity.Verification
@@ -54,6 +55,11 @@ namespace Luau.Unity.Verification
                     ConfigureHostApis = state =>
                     {
                         state["hostAnswer"] = 42L;
+                        // This typed overload is emitted by Luau.SourceGenerator;
+                        // keeping it in the player smoke validates the AOT host
+                        // callback path rather than only the runtime delegate API.
+                        state["hostGeneratedAddOne"] = state.CreateFunction(
+                            (Func<long, long>)GeneratedAddOne);
                         state["hostAddOne"] = state.CreateFunction(
                             "hostAddOne",
                             callbackState =>
@@ -105,7 +111,8 @@ namespace Luau.Unity.Verification
                     "and getfenv == nil " +
                     "and setfenv == nil, " +
                     "hostAnswer, " +
-                    "hostAddOne(41)",
+                    "hostAddOne(41), " +
+                    "hostGeneratedAddOne(41)",
                     "@unity/player-smoke-first.luau");
                 var secondResult = second.DoString(
                     "return scriptLocal == nil, hostAnswer",
@@ -114,10 +121,11 @@ namespace Luau.Unity.Verification
                     "local answer = hostAsyncAnswer(); return answer, hostAssertUnityThread()",
                     "@unity/player-smoke-async.luau");
 
-                if (firstResult.Length != 3 ||
+                if (firstResult.Length != 4 ||
                     !firstResult[0].Read<bool>() ||
                     firstResult[1].Read<long>() != 42L ||
-                    firstResult[2].Read<int>() != 42)
+                    firstResult[2].Read<int>() != 42 ||
+                    firstResult[3].Read<long>() != 42L)
                 {
                     throw new LuauException("The primary sandbox smoke script returned an unexpected result.");
                 }
@@ -150,6 +158,11 @@ namespace Luau.Unity.Verification
                 Debug.LogError(FailedMarker + "\n" + exception);
                 return false;
             }
+        }
+
+        static long GeneratedAddOne(long value)
+        {
+            return value + 1;
         }
 
         static IEnumerator QuitAfterLogFlush(int exitCode)

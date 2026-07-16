@@ -67,9 +67,8 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         options.Validate();
         abiVerifier.EnsureAvailable();
 
-        LuauTrackedAllocator? allocator = null;
-        lua_State* statePointer;
-
+        var nativeOptions = default(LuauHostStateOptions);
+        LuauHostStateOptions* nativeOptionsPointer = null;
         if (options.MemoryLimitBytes is { } memoryLimitBytes)
         {
             if ((ulong)memoryLimitBytes >= (ulong)(~(nuint)0))
@@ -80,38 +79,56 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
                     "The memory limit cannot be represented by the native allocator on this platform.");
             }
 
-            allocator = new LuauTrackedAllocator(checked((nuint)memoryLimitBytes));
-            statePointer = lua_newstate(LuauTrackedAllocator.Callback, allocator.UserData);
-        }
-        else
-        {
-            statePointer = luaL_newstate();
-        }
-
-        if (statePointer == null)
-        {
-            try
+            nativeOptions = new LuauHostStateOptions
             {
-                if (allocator?.LastFailure == LuauAllocatorFailure.QuotaExceeded)
-                {
-                    var limit = options.MemoryLimitBytes!.Value;
-                    var usage = new LuauMemoryUsageSnapshot(
-                        checked((long)allocator.CurrentBytes),
-                        checked((long)allocator.PeakBytes),
-                        limit);
-                    var attempted = Math.Max(limit + 1, LuauTrackedAllocator.ToDiagnosticByteCount(allocator.LastAttemptedBytes));
-                    throw new LuauMemoryLimitException(null, usage, attempted);
-                }
+                struct_size = checked((uint)sizeof(LuauHostStateOptions)),
+                version = 1,
+                flags = LuauHostStateOptionFlags.TrackMemory,
+                memory_limit_bytes = checked((ulong)memoryLimitBytes),
+            };
+            nativeOptionsPointer = &nativeOptions;
+        }
 
+        lua_State* statePointer = null;
+        var failureInfo = new LuauHostMemoryInfo
+        {
+            struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
+        };
+        var status = luau_host_state_create(nativeOptionsPointer, &statePointer, &failureInfo);
+        if (status != LuauHostStatus.Ok || statePointer == null)
+        {
+            if (status == LuauHostStatus.MemoryQuota ||
+                failureInfo.failure == LuauHostAllocatorFailure.Quota)
+            {
+                var limit = options.MemoryLimitBytes!.Value;
+                var usage = new LuauMemoryUsageSnapshot(
+                    LuauVmContext.ToDiagnosticByteCount(failureInfo.current_bytes),
+                    LuauVmContext.ToDiagnosticByteCount(failureInfo.peak_bytes),
+                    limit);
+                var attempted = Math.Max(
+                    limit + 1,
+                    LuauVmContext.ToDiagnosticByteCount(failureInfo.last_attempted_bytes));
+                throw new LuauMemoryLimitException(null, usage, attempted);
+            }
+
+            if (status == LuauHostStatus.SystemOutOfMemory ||
+                failureInfo.failure == LuauHostAllocatorFailure.System ||
+                (status == LuauHostStatus.Ok && statePointer == null))
+            {
                 throw new OutOfMemoryException("Unable to create a Luau state.");
             }
-            finally
+
+            if (status == LuauHostStatus.InvalidArgument)
             {
-                allocator?.ReleaseAfterFailedStateCreation();
+                throw new PlatformNotSupportedException(
+                    "The Luau host rejected the managed root-state options after ABI validation.");
             }
+
+            throw new LuauException(
+                $"The Luau host could not create a root state (status {(int)status}).");
         }
 
-        return CreateStateInternal(statePointer, options, allocator);
+        return CreateStateInternal(statePointer, options);
     }
 
     internal static LuauState GetCachedState(lua_State* l)
@@ -150,10 +167,10 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
 
     internal static LuauState CreateStateInternal(lua_State* l)
     {
-        return CreateStateInternal(l, LuauStateOptions.Default, allocator: null);
+        return CreateStateInternal(l, LuauStateOptions.Default);
     }
 
-    static LuauState CreateStateInternal(lua_State* l, LuauStateOptions options, LuauTrackedAllocator? allocator)
+    static LuauState CreateStateInternal(lua_State* l, LuauStateOptions options)
     {
         if (l == null)
         {
@@ -165,7 +182,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
             ThrowHelper.ThrowInvalidOperationException("The Luau state is already registered");
         }
 
-        var context = new LuauVmContext(l, options, allocator);
+        var context = new LuauVmContext(l, options);
         try
         {
             var state = new LuauState(l, context, root: null, reference: -1, isMainThread: true);
@@ -174,8 +191,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         }
         catch
         {
-            lua_close(l);
-            allocator?.Dispose();
+            luau_host_state_close(l);
             throw;
         }
     }

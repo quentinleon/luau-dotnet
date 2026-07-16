@@ -92,6 +92,28 @@ public sealed class HardeningRuntimeTests
     }
 
     [Fact]
+    public void MemoryUsageRetainsFinalTrackedPeakAndLimitAfterDisposal()
+    {
+        const long memoryLimit = 1_048_576;
+        var state = LuauState.Create(new LuauStateOptions
+        {
+            MemoryLimitBytes = memoryLimit,
+            BytecodePolicy = LuauBytecodePolicy.Reject,
+        });
+        _ = state.DoString("return 42", "@mods/final-memory-snapshot.luau");
+        var beforeDisposal = state.MemoryUsage;
+
+        state.Dispose();
+
+        var afterDisposal = state.MemoryUsage;
+        Assert.True(afterDisposal.IsTracked);
+        Assert.True(afterDisposal.IsLimited);
+        Assert.Equal(0, afterDisposal.CurrentBytes);
+        Assert.Equal(memoryLimit, afterDisposal.LimitBytes);
+        Assert.True(afterDisposal.PeakBytes >= beforeDisposal.PeakBytes);
+    }
+
+    [Fact]
     public void OversizedSourceIsRejectedBeforeCompilationAndRetainsChunkName()
     {
         const string chunkName = "@mods/source-too-large.luau";

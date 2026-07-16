@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using Luau.Native;
 using static Luau.Native.NativeMethods;
@@ -69,7 +70,15 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        lua_settop(l, top);
+        var currentTop = lua_gettop(l);
+        if (top < -currentTop - 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(top), "The relative stack top is below the base of the Luau stack.");
+        }
+
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_settop(l, top);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "set the stack top");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -753,7 +762,19 @@ public unsafe partial class LuauState
             // Luau GC can release the managed delegate as soon as the native
             // closure becomes unreachable. Custom LuauFunction subclasses keep
             // the legacy light-userdata upvalue contract.
-            if (value is ILuauManagedCallbackFunction managedCallback)
+            var managedCallback = value as ILuauManagedCallbackFunction;
+#pragma warning disable CS0618 // Transitional runtime call until Stage 4 internalizes native callback plumbing.
+            var nativeFunction = value.AsCFunction();
+#pragma warning restore CS0618
+            // Resolve and root the product callbacks before the lifetime token
+            // mutates the VM. Both product callback delegates are static for
+            // process lifetime, so the host does not need a fallible GCHandle
+            // allocation after the token/native-owner count is established.
+            var rootedFunction = managedCallback == null
+                ? IntPtr.Zero
+                : Marshal.GetFunctionPointerForDelegate(nativeFunction);
+
+            if (managedCallback != null)
             {
                 if (!ReferenceEquals(functionAccess.State.Context, context))
                 {
@@ -802,12 +823,9 @@ public unsafe partial class LuauState
 
             LuauNativeProtection.Prepare(context);
 #pragma warning disable CS0618 // Transitional runtime call until Stage 4 internalizes native callback plumbing.
-            var closureStatus = luau_ffi_protected_pushcclosurek(
-                l,
-                value.AsCFunction(),
-                null,
-                1,
-                null);
+            var closureStatus = managedCallback != null
+                ? luau_host_push_rooted_callback(l, rootedFunction, null, 1)
+                : PushNativeClosure(l, nativeFunction, null, 1);
 #pragma warning restore CS0618
             LuauNativeProtection.ThrowIfFailed(
                 this,
@@ -821,13 +839,14 @@ public unsafe partial class LuauState
     [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public void PushCFunction(lua_CFunction value, ReadOnlySpan<byte> debugName = default)
     {
+        if (value == null) throw new ArgumentNullException(nameof(value));
         ThrowIfDisposed();
 
         if (debugName.IsEmpty)
         {
             using var access = EnterNativeAccess();
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_pushcclosurek(l, value, null, 0, null);
+            var status = PushNativeClosure(l, value, null, 0);
             LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
         }
         else
@@ -846,7 +865,7 @@ public unsafe partial class LuauState
                 fixed (byte* d = buffer)
                 {
                     LuauNativeProtection.Prepare(context);
-                    var status = luau_ffi_protected_pushcclosurek(l, value, d, 0, null);
+                    var status = PushNativeClosure(l, value, d, 0);
                     LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
                 }
             }
@@ -861,6 +880,7 @@ public unsafe partial class LuauState
     [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
     public void PushCClosure(lua_CFunction value, ReadOnlySpan<byte> debugName = default, int upvalues = 0)
     {
+        if (value == null) throw new ArgumentNullException(nameof(value));
         ThrowIfDisposed();
         if (upvalues < 0)
         {
@@ -876,7 +896,7 @@ public unsafe partial class LuauState
             }
 
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_pushcclosurek(l, value, null, upvalues, null);
+            var status = PushNativeClosure(l, value, null, upvalues);
             LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
         }
         else
@@ -900,7 +920,7 @@ public unsafe partial class LuauState
                     }
 
                     LuauNativeProtection.Prepare(context);
-                    var status = luau_ffi_protected_pushcclosurek(l, value, d, upvalues, null);
+                    var status = PushNativeClosure(l, value, d, upvalues);
                     LuauNativeProtection.ThrowIfFailed(this, l, status, "create a native callback closure");
                 }
             }
@@ -909,6 +929,15 @@ public unsafe partial class LuauState
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         }
+    }
+
+    static int PushNativeClosure(
+        lua_State* state,
+        lua_CFunction function,
+        byte* debugName,
+        int upvalues)
+    {
+        return luau_ffi_protected_pushcclosurek(state, function, debugName, upvalues);
     }
 
     void PushReference<T>(T value)
@@ -967,6 +996,7 @@ public unsafe partial class LuauState
     public void XMove(LuauState destination, int n)
     {
         if (destination == null) throw new ArgumentNullException(nameof(destination));
+        ThrowIfDisposed();
         using var access = EnterNativeAccess();
         destination.ThrowIfDisposed();
         if (!ReferenceEquals(context, destination.context))
@@ -976,6 +1006,17 @@ public unsafe partial class LuauState
 
         var from = l;
         var to = destination.l;
-        lua_xmove(from, to, n);
+        if (n < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(n));
+        }
+        if (lua_gettop(from) < n)
+        {
+            throw new InvalidOperationException("The source Luau stack does not contain enough values to move.");
+        }
+
+        LuauNativeProtection.Prepare(context);
+        var status = luau_ffi_protected_xmove(from, to, n);
+        LuauNativeProtection.ThrowIfFailed(this, from, status, "move stack values");
     }
 }

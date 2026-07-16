@@ -1,0 +1,82 @@
+name: Build Luau Host - Android
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} host
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android-arm64
+            preset: android-arm64
+          - platform: android-x64
+            preset: android-x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install CMake
+        uses: jwlawson/actions-setup-cmake@v1
+        with:
+          cmake-version: 3.29.5
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Install approved Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Configure host
+        working-directory: native/luau-host
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build and audit host
+        working-directory: native/luau-host
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Install host
+        working-directory: native/luau-host
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cmake --install out/build/${{ matrix.preset }}
+
+      - name: Write validated artifact and ABI manifest
+        shell: pwsh
+        run: |
+          & ./native/luau-host/cmake/Write-ArtifactManifest.ps1 `
+            -BinaryPath native/luau-host/out/install/${{ matrix.preset }}/libluau_host.so `
+            -Platform ${{ matrix.platform }} `
+            -Configuration Release `
+            -AndroidApi 26 `
+            -AndroidNdk 27.2.12479018 `
+            -OutputPath native/luau-host/out/install/${{ matrix.preset }}/luau_host.manifest.json
+
+      - name: Upload host
+        uses: actions/upload-artifact@v4
+        with:
+          name: luau-host-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            native/luau-host/out/install/${{ matrix.preset }}/libluau_host.so
+            native/luau-host/out/install/${{ matrix.preset }}/luau_host.manifest.json
+            native/luau-host/out/install/${{ matrix.preset }}/share/luau-host/luau_host.exports

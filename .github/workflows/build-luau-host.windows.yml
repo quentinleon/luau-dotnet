@@ -1,0 +1,87 @@
+name: Build Luau Host - Windows
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows x64 host
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install CMake
+        uses: jwlawson/actions-setup-cmake@v1
+        with:
+          cmake-version: 3.29.5
+
+      - name: Configure host
+        working-directory: native/luau-host
+        run: cmake --preset windows-x64
+
+      - name: Build and audit host
+        working-directory: native/luau-host
+        run: cmake --build --preset windows-x64
+
+      - name: Run native conformance tests
+        working-directory: native/luau-host
+        run: ctest --preset windows-x64
+
+      - name: Install host
+        working-directory: native/luau-host
+        run: cmake --install out/build/windows-x64 --config Release
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore .NET test harness
+        run: dotnet restore Luau.slnx
+
+      - name: Run .NET suite against host
+        run: dotnet test Luau.slnx --no-restore --configuration Release
+
+      - name: Run host lifetime and fault soak
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Test-LuauHostSoak.ps1
+          -Configuration Release
+          -SoakIterations 25
+
+      - name: Reject malformed host ABI fixtures before native operations
+        run: >-
+          dotnet run
+          --project tests/Luau.Host.AbiFixtureHost/Luau.Host.AbiFixtureHost.csproj
+          --no-restore
+          --configuration Release
+          --
+          --fixtures native/luau-host/out/build/windows-x64/invalid-abi-fixtures
+
+      - name: Write validated artifact and ABI manifest
+        shell: pwsh
+        run: |
+          & ./native/luau-host/cmake/Write-ArtifactManifest.ps1 `
+            -BinaryPath native/luau-host/out/install/windows-x64/luau_host.dll `
+            -Platform win-x64 `
+            -Configuration Release `
+            -OutputPath native/luau-host/out/install/windows-x64/luau_host.manifest.json
+
+      - name: Upload host
+        uses: actions/upload-artifact@v4
+        with:
+          name: luau-host-win-x64
+          if-no-files-found: error
+          path: |
+            native/luau-host/out/install/windows-x64/luau_host.dll
+            native/luau-host/out/install/windows-x64/luau_host.manifest.json
+            native/luau-host/out/install/windows-x64/share/luau-host/luau_host.exports

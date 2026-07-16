@@ -11,7 +11,7 @@ A Unity-first Luau runtime with a native VM, managed host API, source generators
 
 Luau for Unity embeds the [Luau language](https://luau.org/) in Unity applications. The supported product surface is the package under `src/Luau.Unity/Assets/Luau.Unity`; it includes the safe high-level managed API, source-generator support, and native plugins.
 
-The package still contains generated `Luau.Native` declarations needed by the runtime. They are unsupported implementation details during the staged migration, even where preview-era accessibility leaves them mechanically public. Consumers should use managed values, reviewed host libraries, source execution, sandboxing, and typed resource-limit failures instead of calling native bindings or retaining VM pointers.
+The package contains a small handwritten `Luau.Native` interop layer for the repository-owned `luau_host` ABI. It is an unsupported implementation detail, even where preview-era accessibility leaves it mechanically public. Consumers should use managed values, reviewed host libraries, source execution, sandboxing, and typed resource-limit failures instead of calling native bindings or retaining VM pointers.
 
 The projects under `src/Luau`, `src/Luau.Native`, and `src/Luau.SourceGenerator` remain in this repository as a fast .NET build/test harness and as sources for intentionally copied Unity artifacts. They are not published as NuGet products. The former CLI and console sample are retained only under `tools/legacy` for reference.
 
@@ -32,29 +32,31 @@ For detailed information about Luau, please refer to the [official documentation
 
 The Unity package includes native plugins for the following platforms.
 
-| Platform | Architecture            | Support | Notes |
-| -------- | ----------------------- | ------- | ----- |
-| Windows  | x64                     | Yes     | Stage 2 official-upstream ABI and IL2CPP player smoke verified |
-|          | arm64                   | No      | WIP |
-| Android  | arm64                   | Build-only | Stage 2 plugin and IL2CPP build verified; runtime smoke pending an authorized device |
-|          | x64                     | Build-only | Stage 2 plugin rebuilt and statically audited; emulator smoke pending |
-| macOS    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-|          | arm64 (Apple Silicon)   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-| Linux    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-|          | arm64                   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-| iOS      | arm64                   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-|          | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
-| Web      | wasm32                  | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
+| Platform | Architecture | Support | Native plugin | Verification |
+| --- | --- | --- | --- | --- |
+| Windows | x64 | Yes | `luau_host.dll` | Editor, EditMode, and IL2CPP player smoke |
+| Android | ARM64 | Yes | `libluau_host.so` | Quest 3 IL2CPP player smoke |
+| Android | x64 | Yes | `libluau_host.so` | x64 emulator IL2CPP player smoke |
 
-The high-level runtime performs a protected ABI self-description handshake before
-its first state creation or standalone compilation. It validates layout, pointer
-width, and interpreted type tags, so a stale plugin fails with a clear compatibility
-error instead of silently bypassing the native containment layer.
+These are the currently maintained plugin targets. A binary for another platform is
+not a supported artifact merely because it exists in an older revision.
+
+The high-level runtime performs a self-describing host-ABI handshake before its first
+state creation or standalone compilation. It requires ABI 1.0, validates the
+caller-sized layouts and fixed-width values it interprets, and requires exact
+equality for the approved upstream-revision and Release host-build fingerprints. A
+stale or mismatched plugin therefore fails before VM use with a clear compatibility
+error.
 
 The current Windows and Android plugins are built from official Luau release
 `0.729` at commit `6e9b580e2e24643214caf0f4bbbb3db911ca30f3`.
-See the [Stage 2 implementation notes](docs/stage-2-implementation-notes.md)
-for the binding review, artifact hashes, and remaining Android runtime gates.
+Its FNV-1a revision fingerprint is `0xc45f010aabf167ac`. The canonical build-input
+SHA-256 is `ac6eeae2677fe19905718a4cfe5b6bf2709920cdae78e0ba035d88d6ff2c7b0e`,
+which together with the Release build configuration produces host-build fingerprint
+`0x105716f226c3f69f`. The library exports only the 85 approved `luau_host_*` symbols.
+See the
+[Stage 3 implementation notes](docs/stage-3-implementation-notes.md) for native,
+managed, differential, Unity, and device verification evidence.
 
 ## Installation
 
@@ -561,7 +563,7 @@ Console.WriteLine(results[0]); // 3
 
 ## Unsupported low-level migration surface
 
-Preview-era raw stack methods, native callback delegates, pointer accessors, and the generated `Luau.Native` declarations remain mechanically public where the current assembly split still requires them. They are not supported consumer API and will be internalized or removed in the managed-consolidation stage. Compatibility diagnostics mark native-leaking high-level members where the current runtime can do so without changing packaging.
+Preview-era raw stack methods, native callback delegates, pointer accessors, and the handwritten `Luau.Native` host declarations remain mechanically public where the current assembly split still requires them. They are not supported consumer API and will be internalized or removed in the managed-consolidation stage. Compatibility diagnostics mark native-leaking high-level members where the current runtime can do so without changing packaging.
 
 Use `LuauValue`, `LuauTable`, `LuauFunction`, `CreateFunction`, `[LuauLibrary]`, `DoString*`, `Execute*`, sandboxing, and the typed hardening options instead. Do not build new integrations on raw stack or native declarations.
 

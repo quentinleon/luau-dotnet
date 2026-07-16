@@ -19,20 +19,20 @@ $artifacts = @(
         Destination = "src/Luau.Unity/Assets/Luau.Unity/Runtime/Luau.SourceGenerator.dll"
     },
     @{
-        Source = "src/Luau.Native/Delegates.cs"
-        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/Delegates.cs"
+        Source = "src/Luau.Native/AotSupport.cs"
+        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/AotSupport.cs"
     },
     @{
-        Source = "src/Luau.Native/Enums.cs"
-        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/Enums.cs"
+        Source = "src/Luau.Native/LuauHost.NativeTypes.cs"
+        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/LuauHost.NativeTypes.cs"
     },
     @{
-        Source = "src/Luau.Native/NativeMethods.Macros.cs"
-        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.Macros.cs"
+        Source = "src/Luau.Native/LuauHost.NativeMethods.cs"
+        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/LuauHost.NativeMethods.cs"
     },
     @{
-        Source = "src/Luau.Native/NativeMethods.Memory.cs"
-        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/NativeMethods.Memory.cs"
+        Source = "src/Luau.Native/LuauHost.Compatibility.cs"
+        Destination = "src/Luau.Unity/Assets/Luau.Unity/Native/LuauHost.Compatibility.cs"
     }
 )
 
@@ -49,4 +49,4 @@ foreach ($artifact in $artifacts) {
 }
 
 Write-Host "Unity package artifacts updated in $runtimeDir and $nativeDir."
-Write-Host "Generated Unity native bindings are emitted by native/luau-ffi/build.rs and are not overwritten by this script."
+Write-Host "Native luau_host plugins are built and installed separately through native/luau-host CMake presets."
