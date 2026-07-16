@@ -39,7 +39,9 @@ unsafe partial class LuauState
 
         for (int i = 0; i < values.Length; i++)
         {
-            table.RawSet(i + 1, values[i]);
+            // Array slots are Luau number keys. Managed integral values map to
+            // the distinct upstream 64-bit integer kind in Stage 2.
+            table.RawSet(LuauValue.FromNumber(i + 1), values[i]);
         }
 
         return table;
@@ -194,14 +196,17 @@ unsafe partial class LuauState
         if (typeof(T) == typeof(LuauState)) return LuauValue.FromThread(Unsafe.As<T, LuauState>(ref value));
         if (typeof(T) == typeof(LuauUserData)) return LuauValue.FromUserData(Unsafe.As<T, LuauUserData>(ref value));
 
-        if (typeof(T) == typeof(byte)) return LuauValue.FromNumber(Unsafe.As<T, byte>(ref value));
-        if (typeof(T) == typeof(sbyte)) return LuauValue.FromNumber(Unsafe.As<T, sbyte>(ref value));
-        if (typeof(T) == typeof(short)) return LuauValue.FromNumber(Unsafe.As<T, short>(ref value));
-        if (typeof(T) == typeof(ushort)) return LuauValue.FromNumber(Unsafe.As<T, ushort>(ref value));
-        if (typeof(T) == typeof(int)) return LuauValue.FromNumber(Unsafe.As<T, int>(ref value));
-        if (typeof(T) == typeof(uint)) return LuauValue.FromNumber(Unsafe.As<T, uint>(ref value));
-        if (typeof(T) == typeof(long)) return LuauValue.FromNumber(Unsafe.As<T, long>(ref value));
-        if (typeof(T) == typeof(ulong)) return LuauValue.FromNumber(Unsafe.As<T, ulong>(ref value));
+        if (typeof(T) == typeof(byte)) return LuauValue.FromInteger(Unsafe.As<T, byte>(ref value));
+        if (typeof(T) == typeof(sbyte)) return LuauValue.FromInteger(Unsafe.As<T, sbyte>(ref value));
+        if (typeof(T) == typeof(short)) return LuauValue.FromInteger(Unsafe.As<T, short>(ref value));
+        if (typeof(T) == typeof(ushort)) return LuauValue.FromInteger(Unsafe.As<T, ushort>(ref value));
+        if (typeof(T) == typeof(int)) return LuauValue.FromInteger(Unsafe.As<T, int>(ref value));
+        if (typeof(T) == typeof(uint)) return LuauValue.FromInteger(Unsafe.As<T, uint>(ref value));
+        if (typeof(T) == typeof(long)) return LuauValue.FromInteger(Unsafe.As<T, long>(ref value));
+        if (typeof(T) == typeof(ulong))
+        {
+            return LuauValue.FromInteger(checked((long)Unsafe.As<T, ulong>(ref value)));
+        }
         if (typeof(T) == typeof(float)) return LuauValue.FromNumber(Unsafe.As<T, float>(ref value));
         if (typeof(T) == typeof(double)) return LuauValue.FromNumber(Unsafe.As<T, double>(ref value));
 

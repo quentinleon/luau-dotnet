@@ -6,6 +6,7 @@ public enum LuauType : byte
     Boolean,
     LightUserData,
     Number,
+    Integer,
     Vector,
     String,
     Table,

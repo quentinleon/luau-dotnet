@@ -34,10 +34,10 @@ The Unity package includes native plugins for the following platforms.
 
 | Platform | Architecture            | Support | Notes |
 | -------- | ----------------------- | ------- | ----- |
-| Windows  | x64                     | Yes     | Stage 1 ABI and IL2CPP player smoke verified |
+| Windows  | x64                     | Yes     | Stage 2 official-upstream ABI and IL2CPP player smoke verified |
 |          | arm64                   | No      | WIP |
-| Android  | arm64                   | Build-only | Stage 1 plugin and IL2CPP build verified; runtime smoke pending an authorized device |
-|          | x64                     | Build-only | Stage 1 plugin rebuilt and statically audited; emulator smoke pending |
+| Android  | arm64                   | Build-only | Stage 2 plugin and IL2CPP build verified; runtime smoke pending an authorized device |
+|          | x64                     | Build-only | Stage 2 plugin rebuilt and statically audited; emulator smoke pending |
 | macOS    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 |          | arm64 (Apple Silicon)   | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
 | Linux    | x64                     | Rebuild | Legacy plugin is present but must be rebuilt for the current protected ABI |
@@ -50,6 +50,11 @@ The high-level runtime performs a protected ABI self-description handshake befor
 its first state creation or standalone compilation. It validates layout, pointer
 width, and interpreted type tags, so a stale plugin fails with a clear compatibility
 error instead of silently bypassing the native containment layer.
+
+The current Windows and Android plugins are built from official Luau release
+`0.729` at commit `6e9b580e2e24643214caf0f4bbbb3db911ca30f3`.
+See the [Stage 2 implementation notes](docs/stage-2-implementation-notes.md)
+for the binding review, artifact hashes, and remaining Android runtime gates.
 
 ## Installation
 

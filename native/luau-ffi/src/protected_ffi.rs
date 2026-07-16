@@ -154,6 +154,18 @@ pub unsafe extern "C" fn ffi_luau_ffi_protected_pushinteger(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_luau_ffi_protected_pushinteger64(
+    L: *mut lua_State,
+    value: i64
+) -> c_int
+{
+    luau_ffi_protected_pushinteger64(
+        L,
+        value
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_luau_ffi_protected_pushunsigned(
     L: *mut lua_State,
     value: c_uint

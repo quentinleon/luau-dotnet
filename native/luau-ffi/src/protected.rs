@@ -33,6 +33,9 @@ pub struct luau_ffi_abi_info_v2 {
     pub type_userdata: i32,
     pub type_thread: i32,
     pub type_buffer: i32,
+    pub type_integer: i32,
+    pub type_class: i32,
+    pub type_object: i32,
 }
 
 unsafe extern "C" {
@@ -63,6 +66,7 @@ unsafe extern "C" {
     pub fn luau_ffi_protected_pushnil(L: *mut lua_State) -> c_int;
     pub fn luau_ffi_protected_pushboolean(L: *mut lua_State, value: c_int) -> c_int;
     pub fn luau_ffi_protected_pushinteger(L: *mut lua_State, value: c_int) -> c_int;
+    pub fn luau_ffi_protected_pushinteger64(L: *mut lua_State, value: i64) -> c_int;
     pub fn luau_ffi_protected_pushunsigned(L: *mut lua_State, value: c_uint) -> c_int;
     pub fn luau_ffi_protected_pushnumber(L: *mut lua_State, value: c_double) -> c_int;
     pub fn luau_ffi_protected_pushvector(

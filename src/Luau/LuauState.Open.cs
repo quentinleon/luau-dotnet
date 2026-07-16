@@ -92,6 +92,16 @@ unsafe partial class LuauState
         OpenStandardLibrary(ProtectedStandardLibrary.Vector, "vector");
     }
 
+    /// <summary>
+    /// Opens upstream Luau's signed 64-bit integer library. Integer values are
+    /// deliberately distinct from ordinary Luau numbers; use
+    /// <c>integer.tonumber</c> for an explicit lossy conversion in script.
+    /// </summary>
+    public void OpenIntegerLibrary()
+    {
+        OpenStandardLibrary(ProtectedStandardLibrary.Integer, "integer");
+    }
+
     void OpenStandardLibrary(ProtectedStandardLibrary library, string name)
     {
         ThrowIfDisposed();
@@ -170,5 +180,6 @@ unsafe partial class LuauState
         Math = 8,
         Debug = 9,
         Vector = 10,
+        Integer = 11,
     }
 }

@@ -212,6 +212,7 @@ internal sealed unsafe class LuauNativeAbiVerifier
         ValidateTypeTag("boolean", info.type_boolean, lua_Type.LUA_TBOOLEAN);
         ValidateTypeTag("light userdata", info.type_lightuserdata, lua_Type.LUA_TLIGHTUSERDATA);
         ValidateTypeTag("number", info.type_number, lua_Type.LUA_TNUMBER);
+        ValidateTypeTag("integer", info.type_integer, lua_Type.LUA_TINTEGER);
         ValidateTypeTag("vector", info.type_vector, lua_Type.LUA_TVECTOR);
         ValidateTypeTag("string", info.type_string, lua_Type.LUA_TSTRING);
         ValidateTypeTag("table", info.type_table, lua_Type.LUA_TTABLE);
@@ -219,6 +220,8 @@ internal sealed unsafe class LuauNativeAbiVerifier
         ValidateTypeTag("userdata", info.type_userdata, lua_Type.LUA_TUSERDATA);
         ValidateTypeTag("thread", info.type_thread, lua_Type.LUA_TTHREAD);
         ValidateTypeTag("buffer", info.type_buffer, lua_Type.LUA_TBUFFER);
+        ValidateTypeTag("class", info.type_class, lua_Type.LUA_TCLASS);
+        ValidateTypeTag("object", info.type_object, lua_Type.LUA_TOBJECT);
     }
 
     static void ValidateSize(string name, uint actual, int expected)

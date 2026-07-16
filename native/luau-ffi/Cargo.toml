@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "luau"
-crate-type = ["dylib", "staticlib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 

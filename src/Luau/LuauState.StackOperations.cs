@@ -148,13 +148,18 @@ public unsafe partial class LuauState
 
         var type = lua_type(l, index);
 
-        var luauType = (lua_Type)type;
+        return MapNativeType((lua_Type)type);
+    }
+
+    internal static LuauType MapNativeType(lua_Type luauType)
+    {
         switch (luauType)
         {
             case lua_Type.LUA_TNIL: return LuauType.Nil;
             case lua_Type.LUA_TBOOLEAN: return LuauType.Boolean;
             case lua_Type.LUA_TLIGHTUSERDATA: return LuauType.LightUserData;
             case lua_Type.LUA_TNUMBER: return LuauType.Number;
+            case lua_Type.LUA_TINTEGER: return LuauType.Integer;
             case lua_Type.LUA_TVECTOR: return LuauType.Vector;
             case lua_Type.LUA_TSTRING: return LuauType.String;
             case lua_Type.LUA_TTABLE: return LuauType.Table;
@@ -162,6 +167,10 @@ public unsafe partial class LuauState
             case lua_Type.LUA_TUSERDATA: return LuauType.UserData;
             case lua_Type.LUA_TTHREAD: return LuauType.Thread;
             case lua_Type.LUA_TBUFFER: return LuauType.Buffer;
+            case lua_Type.LUA_TCLASS:
+            case lua_Type.LUA_TOBJECT:
+                ThrowHelper.ThrowUnsupportedValue(luauType);
+                break;
         }
 
         ThrowHelper.ThrowTypeIsNotSupported(luauType);
@@ -173,9 +182,23 @@ public unsafe partial class LuauState
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
-        var type = lua_type(l, index);
+        return ToValueCore(index, (lua_Type)lua_type(l, index));
+    }
 
-        var luauType = (lua_Type)type;
+    /// <summary>
+    /// Internal fixture for exercising native tag policy without enabling
+    /// upstream class/object libraries in production states.
+    /// </summary>
+    internal LuauValue ToValueForNativeTypeFixture(int index, lua_Type nativeType)
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+
+        return ToValueCore(index, nativeType);
+    }
+
+    LuauValue ToValueCore(int index, lua_Type luauType)
+    {
         switch (luauType)
         {
             case lua_Type.LUA_TNIL:
@@ -188,6 +211,14 @@ public unsafe partial class LuauState
 #pragma warning restore CS0618
             case lua_Type.LUA_TNUMBER:
                 return LuauValue.FromNumber(lua_tonumber(l, index));
+            case lua_Type.LUA_TINTEGER:
+                var isInteger = 0;
+                var integer = lua_tointeger64(l, index, &isInteger);
+                if (isInteger != 1)
+                {
+                    ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not a 64-bit integer");
+                }
+                return LuauValue.FromInteger(integer);
             case lua_Type.LUA_TVECTOR:
                 var vecPtr = lua_tovector(l, index);
                 return LuauValue.FromVector(new(vecPtr[0], vecPtr[1], vecPtr[2]));
@@ -216,6 +247,10 @@ public unsafe partial class LuauState
                     this,
                     LuauReferenceHelper.CreateReference(this, index, "retain a Luau buffer"));
                 return LuauValue.FromBuffer(buffer);
+            case lua_Type.LUA_TCLASS:
+            case lua_Type.LUA_TOBJECT:
+                ThrowHelper.ThrowUnsupportedValue(luauType);
+                break;
         }
 
         ThrowHelper.ThrowTypeIsNotSupported(luauType);
@@ -245,6 +280,24 @@ public unsafe partial class LuauState
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
+        if ((lua_Type)lua_type(l, index) == lua_Type.LUA_TINTEGER)
+        {
+            int isInteger;
+            var integer = lua_tointeger64(l, index, &isInteger);
+            if (isInteger != 1)
+            {
+                ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not a number or integer");
+            }
+
+            if (!MathEx.TryConvertToDoubleExact(integer, out var exact))
+            {
+                ThrowHelper.ThrowInvalidOperationException(
+                    $"The integer at {index} cannot be represented exactly as a double. Use {nameof(ToNumberLossy)} for an explicit lossy conversion.");
+            }
+
+            return exact;
+        }
+
         int isNum;
         var result = lua_tonumberx(l, index, &isNum);
 
@@ -256,11 +309,54 @@ public unsafe partial class LuauState
         return result;
     }
 
+    /// <summary>
+    /// Converts a native number or 64-bit integer to <see cref="double"/>,
+    /// explicitly allowing integer precision loss.
+    /// </summary>
+    public double ToNumberLossy(int index)
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+
+        if ((lua_Type)lua_type(l, index) == lua_Type.LUA_TINTEGER)
+        {
+            int isInteger;
+            var integer = lua_tointeger64(l, index, &isInteger);
+            if (isInteger != 1)
+            {
+                ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not a number or integer");
+            }
+
+            return integer;
+        }
+
+        int isNum;
+        var result = lua_tonumberx(l, index, &isNum);
+        if (isNum != 1)
+        {
+            ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not a number or integer");
+        }
+
+        return result;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int ToInteger(int index)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
+
+        if ((lua_Type)lua_type(l, index) == lua_Type.LUA_TINTEGER)
+        {
+            int isInteger;
+            var integer = lua_tointeger64(l, index, &isInteger);
+            if (isInteger != 1 || integer < int.MinValue || integer > int.MaxValue)
+            {
+                ThrowHelper.ThrowInvalidOperationException($"The value at {index} is outside the Int32 range");
+            }
+
+            return (int)integer;
+        }
 
         int isNum;
         var result = lua_tointegerx(l, index, &isNum);
@@ -274,10 +370,50 @@ public unsafe partial class LuauState
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public long ToInteger64(int index)
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+
+        if ((lua_Type)lua_type(l, index) == lua_Type.LUA_TINTEGER)
+        {
+            int isInteger;
+            var integer = lua_tointeger64(l, index, &isInteger);
+            if (isInteger != 1)
+            {
+                ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not a 64-bit integer");
+            }
+
+            return integer;
+        }
+
+        int isNum;
+        var number = lua_tonumberx(l, index, &isNum);
+        if (isNum != 1 || !MathEx.IsInt64(number))
+        {
+            ThrowHelper.ThrowInvalidOperationException($"The value at {index} is not an exact 64-bit integer");
+        }
+
+        return (long)number;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public uint ToUnsigned(int index)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
+
+        if ((lua_Type)lua_type(l, index) == lua_Type.LUA_TINTEGER)
+        {
+            int isInteger;
+            var integer = lua_tointeger64(l, index, &isInteger);
+            if (isInteger != 1 || integer < uint.MinValue || integer > uint.MaxValue)
+            {
+                ThrowHelper.ThrowInvalidOperationException($"The value at {index} is outside the UInt32 range");
+            }
+
+            return (uint)integer;
+        }
 
         int isNum;
         var result = lua_tounsignedx(l, index, &isNum);
@@ -423,6 +559,9 @@ public unsafe partial class LuauState
             case LuauType.Number:
                 PushNumber(value.Read<double>());
                 break;
+            case LuauType.Integer:
+                PushInteger(value.Read<long>());
+                break;
             case LuauType.Vector:
                 PushVector(value.Read<Vector3>());
                 break;
@@ -481,21 +620,23 @@ public unsafe partial class LuauState
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushInteger(int value)
     {
+        PushInteger((long)value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void PushInteger(long value)
+    {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_pushinteger(l, value);
-        LuauNativeProtection.ThrowIfFailed(this, l, status, "push an integer onto the Luau stack");
+        var status = luau_ffi_protected_pushinteger64(l, value);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, "push a 64-bit integer onto the Luau stack");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PushUnsigned(uint value)
     {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_pushunsigned(l, value);
-        LuauNativeProtection.ThrowIfFailed(this, l, status, "push an unsigned integer onto the Luau stack");
+        PushInteger((long)value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

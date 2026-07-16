@@ -74,9 +74,11 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=c++");
     }
 
-    println!("cargo:rustc-link-lib=static=Luau.Ast");
     println!("cargo:rustc-link-lib=static=Luau.Compiler");
+    println!("cargo:rustc-link-lib=static=Luau.Ast");
+    println!("cargo:rustc-link-lib=static=Luau.Bytecode");
     println!("cargo:rustc-link-lib=static=Luau.VM");
+    println!("cargo:rustc-link-lib=static=Luau.Common");
 
     println!("cargo:rerun-if-env-changed=LUAU_FFI_SKIP_BINDGEN");
     if env::var_os("LUAU_FFI_SKIP_BINDGEN").is_none() {
@@ -88,6 +90,11 @@ fn main() {
             ])
             .clang_arg(format!("--target={}", target))
             .clang_arg("-fvisibility=default")
+            .clang_arg("-DLUA_USE_LONGJMP=1")
+            // Upstream 0.729 declares lua_isinteger64 and then replaces it
+            // with a header-only macro. There is intentionally no symbol for
+            // csbindgen's Rust forwarding shim to link against.
+            .blocklist_function("lua_isinteger64")
             .layout_tests(false)
             .generate()
             .unwrap()
@@ -107,6 +114,13 @@ using lua_setuserdatadtor_dtor_delegate = Luau.Native.lua_Destructor;
 using lua_getuserdatadtor_return_delegate = Luau.Native.lua_Destructor;
 using lua_getallocf_return_delegate = Luau.Native.lua_Alloc;
 using lua_getcoverage_callback_delegate = Luau.Native.lua_Coverage;
+using lua_cpcall_func_delegate = Luau.Native.lua_CFunction;
+using lua_getcounters_functionvisit_delegate = Luau.Native.lua_CounterFunction;
+using lua_getcounters_countervisit_delegate = Luau.Native.lua_CounterValue;
+using lua_registeruserdatadirectaccess_get_delegate = Luau.Native.lua_UserdataDirectAccess;
+using lua_registeruserdatadirectaccess_set_delegate = Luau.Native.lua_UserdataDirectAccess;
+using lua_registeruserdatadirectaccess_namecall_delegate = Luau.Native.lua_UserdataDirectNamecall;
+using lua_registeruserdatadirectfieldget_fn__delegate = Luau.Native.lua_UserdataDirectFieldGet;
 ",
         );
 
@@ -133,7 +147,7 @@ use super::protected::*;
             "
 using luau_ffi_protected_pushcclosurek_function_delegate = Luau.Native.lua_CFunction;
 using luau_ffi_protected_pushcclosurek_continuation_delegate = Luau.Native.lua_Continuation;
-using luau_ffi_protected_newuserdatadtor_destructor_delegate = Luau.Native.NativeMethods.lua_newuserdatadtor_dtor_delegate;
+using luau_ffi_protected_newuserdatadtor_destructor_delegate = Luau.Native.lua_UserdataDestructor;
 ",
         );
 
@@ -170,7 +184,8 @@ fn build_protected_bridge(target: &str) {
         .include("../../luau/Compiler/include")
         .include("../../luau/VM/include")
         .include("../../luau/VM/src")
-        .define("LUAU_BUILD_AS_EXTERN_C", None)
+        .define("LUA_API", Some("extern \"C\""))
+        .define("LUACODE_API", Some("extern \"C\""))
         .define("LUA_USE_LONGJMP", "1")
         .warnings(true);
 
@@ -307,6 +322,12 @@ fn cmake_path(path: &Path) -> String {
 fn new_cmake_config() -> cmake::Config {
     let mut config = cmake::Config::new("../../luau");
 
+    config.define("LUAU_EXTERN_C", "ON");
+    config.define("LUAU_BUILD_CLI", "OFF");
+    config.define("LUAU_BUILD_TESTS", "OFF");
+    config.define("LUAU_BUILD_SHARED", "OFF");
+    config.define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
+
     let target = build_target::target_triple().unwrap();
 
     if target == "x86_64-pc-windows-msvc" {
@@ -414,6 +435,9 @@ fn new_cmake_config() -> cmake::Config {
 fn new_csbindgen_builder(src: &'static str) -> csbindgen::Builder {
     csbindgen::Builder::default()
         .input_bindgen_file(src)
+        // Bindgen also sees declarations from target system headers. Only
+        // Luau's public lua*/luau* functions belong in the plugin C ABI.
+        .method_filter(|name| name.starts_with("lua"))
         .rust_method_prefix("ffi_")
         .csharp_entry_point_prefix("ffi_")
         .csharp_method_prefix("")

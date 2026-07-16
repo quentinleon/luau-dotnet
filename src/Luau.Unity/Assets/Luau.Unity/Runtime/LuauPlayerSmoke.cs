@@ -53,7 +53,7 @@ namespace Luau.Unity.Verification
                     },
                     ConfigureHostApis = state =>
                     {
-                        state["hostAnswer"] = 42;
+                        state["hostAnswer"] = 42L;
                         state["hostAddOne"] = state.CreateFunction(
                             "hostAddOne",
                             callbackState =>
@@ -98,28 +98,33 @@ namespace Luau.Unity.Verification
                     "scriptLocal = 123; " +
                     "local protected = not pcall(function() hostAnswer = 99 end); " +
                     "return math.floor(41.9) == 41 " +
-                    "and hostAnswer == 42 " +
-                    "and hostAddOne(41) == 42 " +
                     "and protected " +
                     "and os == nil " +
                     "and debug == nil " +
                     "and require == nil " +
                     "and getfenv == nil " +
-                    "and setfenv == nil",
+                    "and setfenv == nil, " +
+                    "hostAnswer, " +
+                    "hostAddOne(41)",
                     "@unity/player-smoke-first.luau");
                 var secondResult = second.DoString(
-                    "return scriptLocal == nil and hostAnswer == 42",
+                    "return scriptLocal == nil, hostAnswer",
                     "@unity/player-smoke-second.luau");
                 var asyncResult = await first.DoStringAsync(
                     "local answer = hostAsyncAnswer(); return answer, hostAssertUnityThread()",
                     "@unity/player-smoke-async.luau");
 
-                if (firstResult.Length != 1 || !firstResult[0].Read<bool>())
+                if (firstResult.Length != 3 ||
+                    !firstResult[0].Read<bool>() ||
+                    firstResult[1].Read<long>() != 42L ||
+                    firstResult[2].Read<int>() != 42)
                 {
                     throw new LuauException("The primary sandbox smoke script returned an unexpected result.");
                 }
 
-                if (secondResult.Length != 1 || !secondResult[0].Read<bool>())
+                if (secondResult.Length != 2 ||
+                    !secondResult[0].Read<bool>() ||
+                    secondResult[1].Read<long>() != 42L)
                 {
                     throw new LuauException("Sandboxed script globals leaked between sibling threads.");
                 }

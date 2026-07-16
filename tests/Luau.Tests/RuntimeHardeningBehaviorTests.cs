@@ -102,7 +102,7 @@ public sealed class RuntimeHardeningBehaviorTests
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
         Assert.Same(root, function.State);
 
-        var invoked = await function.InvokeAsync([21]);
+        var invoked = await function.InvokeAsync([21d]);
         Assert.Equal(42, Assert.Single(invoked).Read<int>());
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
         Assert.Equal(99, Assert.Single(child.Resume()).Read<int>());

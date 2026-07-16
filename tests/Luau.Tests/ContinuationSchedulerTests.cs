@@ -101,7 +101,7 @@ public sealed class ContinuationSchedulerTests
                                 callbackStartThreadId = Environment.CurrentManagedThreadId;
                                 await Task.Delay(1, cancellationToken);
                                 callbackContinuationThreadId = Environment.CurrentManagedThreadId;
-                                callbackState.PushInteger(41);
+                                callbackState.PushNumber(41);
                                 return 1;
                             });
                         created["hostAfterAsync"] = created.CreateFunction(

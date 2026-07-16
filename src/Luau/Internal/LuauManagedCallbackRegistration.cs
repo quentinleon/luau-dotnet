@@ -38,11 +38,11 @@ internal sealed class LuauManagedCallbackRegistration
 
 internal static unsafe class LuauManagedCallbackLifetime
 {
-    static readonly NativeMethods.lua_newuserdatadtor_dtor_delegate destructor = Destroy;
+    static readonly lua_UserdataDestructor destructor = Destroy;
 
-    internal static NativeMethods.lua_newuserdatadtor_dtor_delegate Destructor => destructor;
+    internal static lua_UserdataDestructor Destructor => destructor;
 
-    [AOT.MonoPInvokeCallback(typeof(NativeMethods.lua_newuserdatadtor_dtor_delegate))]
+    [AOT.MonoPInvokeCallback(typeof(lua_UserdataDestructor))]
     static void Destroy(void* userdata)
     {
         try

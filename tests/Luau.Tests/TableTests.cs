@@ -155,7 +155,7 @@ public sealed class TableTests
 
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
         Assert.Equal(41, table["answer"].Read<int>());
-        table["answer"] = 42;
+        table["answer"] = 42d;
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
 
         Assert.Equal(43, Assert.Single(child.Resume()).Read<int>());

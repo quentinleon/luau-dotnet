@@ -37,6 +37,9 @@ struct luau_ffi_abi_info_v2
     int32_t type_userdata;
     int32_t type_thread;
     int32_t type_buffer;
+    int32_t type_integer;
+    int32_t type_class;
+    int32_t type_object;
 };
 
 static_assert(sizeof(uint8_t) == 1, "The ABI information record requires 8-bit bytes");
@@ -61,7 +64,10 @@ static_assert(offsetof(luau_ffi_abi_info_v2, type_function) == 48, "Unexpected A
 static_assert(offsetof(luau_ffi_abi_info_v2, type_userdata) == 52, "Unexpected ABI info type_userdata offset");
 static_assert(offsetof(luau_ffi_abi_info_v2, type_thread) == 56, "Unexpected ABI info type_thread offset");
 static_assert(offsetof(luau_ffi_abi_info_v2, type_buffer) == 60, "Unexpected ABI info type_buffer offset");
-static_assert(sizeof(luau_ffi_abi_info_v2) == 64, "Unexpected ABI information record size");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_integer) == 64, "Unexpected ABI info type_integer offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_class) == 68, "Unexpected ABI info type_class offset");
+static_assert(offsetof(luau_ffi_abi_info_v2, type_object) == 72, "Unexpected ABI info type_object offset");
+static_assert(sizeof(luau_ffi_abi_info_v2) == 76, "Unexpected ABI information record size");
 static_assert(sizeof(lua_CompileOptions) <= UINT32_MAX, "lua_CompileOptions size does not fit the ABI record");
 static_assert(sizeof(lua_Callbacks) <= UINT32_MAX, "lua_Callbacks size does not fit the ABI record");
 
@@ -298,6 +304,16 @@ void pushboolean(lua_State* L, void* userdata)
 void pushinteger(lua_State* L, void* userdata)
 {
     lua_pushinteger(L, static_cast<IntContext*>(userdata)->value);
+}
+
+struct Int64Context
+{
+    int64_t value;
+};
+
+void pushinteger64(lua_State* L, void* userdata)
+{
+    lua_pushinteger64(L, static_cast<Int64Context*>(userdata)->value);
 }
 
 void pushthread(lua_State* L, void* userdata)
@@ -537,6 +553,7 @@ void openlibrary(lua_State* L, void* userdata)
     case 8: context->result = luaopen_math(L); break;
     case 9: context->result = luaopen_debug(L); break;
     case 10: context->result = luaopen_vector(L); break;
+    case 11: context->result = luaopen_integer(L); break;
     default: context->result = -1; break;
     }
 }
@@ -593,6 +610,9 @@ int luau_ffi_protected_abi_info_v2(luau_ffi_abi_info_v2* info, uint32_t infoSize
     const int32_t typeUserdata = LUA_TUSERDATA;
     const int32_t typeThread = LUA_TTHREAD;
     const int32_t typeBuffer = LUA_TBUFFER;
+    const int32_t typeInteger = LUA_TINTEGER;
+    const int32_t typeClass = LUA_TCLASS;
+    const int32_t typeObject = LUA_TOBJECT;
 
     writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, struct_size), structSize);
     writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, protected_abi_version), protectedAbiVersion);
@@ -613,6 +633,9 @@ int luau_ffi_protected_abi_info_v2(luau_ffi_abi_info_v2* info, uint32_t infoSize
     writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_userdata), typeUserdata);
     writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_thread), typeThread);
     writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_buffer), typeBuffer);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_integer), typeInteger);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_class), typeClass);
+    writeabiinfofield(info, infoSize, offsetof(luau_ffi_abi_info_v2, type_object), typeObject);
 
     return infoSize < sizeof(luau_ffi_abi_info_v2) ? BufferTooSmall : Ok;
 }
@@ -745,6 +768,7 @@ int luau_ffi_protected_pushvalue(lua_State* L, int index) { IndexContext context
 int luau_ffi_protected_pushnil(lua_State* L) { return protect(L, pushnil, nullptr, 0); }
 int luau_ffi_protected_pushboolean(lua_State* L, int value) { IntContext context = {value, 0}; return protect(L, pushboolean, &context, 0); }
 int luau_ffi_protected_pushinteger(lua_State* L, int value) { IntContext context = {value, 0}; return protect(L, pushinteger, &context, 0); }
+int luau_ffi_protected_pushinteger64(lua_State* L, int64_t value) { Int64Context context = {value}; return protect(L, pushinteger64, &context, 0); }
 int luau_ffi_protected_pushunsigned(lua_State* L, unsigned value) { UnsignedContext context = {value}; return protect(L, pushunsigned, &context, 0); }
 int luau_ffi_protected_pushnumber(lua_State* L, double value) { NumberContext context = {value}; return protect(L, pushnumber, &context, 0); }
 int luau_ffi_protected_pushvector(lua_State* L, float x, float y, float z) { VectorContext context = {x, y, z}; return protect(L, pushvector, &context, 0); }

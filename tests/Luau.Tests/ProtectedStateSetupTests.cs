@@ -20,6 +20,7 @@ public sealed unsafe class ProtectedStateSetupTests
     [InlineData(nameof(LuauState.OpenDebugLibrary))]
     [InlineData(nameof(LuauState.OpenBufferLibrary))]
     [InlineData(nameof(LuauState.OpenVectorLibrary))]
+    [InlineData(nameof(LuauState.OpenIntegerLibrary))]
     public void StandardLibraryRegistrationIsStackNeutral(string openMethod)
     {
         using var state = LuauState.Create();
@@ -204,6 +205,9 @@ public sealed unsafe class ProtectedStateSetupTests
                 break;
             case nameof(LuauState.OpenVectorLibrary):
                 state.OpenVectorLibrary();
+                break;
+            case nameof(LuauState.OpenIntegerLibrary):
+                state.OpenIntegerLibrary();
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(openMethod));

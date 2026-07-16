@@ -320,6 +320,7 @@ namespace Luau.Unity
             state.OpenUtf8Library();
             state.OpenBufferLibrary();
             state.OpenVectorLibrary();
+            state.OpenIntegerLibrary();
         }
     }
 }

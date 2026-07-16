@@ -27,6 +27,7 @@ internal sealed unsafe class LuauTrackedAllocator : IDisposable
     nuint peakBytes;
     nuint lastAttemptedBytes;
     int lastFailure;
+    int failNextGrowthWithQuota;
 
     internal LuauTrackedAllocator(nuint? limitBytes = null)
     {
@@ -56,6 +57,23 @@ internal sealed unsafe class LuauTrackedAllocator : IDisposable
     {
         lastAttemptedBytes = 0;
         Volatile.Write(ref lastFailure, (int)LuauAllocatorFailure.None);
+    }
+
+    /// <summary>
+    /// Arms a one-shot quota failure for the next allocation that grows the
+    /// allocator's logical byte count. This internal fault-injection seam is
+    /// used to verify protected allocation failures without depending on a
+    /// particular Luau revision's allocation sizes.
+    /// </summary>
+    internal void ArmQuotaFailureOnNextGrowth()
+    {
+        if (limitBytes is not { } limit || limit == NativeUIntMaxValue)
+        {
+            throw new InvalidOperationException(
+                "A representable quota limit is required to inject a quota failure.");
+        }
+
+        Volatile.Write(ref failNextGrowthWithQuota, 1);
     }
 
     /// <summary>
@@ -118,6 +136,18 @@ internal sealed unsafe class LuauTrackedAllocator : IDisposable
 
         var requestedBytes = retainedBytes + newSize;
         var isGrowth = newSize > oldSize;
+
+        if (isGrowth &&
+            Volatile.Read(ref failNextGrowthWithQuota) != 0 &&
+            Interlocked.Exchange(ref failNextGrowthWithQuota, 0) != 0)
+        {
+            var injectedLimit = limitBytes!.Value;
+            var attemptedBytes = requestedBytes > injectedLimit
+                ? requestedBytes
+                : injectedLimit + 1;
+            SetFailure(LuauAllocatorFailure.QuotaExceeded, attemptedBytes);
+            return null;
+        }
 
         if (isGrowth && limitBytes is { } limit && requestedBytes > limit)
         {

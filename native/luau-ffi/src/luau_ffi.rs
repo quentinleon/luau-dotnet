@@ -395,6 +395,20 @@ pub unsafe extern "C" fn ffi_lua_toboolean(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_lua_tointeger64(
+    L: *mut lua_State,
+    idx: c_int,
+    isinteger: *mut c_int
+) -> i64
+{
+    lua_tointeger64(
+        L,
+        idx,
+        isinteger
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_lua_tolstring(
     L: *mut lua_State,
     idx: c_int,
@@ -617,6 +631,18 @@ pub unsafe extern "C" fn ffi_lua_pushinteger(
 )
 {
     lua_pushinteger(
+        L,
+        n
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_pushinteger64(
+    L: *mut lua_State,
+    n: i64
+)
+{
+    lua_pushinteger64(
         L,
         n
     )
@@ -877,6 +903,22 @@ pub unsafe extern "C" fn ffi_lua_rawgeti(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_lua_rawgetptagged(
+    L: *mut lua_State,
+    idx: c_int,
+    p: *mut c_void,
+    tag: c_int
+) -> c_int
+{
+    lua_rawgetptagged(
+        L,
+        idx,
+        p,
+        tag
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_lua_createtable(
     L: *mut lua_State,
     narr: c_int,
@@ -1021,6 +1063,22 @@ pub unsafe extern "C" fn ffi_lua_rawseti(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_lua_rawsetptagged(
+    L: *mut lua_State,
+    idx: c_int,
+    p: *mut c_void,
+    tag: c_int
+)
+{
+    lua_rawsetptagged(
+        L,
+        idx,
+        p,
+        tag
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_lua_setmetatable(
     L: *mut lua_State,
     objindex: c_int
@@ -1089,6 +1147,20 @@ pub unsafe extern "C" fn ffi_lua_pcall(
         nargs,
         nresults,
         errfunc
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_cpcall(
+    L: *mut lua_State,
+    func: lua_CFunction,
+    ud: *mut c_void
+) -> c_int
+{
+    lua_cpcall(
+        L,
+        func,
+        ud
     )
 }
 
@@ -1357,6 +1429,114 @@ pub unsafe extern "C" fn ffi_lua_getuserdatametatable(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_lua_getuserdataname(
+    L: *mut lua_State,
+    tag: c_int
+) -> *const c_char
+{
+    lua_getuserdataname(
+        L,
+        tag
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_registeruserdatadirectaccess(
+    L: *mut lua_State,
+    tag: c_int,
+    get: lua_UserdataDirectAccess,
+    set: lua_UserdataDirectAccess,
+    namecall: lua_UserdataDirectNamecall
+) -> c_int
+{
+    lua_registeruserdatadirectaccess(
+        L,
+        tag,
+        get,
+        set,
+        namecall
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_registeruserdatadirectfieldget(
+    L: *mut lua_State,
+    tag: c_int,
+    field: *const c_char,
+    fn_: lua_UserdataDirectFieldGet
+)
+{
+    lua_registeruserdatadirectfieldget(
+        L,
+        tag,
+        field,
+        fn_
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_userdatadirectfield_setnumber(
+    result: *mut c_void,
+    n: f64
+)
+{
+    lua_userdatadirectfield_setnumber(
+        result,
+        n
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_userdatadirectfield_setvector(
+    result: *mut c_void,
+    x: f32,
+    y: f32,
+    z: f32
+)
+{
+    lua_userdatadirectfield_setvector(
+        result,
+        x,
+        y,
+        z
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_userdatadirectfield_setboolean(
+    result: *mut c_void,
+    b: c_int
+)
+{
+    lua_userdatadirectfield_setboolean(
+        result,
+        b
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_userdatadirectfield_setinteger64(
+    result: *mut c_void,
+    n: i64
+)
+{
+    lua_userdatadirectfield_setinteger64(
+        result,
+        n
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_lua_userdatadirectfield_setnil(
+    result: *mut c_void
+)
+{
+    lua_userdatadirectfield_setnil(
+        result
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_lua_setlightuserdataname(
     L: *mut lua_State,
     tag: c_int,
@@ -1595,6 +1775,24 @@ pub unsafe extern "C" fn ffi_lua_getcoverage(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_lua_getcounters(
+    L: *mut lua_State,
+    funcindex: c_int,
+    context: *mut c_void,
+    functionvisit: lua_CounterFunction,
+    countervisit: lua_CounterValue
+)
+{
+    lua_getcounters(
+        L,
+        funcindex,
+        context,
+        functionvisit,
+        countervisit
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_lua_debugtrace(
     L: *mut lua_State
 ) -> *const c_char
@@ -1751,6 +1949,18 @@ pub unsafe extern "C" fn ffi_luaL_checkinteger(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_luaL_checkinteger64(
+    L: *mut lua_State,
+    numArg: c_int
+) -> i64
+{
+    luaL_checkinteger64(
+        L,
+        numArg
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_luaL_optinteger(
     L: *mut lua_State,
     nArg: c_int,
@@ -1758,6 +1968,20 @@ pub unsafe extern "C" fn ffi_luaL_optinteger(
 ) -> c_int
 {
     luaL_optinteger(
+        L,
+        nArg,
+        def
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_luaL_optinteger64(
+    L: *mut lua_State,
+    nArg: c_int,
+    def: i64
+) -> i64
+{
+    luaL_optinteger64(
         L,
         nArg,
         def
@@ -1883,6 +2107,20 @@ pub unsafe extern "C" fn ffi_luaL_checkudata(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_luaL_checkudatatagged(
+    L: *mut lua_State,
+    ud: c_int,
+    tag: c_int
+) -> *mut c_void
+{
+    luaL_checkudatatagged(
+        L,
+        ud,
+        tag
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_luaL_checkbuffer(
     L: *mut lua_State,
     narg: c_int,
@@ -1987,6 +2225,38 @@ pub unsafe extern "C" fn ffi_luaL_callyieldable(
         L,
         nargs,
         nresults
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_luaL_pcallyieldable(
+    L: *mut lua_State,
+    nargs: c_int,
+    nresults: c_int,
+    errfunc: c_int
+) -> c_int
+{
+    luaL_pcallyieldable(
+        L,
+        nargs,
+        nresults,
+        errfunc
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_luaL_traceback(
+    L: *mut lua_State,
+    L1: *mut lua_State,
+    msg: *const c_char,
+    level: c_int
+)
+{
+    luaL_traceback(
+        L,
+        L1,
+        msg,
+        level
     )
 }
 
@@ -2167,6 +2437,16 @@ pub unsafe extern "C" fn ffi_luaopen_utf8(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ffi_luaopen_class(
+    L: *mut lua_State
+) -> c_int
+{
+    luaopen_class(
+        L
+    )
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ffi_luaopen_math(
     L: *mut lua_State
 ) -> c_int
@@ -2192,6 +2472,16 @@ pub unsafe extern "C" fn ffi_luaopen_vector(
 ) -> c_int
 {
     luaopen_vector(
+        L
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_luaopen_integer(
+    L: *mut lua_State
+) -> c_int
+{
+    luaopen_integer(
         L
     )
 }
@@ -2273,6 +2563,18 @@ pub unsafe extern "C" fn ffi_luau_set_compile_constant_number(
     luau_set_compile_constant_number(
         constant,
         n
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ffi_luau_set_compile_constant_integer64(
+    constant: *mut lua_CompileConstant,
+    l: i64
+)
+{
+    luau_set_compile_constant_integer64(
+        constant,
+        l
     )
 }
 

@@ -327,7 +327,7 @@ public sealed class LifecycleTests
         {
             using var root = LuauState.Create();
             var table = root.CreateTable();
-            table[1] = 11;
+            table[1d] = 11;
             var userData = root.CreateUserData(123);
             var buffer = root.CreateBuffer(16);
             var script = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));

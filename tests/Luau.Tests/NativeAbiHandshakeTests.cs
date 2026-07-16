@@ -15,7 +15,7 @@ public sealed unsafe class NativeAbiHandshakeTests
             checked((uint)sizeof(luau_ffi_abi_info_v2)));
 
         Assert.Equal((int)LUAU_ABI_INFO_OK, status);
-        Assert.Equal(64, sizeof(luau_ffi_abi_info_v2));
+        Assert.Equal(76, sizeof(luau_ffi_abi_info_v2));
         Assert.Equal((uint)sizeof(luau_ffi_abi_info_v2), info.struct_size);
         Assert.Equal(LuauNativeProtection.ExpectedAbiVersion, info.protected_abi_version);
         Assert.Equal((byte)sizeof(void*), info.pointer_size);
@@ -27,6 +27,7 @@ public sealed unsafe class NativeAbiHandshakeTests
         Assert.Equal((int)lua_Type.LUA_TBOOLEAN, info.type_boolean);
         Assert.Equal((int)lua_Type.LUA_TLIGHTUSERDATA, info.type_lightuserdata);
         Assert.Equal((int)lua_Type.LUA_TNUMBER, info.type_number);
+        Assert.Equal((int)lua_Type.LUA_TINTEGER, info.type_integer);
         Assert.Equal((int)lua_Type.LUA_TVECTOR, info.type_vector);
         Assert.Equal((int)lua_Type.LUA_TSTRING, info.type_string);
         Assert.Equal((int)lua_Type.LUA_TTABLE, info.type_table);
@@ -34,6 +35,8 @@ public sealed unsafe class NativeAbiHandshakeTests
         Assert.Equal((int)lua_Type.LUA_TUSERDATA, info.type_userdata);
         Assert.Equal((int)lua_Type.LUA_TTHREAD, info.type_thread);
         Assert.Equal((int)lua_Type.LUA_TBUFFER, info.type_buffer);
+        Assert.Equal((int)lua_Type.LUA_TCLASS, info.type_class);
+        Assert.Equal((int)lua_Type.LUA_TOBJECT, info.type_object);
 
         LuauNativeAbiVerifier.Validate(info);
     }
@@ -73,6 +76,51 @@ public sealed unsafe class NativeAbiHandshakeTests
             () => LuauState.Create(LuauStateOptions.Default, verifier));
 
         Assert.Contains("protected-call ABI", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RootCreationRejectsStageOneRecordAndStaleTypeTagsBeforeNativeStateCreation()
+    {
+        var info = CreateMatchingInfo();
+        info.struct_size = 64;
+        info.type_vector = 4;
+        info.type_string = 5;
+        info.type_table = 6;
+        info.type_function = 7;
+        info.type_userdata = 8;
+        info.type_thread = 9;
+        info.type_buffer = 10;
+        info.type_integer = 0;
+        info.type_class = 0;
+        info.type_object = 0;
+        var verifier = CreateVerifier(info);
+
+        var exception = Assert.Throws<PlatformNotSupportedException>(
+            () => LuauState.Create(LuauStateOptions.Default, verifier));
+
+        Assert.Contains("ABI information record", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("integer")]
+    [InlineData("class")]
+    [InlineData("object")]
+    public void RootCreationRejectsWrongStageTwoTypeTagBeforeNativeStateCreation(string tag)
+    {
+        var info = CreateMatchingInfo();
+        switch (tag)
+        {
+            case "integer": info.type_integer++; break;
+            case "class": info.type_class++; break;
+            case "object": info.type_object++; break;
+            default: throw new ArgumentOutOfRangeException(nameof(tag));
+        }
+        var verifier = CreateVerifier(info);
+
+        var exception = Assert.Throws<PlatformNotSupportedException>(
+            () => LuauState.Create(LuauStateOptions.Default, verifier));
+
+        Assert.Contains($"{tag} type tag", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -178,6 +226,7 @@ public sealed unsafe class NativeAbiHandshakeTests
             type_boolean = (int)lua_Type.LUA_TBOOLEAN,
             type_lightuserdata = (int)lua_Type.LUA_TLIGHTUSERDATA,
             type_number = (int)lua_Type.LUA_TNUMBER,
+            type_integer = (int)lua_Type.LUA_TINTEGER,
             type_vector = (int)lua_Type.LUA_TVECTOR,
             type_string = (int)lua_Type.LUA_TSTRING,
             type_table = (int)lua_Type.LUA_TTABLE,
@@ -185,6 +234,8 @@ public sealed unsafe class NativeAbiHandshakeTests
             type_userdata = (int)lua_Type.LUA_TUSERDATA,
             type_thread = (int)lua_Type.LUA_TTHREAD,
             type_buffer = (int)lua_Type.LUA_TBUFFER,
+            type_class = (int)lua_Type.LUA_TCLASS,
+            type_object = (int)lua_Type.LUA_TOBJECT,
         };
     }
 }

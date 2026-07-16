@@ -111,12 +111,11 @@ public sealed unsafe class ProtectedNativeApiTests
     [Fact]
     public void ProtectedLoadContainsQuotaFailureAndRestoresItsStackBoundary()
     {
-        const int payloadLength = 2_097_152;
-        var source = new byte["return \""u8.Length + payloadLength + 1];
-        "return \""u8.CopyTo(source);
-        source.AsSpan("return \""u8.Length, payloadLength).Fill((byte)'x');
-        source[^1] = (byte)'"';
-
+        // Official Luau 0.729 pages allocations up to 1,024 bytes. A string
+        // constant above that documented VM threshold forces the loader to ask
+        // the host allocator for a backing block, so the controlled one-shot
+        // failure does not depend on incidental free space in a VM page.
+        var source = Encoding.UTF8.GetBytes($"return [[{new string('x', 1_025)}]]");
         byte* bytecode = null;
         nuint bytecodeSize = 0;
         fixed (byte* sourcePointer = source)
@@ -139,6 +138,7 @@ public sealed unsafe class ProtectedNativeApiTests
             try
             {
                 var originalTop = lua_gettop(state);
+                allocator.ArmQuotaFailureOnNextGrowth();
                 var loadResult = -1;
                 fixed (byte* chunkName = "@protected-load-oom\0"u8)
                 {
@@ -150,10 +150,13 @@ public sealed unsafe class ProtectedNativeApiTests
                         0,
                         &loadResult);
 
-                    Assert.Equal((int)lua_Status.LUA_ERRMEM, status);
+                    // Upstream luau_load contains allocator failures in its own
+                    // protected frame and returns a load error; the outer bridge
+                    // frame therefore completes successfully.
+                    Assert.Equal((int)lua_Status.LUA_OK, status);
                 }
 
-                Assert.Equal(-1, loadResult);
+                Assert.NotEqual((int)lua_Status.LUA_OK, loadResult);
                 Assert.Equal(LuauAllocatorFailure.QuotaExceeded, allocator.LastFailure);
                 Assert.Equal(originalTop + 1, lua_gettop(state));
                 Assert.Contains("memory", ReadTopString(state), StringComparison.OrdinalIgnoreCase);
