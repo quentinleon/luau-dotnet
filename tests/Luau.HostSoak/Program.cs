@@ -1,12 +1,9 @@
-#pragma warning disable CS0618 // Host soak coverage deliberately forces native GC through the transitional pointer API.
-
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Luau;
-using Luau.Native;
 
 namespace Luau.HostSoak;
 
@@ -162,11 +159,7 @@ internal static class Program
         using var state = CreateLimitedState(limit);
         state["pushHugeString"] = state.CreateFunction(
             "pushHugeString",
-            callbackState =>
-            {
-                callbackState.PushString(new string('x', 2 * 1024 * 1024));
-                return 1;
-            });
+            context => context.Return(new string('x', 2 * 1024 * 1024)));
         var beforeTop = state.GetTop();
         var beforeMemory = Snapshot(state);
         LuauManagedCallbackException failure;
@@ -250,13 +243,12 @@ internal static class Program
         using var cancellation = new CancellationTokenSource();
         var entered = NewSignal();
         var release = NewSignal();
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             "pending",
-            async (_, _) =>
+            async _ =>
             {
                 entered.TrySetResult();
                 await release.Task.ConfigureAwait(false);
-                return 0;
             });
 
         var beforeTop = state.GetTop();
@@ -306,14 +298,13 @@ internal static class Program
         var entered = NewSignal();
         var release = NewSignal();
         var lateAccess = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             "pending",
-            async (callbackState, _) =>
+            async callbackContext =>
             {
                 entered.TrySetResult();
                 await release.Task.ConfigureAwait(false);
-                lateAccess.TrySetResult(CaptureException(() => callbackState.PushInteger(1)));
-                return 0;
+                lateAccess.TrySetResult(CaptureException(() => callbackContext.Return(1)));
             });
 
         var beforeTop = state.GetTop();
@@ -540,13 +531,12 @@ internal static class Program
         using var cancellation = new CancellationTokenSource();
         var entered = NewSignal();
         var release = NewSignal();
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             $"pending-{iteration}",
-            async (_, _) =>
+            async _ =>
             {
                 entered.TrySetResult();
                 await release.Task.ConfigureAwait(false);
-                return 0;
             });
         var execution = state.DoStringAsync("pending()", cancellationToken: cancellation.Token).AsTask();
         await entered.Task.WaitAsync(Timeout).ConfigureAwait(false);
@@ -563,13 +553,12 @@ internal static class Program
         var context = state.Context;
         var entered = NewSignal();
         var release = NewSignal();
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             $"pending-{iteration}",
-            async (_, _) =>
+            async _ =>
             {
                 entered.TrySetResult();
                 await release.Task.ConfigureAwait(false);
-                return 0;
             });
         var execution = state.DoStringAsync("pending()").AsTask();
         await entered.Task.WaitAsync(Timeout).ConfigureAwait(false);
@@ -585,11 +574,7 @@ internal static class Program
         using var state = CreateLimitedState(1024 * 1024);
         state["pushHugeString"] = state.CreateFunction(
             $"pushHugeString-{iteration}",
-            callbackState =>
-            {
-                callbackState.PushString(new string('x', 2 * 1024 * 1024));
-                return 1;
-            });
+            context => context.Return(new string('x', 2 * 1024 * 1024)));
         var top = state.GetTop();
         var failure = RequireThrows<LuauManagedCallbackException>(() => state.DoString("return pushHugeString()"));
         Require(failure.InnerException is LuauMemoryLimitException, "soak-allocator-inner-kind");
@@ -600,17 +585,16 @@ internal static class Program
     static async Task SoakAsyncCallbackCompletionFailureAsync(int iteration)
     {
         using var state = CreateLimitedState();
-        state["succeed"] = state.CreateFunction(
+        state["succeed"] = state.CreateAsyncFunction(
             $"succeed-{iteration}",
-            async (callbackState, _) =>
+            async context =>
             {
                 await Task.Yield();
-                callbackState.PushInteger(42);
-                return 1;
+                context.Return(42);
             });
-        state["fail"] = state.CreateFunction(
+        state["fail"] = state.CreateAsyncFunction(
             $"fail-{iteration}",
-            async (_, _) =>
+            async _ =>
             {
                 await Task.Yield();
                 throw new InvalidOperationException("expected soak failure");
@@ -718,10 +702,7 @@ internal static class Program
 
     static void ForceNativeAndManagedCollection(LuauState state)
     {
-        unsafe
-        {
-            NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
-        }
+        state.CollectGarbage();
         ForceFinalizersUntil(() => state.Context.ManagedCallbackCount == 0);
     }
 
@@ -744,7 +725,7 @@ internal static class Program
     {
         for (var index = 0; index < 16; index++)
         {
-            state["transient"] = state.CreateFunction($"transient-{iteration}-{index}", _ => 0);
+            state["transient"] = state.CreateFunction($"transient-{iteration}-{index}", _ => { });
         }
     }
 
@@ -860,10 +841,14 @@ internal static class Program
         int loadCount;
         internal int LoadCount => Volatile.Read(ref loadCount);
 
-        protected override bool TryLoadModule(LuauState state, string fullPath, string requireArgument)
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument,
+            out LuauValue result)
         {
             Interlocked.Increment(ref loadCount);
-            state.PushInteger(73);
+            result = LuauValue.FromNumber(73);
             return true;
         }
 

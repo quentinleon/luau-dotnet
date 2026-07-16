@@ -1,5 +1,5 @@
 {
-    "name": "Luau.Native",
+    "name": "Luau.Interop",
     "rootNamespace": "",
     "references": [],
     "includePlatforms": [],

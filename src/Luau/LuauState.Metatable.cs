@@ -1,4 +1,4 @@
-using static Luau.Native.NativeMethods;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -8,21 +8,21 @@ unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             Push(value);
 
             var hasMetatable = 0;
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_getmetatable(l, -1, &hasMetatable);
+            var status = luau_host_metatable_get(l, -1, &hasMetatable);
             LuauNativeProtection.ThrowIfFailed(this, l, status, "get a value's metatable");
 
             return hasMetatable == 0 ? null : Pop().Read<LuauTable>();
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 
@@ -30,7 +30,7 @@ unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             Push(value);
@@ -38,12 +38,12 @@ unsafe partial class LuauState
 
             var result = 0;
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_setmetatable(l, -2, &result);
+            var status = luau_host_metatable_set(l, -2, &result);
             LuauNativeProtection.ThrowIfFailed(this, l, status, "set a value's metatable");
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 }

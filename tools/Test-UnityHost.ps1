@@ -5,8 +5,9 @@ Prepares and optionally validates a disposable Unity project against luau_host.
 .DESCRIPTION
 Copies only Assets, Packages, and ProjectSettings from src/Luau.Unity into an
 ignored directory below native/luau-host/out. The script builds the managed
-runtime, copies the narrow host interop sources, and installs the selected
-luau_host native plugins with the existing reviewed Unity importer metadata.
+runtime and installs the selected luau_host native plugins with the existing
+reviewed Unity importer metadata. Canonical interop source is already part of
+the copied Unity package.
 
 With no validation switches, the script only prepares the disposable project.
 Unity is launched in batch mode only when Compile, EditModeTests, or a smoke
@@ -861,7 +862,7 @@ $dotnetArguments = @(
 )
 Invoke-NativeCommand -Command "dotnet" -Arguments $dotnetArguments -Description "Build Luau.dll"
 
-$managedLuau = Find-ManagedArtifact -ArtifactsRoot $dotnetArtifacts -ProjectName "Luau" -FileName "Luau.dll" -Framework "netstandard2.1"
+$managedLuau = Find-ManagedArtifact -ArtifactsRoot $dotnetArtifacts -ProjectName "Luau" -FileName "Luau.dll"
 $sourceGeneratorProject = Join-Path $repositoryRoot "src/Luau.SourceGenerator/Luau.SourceGenerator.csproj"
 Invoke-NativeCommand -Command "dotnet" -Arguments @(
     "build", $sourceGeneratorProject,
@@ -873,19 +874,6 @@ $managedGenerator = Find-ManagedArtifact -ArtifactsRoot $dotnetArtifacts -Projec
 $runtimeDestination = Join-Path $projectRoot "Assets/Luau.Unity/Runtime"
 Copy-Item -LiteralPath $managedLuau -Destination (Join-Path $runtimeDestination "Luau.dll") -Force
 Copy-Item -LiteralPath $managedGenerator -Destination (Join-Path $runtimeDestination "Luau.SourceGenerator.dll") -Force
-
-$nativeSourceDestination = Join-Path $projectRoot "Assets/Luau.Unity/Native"
-foreach ($hostSourceName in @(
-    "LuauHost.NativeTypes.cs",
-    "LuauHost.NativeMethods.cs",
-    "LuauHost.Compatibility.cs"
-)) {
-    $source = Join-Path (Join-Path $repositoryRoot "src/Luau.Native") $hostSourceName
-    if (!(Test-Path -LiteralPath $source -PathType Leaf)) {
-        throw "Host native source was not found: $source"
-    }
-    Copy-Item -LiteralPath $source -Destination (Join-Path $nativeSourceDestination $hostSourceName) -Force
-}
 
 $windowsPlugin = Resolve-FirstExistingFile `
     -ExplicitPath $WindowsPlugin `
@@ -917,7 +905,7 @@ $androidArm64Plugin = Resolve-FirstExistingFile `
     -Description "Android ARM64 host plugin" `
     -Required:$AndroidArm64Smoke
 
-$pluginsRoot = Join-Path $nativeSourceDestination "Plugins"
+$pluginsRoot = Join-Path $projectRoot "Assets/Luau.Unity/Interop/Plugins"
 $copiedWindowsPlugin = Join-Path $pluginsRoot "win-x64/luau_host.dll"
 Install-HostPlugin `
     -PluginSource $windowsPlugin `

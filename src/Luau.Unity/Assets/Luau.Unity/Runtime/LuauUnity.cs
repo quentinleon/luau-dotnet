@@ -199,34 +199,32 @@ namespace Luau.Unity
 
             log = log ?? Debug.Log;
 
-            state["print"] = state.CreateFunction("print", l =>
+            state["print"] = state.CreateFunction("print", context =>
             {
-                var top = l.GetTop();
-                if (top == 0)
+                if (context.ArgumentCount == 0)
                 {
                     log(string.Empty);
-                    return 0;
+                    return;
                 }
 
-                log(FormatPrintMessage(l, top, maxArguments, maxUtf8Bytes));
-                return 0;
+                log(FormatPrintMessage(context, maxArguments, maxUtf8Bytes));
             });
         }
 
         static string FormatPrintMessage(
-            LuauState state,
-            int valueCount,
+            LuauCallContext context,
             int maxArguments,
             int maxUtf8Bytes)
         {
             var builder = new StringBuilder(Math.Min(maxUtf8Bytes, 256));
             var emittedUtf8Bytes = 0;
+            var valueCount = context.ArgumentCount;
             var valuesToFormat = Math.Min(valueCount, maxArguments);
             var truncated = valueCount > valuesToFormat;
 
-            for (var index = 1; index <= valuesToFormat; index++)
+            for (var index = 0; index < valuesToFormat; index++)
             {
-                if (index > 1)
+                if (index > 0)
                 {
                     if (emittedUtf8Bytes == maxUtf8Bytes)
                     {
@@ -245,7 +243,7 @@ namespace Luau.Unity
                     break;
                 }
 
-                var value = state.ToDisplayString(
+                var value = context.ToDisplayString(
                     index,
                     remainingUtf8Bytes,
                     out var valueWasTruncated);

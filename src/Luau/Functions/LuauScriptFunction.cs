@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -13,21 +13,7 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
     protected override LuauState ResolvePublicState(LuauState owningState) =>
         owningState.GetMainThread();
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
-    public unsafe override lua_CFunction AsCFunction()
-    {
-        using var access = AcquireFunctionAccess();
-        throw new InvalidOperationException("A Luau script function is not a native C callback.");
-    }
-
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public unsafe override void* AsPointer()
-    {
-        using var access = AcquireReference(Reference);
-        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
-    }
-
-    public override async ValueTask<int> InvokeAsync(
+    internal override async ValueTask<int> InvokeAsync(
         int argumentCount,
         CancellationToken cancellationToken = default)
     {

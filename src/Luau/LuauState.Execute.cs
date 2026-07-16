@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Text;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -330,7 +330,7 @@ partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var baseTop = lua_gettop(l);
+        var baseTop = luau_host_stack_get_top(l);
         CompileAndLoadString(this, utf8Source, utf8ChunkName, options);
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
@@ -342,139 +342,40 @@ partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var baseTop = lua_gettop(l);
+        var baseTop = luau_host_stack_get_top(l);
         LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput);
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
     unsafe LuauValue[] ExecuteLoadedForRequire(int baseTop, string? chunkName)
     {
-        var status = lua_pcall(l, 0, -1, 0);
-        if (status != (int)lua_Status.LUA_OK)
-        {
-            Exception failure;
-            try
-            {
-                var message = ReadRequireError(baseTop);
-                var activeOperation = context.GetActiveOperation();
-                var recordedHardStop = activeOperation?.GetHardStopException();
-                var nestedCallbackFailure = activeOperation?.TakeUninjectedCallbackFailure();
+        using var nestedOperation = BeginNestedOperationIfNeeded(chunkName);
+        using var stack = new LuauStackBoundary(this, baseTop);
 
-                if (recordedHardStop != null)
-                {
-                    failure = recordedHardStop;
-                }
-                else if (nestedCallbackFailure != null)
-                {
-                    failure = nestedCallbackFailure;
-                }
-                else if (context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
-                {
-                    failure = new LuauMemoryLimitException(
-                        chunkName,
-                        context.MemoryUsage,
-                        context.LastAttemptedAllocationBytes);
-                }
-                else if (context.AllocatorFailure == LuauAllocatorFailure.SystemOutOfMemory ||
-                    status == (int)lua_Status.LUA_ERRMEM)
-                {
-                    failure = new OutOfMemoryException(
-                        LuauDiagnosticMessages.WithChunk(
-                            "The Luau VM could not allocate memory while executing a module.",
-                            chunkName));
-                }
-                else
-                {
-                    failure = new LuauException(
-                        LuauDiagnosticMessages.WithChunk(message, chunkName),
-                        chunkName);
-                }
-            }
-            finally
-            {
-                lua_settop(l, baseTop);
-            }
+        LuauNativeProtection.Prepare(context);
+        var status = luau_host_pcall(l, 0, -1, 0);
+        LuauNativeProtection.ThrowIfFailed(
+            this,
+            l,
+            status,
+            "execute a module",
+            chunkName);
 
-            throw failure;
-        }
-
-        var operation = context.GetActiveOperation();
-        var hardStop = operation?.GetHardStopException();
-        if (hardStop != null)
-        {
-            lua_settop(l, baseTop);
-            throw hardStop;
-        }
-
-        var callbackFailure = operation?.TakeUninjectedCallbackFailure();
-        if (callbackFailure != null)
-        {
-            lua_settop(l, baseTop);
-            throw callbackFailure;
-        }
-
-        var resultCount = lua_gettop(l) - baseTop;
-        if (resultCount == 0)
-        {
-            return [];
-        }
-
-        var resultLimit = operation?.Options.MaxResultCount
-            ?? Options.DefaultExecutionOptions.MaxResultCount;
+        var resultCount = luau_host_stack_get_top(l) - baseTop;
+        var resultLimit = nestedOperation.Operation.Options.MaxResultCount;
         if (resultLimit is { } limit && resultCount > limit)
         {
-            lua_settop(l, baseTop);
             throw new LuauResultLimitException(chunkName, resultCount, limit);
         }
 
-        LuauValue[] results;
-        try
+        var results = new LuauValue[resultCount];
+        for (var i = resultCount - 1; i >= 0; i--)
         {
-            results = new LuauValue[resultCount];
-        }
-        catch
-        {
-            lua_settop(l, baseTop);
-            throw;
+            results[i] = Pop();
         }
 
-        try
-        {
-            for (var i = resultCount - 1; i >= 0; i--)
-            {
-                results[i] = Pop();
-            }
-        }
-        catch
-        {
-            lua_settop(l, baseTop);
-            throw;
-        }
-
+        stack.Complete();
         return results;
-    }
-
-    unsafe string ReadRequireError(int baseTop)
-    {
-        if (lua_gettop(l) <= baseTop ||
-            (lua_Type)lua_type(l, -1) != lua_Type.LUA_TSTRING)
-        {
-            return "Module execution failed with a non-string error value.";
-        }
-
-        nuint length = 0;
-        var text = lua_tolstring(l, -1, &length);
-        if (text == null || length == 0)
-        {
-            return "Module execution failed without an error message.";
-        }
-
-        if (length > int.MaxValue)
-        {
-            return "Module execution failed with an oversized error message.";
-        }
-
-        return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, (int)length));
     }
 
     static void CompileAndLoadString(
@@ -636,7 +537,8 @@ partial class LuauState
         string? chunkName,
         LuauExecutionOptions? options,
         CancellationToken cancellationToken,
-        bool isAsync)
+        bool isAsync,
+        ScriptOperationMode mode = ScriptOperationMode.TopLevelResume)
     {
         ThrowIfDisposed();
         if (cancellationToken.IsCancellationRequested)
@@ -644,7 +546,7 @@ partial class LuauState
             throw new LuauExecutionCanceledException(chunkName, cancellationToken);
         }
 
-        return context.BeginOperation(this, chunkName, options, cancellationToken, isAsync);
+        return context.BeginOperation(this, chunkName, options, cancellationToken, isAsync, mode);
     }
 
     internal static string? DecodeChunkName(ReadOnlySpan<char> chunkName)
@@ -677,6 +579,6 @@ partial class LuauState
     unsafe bool HasInitialCoroutineFunction()
     {
         using var access = EnterNativeAccess();
-        return (lua_Status)lua_status(l) == lua_Status.LUA_OK && lua_gettop(l) > 0;
+        return luau_host_thread_status(l) == LuauHostStatus.Ok && luau_host_stack_get_top(l) > 0;
     }
 }

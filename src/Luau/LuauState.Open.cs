@@ -1,33 +1,10 @@
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
 unsafe partial class LuauState
 {
-    /// <summary>
-    /// Opens every upstream standard library, including privileged OS and
-    /// debug capabilities. This bypasses the reviewed-library contract and
-    /// must never be exposed to untrusted mods.
-    /// </summary>
-    [Obsolete(LuauCompatibilityDiagnostics.OpenAllLibraries)]
-    public void OpenLibraries()
-    {
-        ThrowIfDisposed();
-        ThrowIfLibrariesFrozen();
-        using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
-        try
-        {
-            LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_openlibs(l);
-            LuauNativeProtection.ThrowIfFailed(this, l, status, "open the standard libraries");
-        }
-        finally
-        {
-            lua_settop(l, originalTop);
-        }
-    }
-
     public void OpenBaseLibrary()
     {
         OpenStandardLibrary(ProtectedStandardLibrary.Base, "base");
@@ -107,18 +84,18 @@ unsafe partial class LuauState
         ThrowIfDisposed();
         ThrowIfLibrariesFrozen();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
 
         try
         {
             var resultCount = 0;
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_openlibrary(l, (int)library, &resultCount);
+            var status = luau_host_open_library(l, (LuauHostLibrary)library, &resultCount);
             LuauNativeProtection.ThrowIfFailed(this, l, status, $"open the {name} library");
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 
@@ -127,12 +104,13 @@ unsafe partial class LuauState
         ThrowIfDisposed();
         ThrowIfLibrariesFrozen();
 
-        this["require"] = CreateFunction(state =>
+        this["require"] = CreateFunction("require", call =>
         {
-            var path = state.ToString(-1);
-            if (requirer.TryLoad(state, path))
+            var path = call.Read<string>(0);
+            if (requirer.TryLoad(call.State, path, out var result))
             {
-                return 1;
+                call.Return(result);
+                return;
             }
 
             throw new LuauException($"module '{path}' not found");

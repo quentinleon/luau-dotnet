@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Text;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -19,7 +19,7 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
 
         var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
         var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
@@ -37,7 +37,7 @@ public unsafe partial class LuauState
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
             ArrayPool<byte>.Shared.Return(chunkBuffer);
         }
     }
@@ -47,7 +47,7 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: false);
@@ -55,7 +55,7 @@ public unsafe partial class LuauState
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 
@@ -72,7 +72,7 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
 
         var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
         var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
@@ -90,7 +90,7 @@ public unsafe partial class LuauState
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
             ArrayPool<byte>.Shared.Return(chunkBuffer);
         }
     }
@@ -102,7 +102,7 @@ public unsafe partial class LuauState
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: true);
@@ -110,7 +110,7 @@ public unsafe partial class LuauState
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 
@@ -170,16 +170,16 @@ public unsafe partial class LuauState
                 nullTerminatedName = nameBuffer.AsSpan(0, utf8ChunkName.Length + 1);
             }
 
-            int status;
+            LuauHostStatus status;
             fixed (byte* bytecodePointer = bytecode)
             fixed (byte* namePointer = nullTerminatedName)
             {
-                int loadStatus = 0;
-                var protectedStatus = luau_ffi_protected_load(
+                var loadStatus = LuauHostStatus.Ok;
+                var protectedStatus = luau_host_load(
                     l,
                     namePointer,
                     bytecodePointer,
-                    (nuint)bytecode.Length,
+                    (ulong)bytecode.Length,
                     0,
                     &loadStatus);
                 LuauNativeProtection.ThrowIfFailed(
@@ -191,7 +191,7 @@ public unsafe partial class LuauState
                 status = loadStatus;
             }
 
-            if (status == 0)
+            if (status == LuauHostStatus.Ok)
             {
                 return;
             }
@@ -290,13 +290,13 @@ public unsafe partial class LuauState
             // Reading an existing string is allocation-free. Do not ask
             // lua_tolstring to coerce an arbitrary error object here: coercion
             // can allocate and must never long-jump across this managed frame.
-            if (lua_gettop(l) == 0 || (lua_Type)lua_type(l, -1) != lua_Type.LUA_TSTRING)
+            if (luau_host_stack_get_top(l) == 0 || (LuauHostType)luau_host_type(l, -1) != LuauHostType.String)
             {
                 return "Luau loading failed without a string error message.";
             }
 
-            nuint length = 0;
-            var pointer = lua_tolstring(l, -1, &length);
+            ulong length = 0;
+            var pointer = luau_host_to_string_view(l, -1, &length);
             return pointer == null || length == 0
                 ? "Luau loading failed without an error message."
                 : length > int.MaxValue
@@ -305,9 +305,9 @@ public unsafe partial class LuauState
         }
         finally
         {
-            if (lua_gettop(l) > 0)
+            if (luau_host_stack_get_top(l) > 0)
             {
-                lua_pop(l, 1);
+                SetTop(-2);
             }
         }
     }

@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using Luau.Native;
+using Luau.Internal.Interop;
 
 namespace Luau;
 
@@ -30,18 +30,18 @@ internal static class ThrowHelper
     }
 
     [DoesNotReturn]
-    public static void ThrowTypeIsNotSupported(lua_Type type)
+    public static void ThrowTypeIsNotSupported(LuauHostType type)
     {
         throw new InvalidOperationException($"Type: {type} is not supported");
     }
 
     [DoesNotReturn]
-    public static void ThrowUnsupportedValue(lua_Type type)
+    public static void ThrowUnsupportedValue(LuauHostType type)
     {
         var kind = type switch
         {
-            lua_Type.LUA_TCLASS => "class",
-            lua_Type.LUA_TOBJECT => "object",
+            LuauHostType.Class => "class",
+            LuauHostType.Object => "object",
             _ => type.ToString(),
         };
 

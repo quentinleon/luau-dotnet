@@ -1,10 +1,11 @@
-using Luau.Native;
+using Luau.Internal.Interop;
 
 namespace Luau;
 
 internal interface ILuauManagedCallbackFunction
 {
     int RegistrationId { get; }
+    LuauHostManagedFunction Callback { get; }
 }
 
 internal sealed class LuauManagedCallbackRegistration
@@ -12,7 +13,7 @@ internal sealed class LuauManagedCallbackRegistration
     internal LuauManagedCallbackRegistration(
         int id,
         string? name,
-        Func<LuauState, int> callback)
+        Func<LuauState, CancellationToken, int> callback)
     {
         Id = id;
         Name = name;
@@ -31,18 +32,18 @@ internal sealed class LuauManagedCallbackRegistration
 
     internal int Id { get; }
     internal string? Name { get; }
-    internal Func<LuauState, int>? SynchronousCallback { get; }
+    internal Func<LuauState, CancellationToken, int>? SynchronousCallback { get; }
     internal Func<LuauState, CancellationToken, ValueTask<int>>? AsynchronousCallback { get; }
     internal bool IsAsync => AsynchronousCallback != null;
 }
 
 internal static unsafe class LuauManagedCallbackLifetime
 {
-    static readonly lua_UserdataDestructor destructor = Destroy;
+    static readonly LuauHostUserdataDestructor destructor = Destroy;
 
-    internal static lua_UserdataDestructor Destructor => destructor;
+    internal static LuauHostUserdataDestructor Destructor => destructor;
 
-    [AOT.MonoPInvokeCallback(typeof(lua_UserdataDestructor))]
+    [AOT.MonoPInvokeCallback(typeof(LuauHostUserdataDestructor))]
     static void Destroy(void* userdata)
     {
         try

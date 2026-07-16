@@ -10,7 +10,7 @@ public enum LuauType : byte
     Vector,
     String,
     Table,
-    Funciton,
+    Function,
     UserData,
     Thread,
     Buffer,

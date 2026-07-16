@@ -4,14 +4,13 @@ namespace Luau;
 
 public abstract class LuauRequirer
 {
-    public bool TryLoad(LuauState state, string argument)
+    internal bool TryLoad(LuauState state, string argument, out LuauValue result)
     {
         var fullPath = AliasToPath(argument);
         var cacheKey = GetCacheKey(fullPath);
 
-        if (state.Context.TryGetCachedModule(cacheKey, out var result))
+        if (state.Context.TryGetCachedModule(cacheKey, out result))
         {
-            state.Push(result);
             return true;
         }
 
@@ -22,49 +21,70 @@ public abstract class LuauRequirer
         using var thread = root.IsRootSandboxed
             ? root.CreateSandboxedThread()
             : root.CreateThread();
-        if (!TryLoadModule(thread, fullPath, argument))
+        if (!TryLoadModule(thread, fullPath, argument, out var moduleResult))
         {
+            result = default;
             return false;
         }
 
-        thread.XMove(root, 1);
-        var cachedResult = root.ToValue(-1);
-        state.Context.CacheModule(cacheKey, cachedResult);
-
-        if (!ReferenceEquals(root, state))
+        var rootTop = root.GetTop();
+        try
         {
-            root.XMove(state, 1);
+            // Normalize registry-backed values onto the VM root before the
+            // short-lived module thread is disposed. Primitive values take
+            // the same path so resolvers never manage stack ownership.
+            thread.Push(moduleResult);
+            thread.XMove(root, 1);
+            result = root.Pop();
+            state.Context.CacheModule(cacheKey, result);
+            return true;
         }
-
-        return true;
+        finally
+        {
+            root.SetTop(rootTop);
+        }
     }
 
-    protected abstract bool TryLoadModule(LuauState state, string fullPath, string requireArgument);
+    protected abstract bool TryLoadModule(
+        LuauState state,
+        string fullPath,
+        string requireArgument,
+        out LuauValue result);
+
     protected abstract bool TryGetAliasPath(string alias, [NotNullWhen(true)] out string? path);
 
-    protected static LuauValue[] ExecuteModuleSource(
+    protected static LuauValue ExecuteModuleSource(
         LuauState state,
+        string requireArgument,
         ReadOnlySpan<byte> utf8Source,
         ReadOnlySpan<byte> utf8ChunkName = default,
         LuauCompileOptions? options = null)
     {
-        return state.DoStringForRequire(utf8Source, utf8ChunkName, options);
+        return GetModuleResult(
+            requireArgument,
+            state.DoStringForRequire(utf8Source, utf8ChunkName, options));
     }
 
-    protected static LuauValue[] ExecuteTrustedModuleBytecode(
+    protected static LuauValue ExecuteTrustedModuleBytecode(
         LuauState state,
+        string requireArgument,
         ReadOnlySpan<byte> bytecode,
         ReadOnlySpan<byte> utf8ChunkName = default)
     {
-        return state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: true);
+        return GetModuleResult(
+            requireArgument,
+            state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: true));
     }
 
-    protected static LuauValue[] ExecuteModuleBytecode(
+    protected static LuauValue ExecuteModuleBytecode(
         LuauState state,
+        string requireArgument,
         ReadOnlySpan<byte> bytecode,
         ReadOnlySpan<byte> utf8ChunkName = default)
     {
-        return state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: false);
+        return GetModuleResult(
+            requireArgument,
+            state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: false));
     }
 
     protected virtual string GetCacheKey(string path) => path;
@@ -87,6 +107,19 @@ public abstract class LuauRequirer
             return alias;
         }
 
-        return $"{path}{alias[index..]}";
+        return index == -1
+            ? path
+            : $"{path}{alias[index..]}";
+    }
+
+    static LuauValue GetModuleResult(string requireArgument, LuauValue[] results)
+    {
+        if (results.Length != 1)
+        {
+            throw new LuauException(
+                $"Module '{requireArgument}' does not return exactly 1 value. It cannot be required.");
+        }
+
+        return results[0];
     }
 }

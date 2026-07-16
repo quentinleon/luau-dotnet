@@ -1,120 +1,223 @@
 # Luau for Unity
 
-A Unity-first Luau runtime with a native VM, managed host API, source generators, and platform plugins.
+A focused Unity runtime for the official Luau VM, with a safe managed API,
+attribute-generated host libraries, and maintained Windows and Android plugins.
 
 ![header](./docs/images/img-header.png)
 
 [![Releases](https://img.shields.io/github/release/nuskey8/luau-dotnet.svg)](https://github.com/nuskey8/luau-dotnet/releases)
 [![license](https://img.shields.io/badge/LICENSE-MIT-green.svg)](LICENSE)
 
-## Overview
-
-Luau for Unity embeds the [Luau language](https://luau.org/) in Unity applications. The supported product surface is the package under `src/Luau.Unity/Assets/Luau.Unity`; it includes the safe high-level managed API, source-generator support, and native plugins.
-
-The package contains a small handwritten `Luau.Native` interop layer for the repository-owned `luau_host` ABI. It is an unsupported implementation detail, even where preview-era accessibility leaves it mechanically public. Consumers should use managed values, reviewed host libraries, source execution, sandboxing, and typed resource-limit failures instead of calling native bindings or retaining VM pointers.
-
-The projects under `src/Luau`, `src/Luau.Native`, and `src/Luau.SourceGenerator` remain in this repository as a fast .NET build/test harness and as sources for intentionally copied Unity artifacts. They are not published as NuGet products. The former CLI and console sample are retained only under `tools/legacy` for reference.
-
 > [!CAUTION]
-> This library is currently provided as a preview version. While many APIs are already stable, some features are not yet implemented.
+> Luau for Unity is currently a preview. Breaking API cleanup may still occur.
 
-## Why Luau?
+## Architecture
 
-Lua is a language specialized for embedding into applications, but it has issues such as limited language features and difficulty in static analysis due to dynamic typing. Luau, a language derived from Lua, can utilize a type system similar to TypeScript, and many convenient syntax and libraries have been added. Additionally, Luau is a language with proven track record at Roblox, its developer, and is more actively maintained compared to Lua. (Lua has not been updated since 5.4)
+The supported product is the package under
+`src/Luau.Unity/Assets/Luau.Unity`. The repository's .NET projects build and
+test that product; they are not a separate distribution.
 
-Furthermore, Luau focuses on providing a sandboxed environment. Dangerous APIs such as the io library are removed in advance, making it superior to Lua in terms of safety.
+```mermaid
+flowchart LR
+    Unity["Unity host code"] --> API["Safe managed API"]
+    API --> Runtime["Managed runtime and operation model"]
+    Runtime --> Interop["Internal P/Invoke declarations"]
+    Interop --> ABI["Versioned C host ABI"]
+    ABI --> VM["Official Luau C++ VM"]
+```
 
-Additionally, Luau is optimized for performance in AOT environments and can run on a very fast interpreter. Therefore, it can be used without issues even in environments where JIT is not permitted.
+The Unity package is authoritative for the internal C# declarations. The
+`Luau.Interop` assembly uses `Luau.Internal.Interop` and mirrors only the narrow,
+repository-owned `luau_host_*` ABI. It is not a consumer API.
 
-For detailed information about Luau, please refer to the [official documentation](https://luau.org/why).
+`Luau.dll` is retained as a deterministic prebuilt Release artifact. It targets
+`netstandard2.1`, and the net9 test harness consumes that same implementation.
+Compiling the runtime as Unity source was rejected because the required compiler
+and dependency accommodations would add more complexity than the copy step they
+removed.
 
-## Platforms
+## Maintained Platforms
 
-The Unity package includes native plugins for the following platforms.
+| Platform | Architecture | Native plugin | Verification gate |
+| --- | --- | --- | --- |
+| Windows | x64 | `luau_host.dll` | Editor, EditMode, Win64 IL2CPP smoke |
+| Android | ARM64 | `libluau_host.so` | ARM64 IL2CPP device smoke |
+| Android | x64 | `libluau_host.so` | x64 emulator smoke |
 
-| Platform | Architecture | Support | Native plugin | Verification |
-| --- | --- | --- | --- | --- |
-| Windows | x64 | Yes | `luau_host.dll` | Editor, EditMode, and IL2CPP player smoke |
-| Android | ARM64 | Yes | `libluau_host.so` | Quest 3 IL2CPP player smoke |
-| Android | x64 | Yes | `libluau_host.so` | x64 emulator IL2CPP player smoke |
+Only Windows x64 and Android ARM64/x64 are maintained. Import-name handling for
+another Unity platform is not a support claim.
 
-These are the currently maintained plugin targets. A binary for another platform is
-not a supported artifact merely because it exists in an older revision.
-
-The high-level runtime performs a self-describing host-ABI handshake before its first
-state creation or standalone compilation. It requires ABI 1.0, validates the
-caller-sized layouts and fixed-width values it interprets, and requires exact
-equality for the approved upstream-revision and Release host-build fingerprints. A
-stale or mismatched plugin therefore fails before VM use with a clear compatibility
-error.
-
-The current Windows and Android plugins are built from official Luau release
-`0.729` at commit `6e9b580e2e24643214caf0f4bbbb3db911ca30f3`.
-Its FNV-1a revision fingerprint is `0xc45f010aabf167ac`. The canonical build-input
-SHA-256 is `ac6eeae2677fe19905718a4cfe5b6bf2709920cdae78e0ba035d88d6ff2c7b0e`,
-which together with the Release build configuration produces host-build fingerprint
-`0x105716f226c3f69f`. The library exports only the 85 approved `luau_host_*` symbols.
-See the
-[Stage 3 implementation notes](docs/stage-3-implementation-notes.md) for native,
-managed, differential, Unity, and device verification evidence.
+Before its first compile or state creation, the managed runtime verifies the
+host's self-description, ABI layout, required features, pinned Luau revision,
+and build fingerprint. The native binary exports only the approved
+`luau_host_*` surface. See the
+[Stage 3 implementation notes](docs/stage-3-implementation-notes.md) for the
+native cutover record.
 
 ## Installation
 
-### Unity Package Manager
+In Unity Package Manager, choose **Add package from git URL** and enter:
 
-For Unity, installation from Package Manager is possible.
-
-1. Open Package Manager from Window > Package Manager
-2. Click the "+" button > Add package from git URL
-3. Enter the following URL
-
-```
+```text
 https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity
 ```
 
-Alternatively, open Packages/manifest.json and add the following to the dependencies block
+Or add the package to `Packages/manifest.json`:
 
 ```json
 {
-    "dependencies": {
-        "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity"
-    }
+  "dependencies": {
+    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity"
+  }
 }
 ```
 
 ## Quick Start
 
-You can execute Luau scripts from C# using `LuauState`.
-
-```cs
+```csharp
 using Luau.Unity;
 using UnityEngine;
 
 using var state = LuauUnity.CreateState();
-var results = state.DoString("return 1 + 1");
-Debug.Log(results[0]); // 2
+var results = state.DoString("return 1 + 1", "@example/main.luau");
+Debug.Log(results[0].Read<long>()); // 2
 ```
 
-> [!WARNING]
-> Operations on one root state and its child threads are serialized. Independent
-> root states may execute concurrently. When a continuation scheduler is
-> configured, create and access the state only from that scheduler; Unity captures
-> its main-thread synchronization context by default.
+One root and all of its child threads are serialized. Independent roots may run
+concurrently. The Unity facade captures the current Unity synchronization
+context by default, so async continuations return to the Unity thread.
 
-## Security model for untrusted mods
+## Safe Host APIs
 
-The native Luau sandbox is one layer of the host security boundary, not a complete
-policy by itself. For untrusted mods, the host must set finite memory, input,
-execution, and result limits; expose only reviewed managed APIs; and load source
-instead of accepting arbitrary precompiled bytecode.
+### Attribute-generated libraries
 
-`LuauUnity.CreateState()` starts from a conservative Unity surface: it opens the
-base, math, table, string, coroutine, bit32, UTF-8, buffer, and vector libraries;
-omits OS and debug; disables `require()`; rejects ordinary host-supplied bytecode;
-sandboxes the root environment; and captures the Unity synchronization context.
-Limits remain host policy and are intentionally not hard-coded. For example:
+`[LuauLibrary]` and `[LuauMember]` are the single supported source-generation
+model. Generated code performs typed conversion through `LuauCallContext`; it
+does not use reflection, native handles, or raw stack operations.
 
-```cs
+```csharp
+using Luau;
+
+[LuauLibrary("ship")]
+public partial class ShipApi
+{
+    [LuauMember("fuel")]
+    public int Fuel { get; private set; } = 100;
+
+    [LuauMember("consume")]
+    public bool Consume(int amount)
+    {
+        if (amount < 0 || amount > Fuel)
+            return false;
+
+        Fuel -= amount;
+        return true;
+    }
+
+    [LuauMember("refuelAsync")]
+    public async ValueTask<int> RefuelAsync(
+        int amount,
+        CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        Fuel += amount;
+        return Fuel;
+    }
+}
+```
+
+Register host libraries while configuring the root, before it is sandboxed:
+
+```csharp
+using var state = LuauUnity.CreateState(new LuauUnityOptions
+{
+    ConfigureHostApis = root => root.OpenLibrary(new ShipApi()),
+});
+```
+
+Generated member names and signatures are validated at compile time. Generated
+callbacks run under the same lifetime, cancellation, stack-boundary, and failure
+rules as manual callbacks.
+
+### Manual callbacks
+
+Use manual callbacks only for small dynamic integrations that do not justify a
+library type:
+
+```csharp
+state["clamp"] = state.CreateFunction("clamp", context =>
+{
+    var value = context.Read<double>(0);
+    var minimum = context.Read<double>(1);
+    var maximum = context.Read<double>(2);
+    return context.Return(Math.Clamp(value, minimum, maximum));
+});
+```
+
+`LuauCallContext` is callback-scoped and generation checked. Its argument indexes
+are zero-based. It exposes typed `Read<T>`, typed `Return<T>`, cancellation, and
+diagnostics—not a native handle, registry index, or mutable stack top. Retaining
+it after callback completion fails deterministically.
+
+For async callbacks, arguments are read and results are returned only while the
+VM is safely suspended. The context remains generation checked across the
+managed await and respects the root's continuation scheduler.
+
+## Values and Functions
+
+Script results are represented by `LuauValue`:
+
+```csharp
+var results = state.DoString("return 42, 'ready', true");
+
+long answer = results[0].Read<long>();
+string status = results[1].Read<string>();
+bool ready = results[2].Read<bool>();
+```
+
+| Luau | Managed value |
+| --- | --- |
+| `nil` | `LuauValue.Nil` |
+| `boolean` | `bool` |
+| integer | signed `long` and range-checked smaller integers |
+| number | `double` or `float` |
+| vector | `System.Numerics.Vector3` |
+| string | `string` |
+| table | `LuauTable` |
+| function | `LuauFunction` |
+| userdata | `LuauUserData` |
+| thread | `LuauState` |
+| buffer | `LuauBuffer` |
+
+VM-backed objects are root-owned references and must be disposed. Primitive
+values are copied. `LuauBuffer.AsSpan()` is a borrowed view: do not retain it
+across VM actions, collection, wrapper disposal, or root disposal.
+
+Invoke a script function with managed values rather than manipulating its stack:
+
+```csharp
+using var function = state.DoString("return function(a, b) return a + b end")[0]
+    .Read<LuauFunction>();
+
+var results = await function.InvokeAsync([20, 22]);
+Debug.Log(results[0].Read<long>()); // 42
+```
+
+## Sandboxing and Untrusted Content
+
+The Luau sandbox is one part of host policy. For untrusted content:
+
+- accept source instead of arbitrary bytecode;
+- set finite source, bytecode, memory, execution, and result limits;
+- expose only reviewed host APIs;
+- keep OS, debug, and `require()` disabled unless the host explicitly grants
+  those capabilities;
+- register host APIs before root sandboxing;
+- keep a host cancellation path;
+- bound and rate-limit logging.
+
+```csharp
 using Luau;
 using Luau.Unity;
 
@@ -137,489 +240,83 @@ using var state = LuauUnity.CreateState(new LuauUnityOptions
 
 var results = await state.DoStringAsync(
     untrustedSource,
-    "@mod/main.luau".AsMemory(),
+    "@mods/example/main.luau".AsMemory(),
     cancellationToken: cancellationToken);
 ```
 
-The values above are illustrative. Choose limits from representative NervBox mod
-workloads, measure rejection rates and native-memory telemetry, and keep a host-side
-cancellation path. Memory accounting covers native VM allocations, not arbitrary
-managed allocations performed by callbacks.
-
-Unity's default `print` callback formats at most 32 arguments and emits at most
-4,096 UTF-8 bytes per call, appending `...` when content is omitted. Hosts can
-tune those per-call bounds with `LuauUnityOptions.MaxPrintArguments` and
-`MaxPrintUtf8Bytes`; they should still rate-limit or redirect logs when mods can
-print repeatedly.
-
-Important trust boundaries:
-
-- Keep the privileged `OpenOSLibrary()` and `OpenDebugLibrary()` capabilities
-  unavailable to untrusted scripts. The transitional `OpenLibraries()` method opens
-  everything at once, is unsupported, and is scheduled for removal. Treat every
-  registered managed callback as privileged host code.
-- `SandboxRoot()` freezes the root globals and the directly opened library/API tables;
-  it does not recursively freeze arbitrary nested tables supplied by the host. Expose
-  nested configuration as per-mod copies, immutable userdata, or explicitly
-  deep-frozen data rather than shared mutable tables.
-- `OpenRequireLibrary()` is currently a trusted-host feature. Its nested module load
-  is synchronous, and resolver path policy plus filesystem, Addressables, or Resources
-  I/O occurs outside the VM allocator. Use an allowlist, enforce module byte limits,
-  and avoid host filesystem resolution for untrusted mods; the Unity default leaves it
-  disabled.
-- `MaxSourceBytes` bounds input before compilation, but the native compiler's own CPU
-  time and temporary allocations are not charged to the VM allocator or interrupt
-  watchdog. Keep source limits conservative and move compilation off latency-critical
-  host threads when accepting hostile source.
-- `ExecuteTrustedBytecode*`, `LoadTrustedBytecode`, and Unity's `ExecuteTrusted*`
-  methods explicitly bypass the ordinary bytecode policy. Use them only for bundled,
-  provenance-checked host assets. A size limit is not bytecode validation.
-- The core `LuauState.Create()` default rejects host-supplied bytecode. A trusted host
-  must use a specifically named trusted-bytecode API, explicitly select
-  `AllowUnvalidated`, or install a real provenance validator.
-- The unsupported `Luau.Native` API and native-pointer escape hatches bypass
-  high-level lifecycle, quota, scheduler, callback, and protected-call guarantees.
-  They are implementation details scheduled for removal.
-- `LuauBuffer.AsSpan()` is a borrowed VM-memory view. Do not retain it across VM
-  calls, collection, wrapper disposal, or root-state disposal.
-- Managed callbacks that await must preserve or explicitly return to the configured
-  continuation scheduler before accessing Unity or Luau state.
-
-Quota, cancellation, callback, load, and result-limit failures are reported as typed
-managed exceptions. The VM remains usable after controlled failures unless the host
-chooses to dispose it.
-
-## LuauValue
-
-Values in Luau scripts are represented by the `LuauValue` type. Values of `LuauValue` can be read using `TryRead<T>(out T value)` or `Read<T>()`.
-
-```cs
-var results = state.DoString("return 1 + 1");
-
-// double
-var value = results[0].Read<double>();
-```
-
-You can also get the type of the value from the `Type` property.
-
-```cs
-var results = state.DoString("return 'hello'");
-Console.WriteLine(results[0].Type); // string
-```
-
-The correspondence between Lua and C# types is shown below.
-
-| Luau            | C#                        |
-| --------------- | ------------------------- |
-| `nil`           | `LuaValue.Nil`            |
-| `boolean`       | `bool`                    |
-| `lightuserdata` | `IntPtr`                  |
-| `number`        | `double`, `float`         |
-| `vector`        | `System.Numerics.Vector3` |
-| `string`        | `string`                  |
-| `table`         | `LuauTable`               |
-| `function`      | `LuauFunction`            |
-| `userdata`      | `T, LuauUserData`         |
-| `thread`        | `LuauState`               |
-| `buffer`        | `LuauBuffer`              |
-
-When creating `LuauValue` from the C# side, convertible types are implicitly converted to `LuauValue`.
-
-```cs
-LuauValue value;
-value = 1.2;                 // double   ->  LuauValue
-value = "foo";               // string   ->  LuauValue
-value = state.CreateTable(); // LuaTable ->  LuauValue
-```
-
-### LuauTable
-
-Luau's `table` type is represented by `LuauTable`.
-
-```cs
-var results = state.DoString("return { a = 1, b = 2, c = 3 }");
-var table = results[0].Read<LuauTable>();
-
-Console.WriteLine(table["a"]); // 1
-
-foreach (KeyValuePair<LuauValue, LuauValue> kv in table)
-{
-    Console.WriteLine($"{kv.Key}:{kv.Value}");
-}
-```
-
-You can also create tables from the C# side.
-
-```cs
-LuauTable table = state.CreateTable();
-table["a"] = "alpha";
-
-state["t"] = table;
-var results = state.DoString("return t['a']");
-Console.WriteLine(results[0]); // alpha
-```
-
-### LuauUserData
-
-You can pass C# structs to Luau as UserData. Structs used as UserData must be unmanaged (not contain references).
-
-To create UserData, use `state.CreateUserData<T>()`. The returned `LuauUserData` is a handle that holds information such as pointers and sizes of UserData.
-
-```cs
-LuauUserData userdata = state.CreateUserData<Example>(new()
-{
-    Foo = 5,
-    Bar = 1.5,
-});
-
-struct Example
-{
-    public int Foo;
-    public double Bar;
-}
-```
-
-`LuauValue` representing UserData can be read directly using `Read<T>()`.
-
-```cs
-var value = state["example"]; // userdata
-var example = value.Read<Example>();
-```
-
-### LuauBuffer
-
-Luau's `buffer` type is represented by `LuauBuffer`.
-
-```cs
-var results = state.DoString("return buffer.fromstring('hello')");
-var buffer = results[0].Read<LuauBuffer>();
-
-Console.WriteLine(Encoding.UTF8.GetString(buffer.AsSpan())); // hello
-```
-
-You can also create buffers from the C# side.
-
-```cs
-var buffer = state.CreateBuffer(10);
-
-var span = buffer.AsSpan();
-span[0] = (byte)'1';
-span[1] = (byte)'2';
-span[2] = (byte)'3';
-span[3] = (byte)'4';
-span[4] = (byte)'5';
-"hello"u8.CopyTo(span[5..]);
-
-state["b"] = buffer;
-var results = state.DoString("return buffer.tostring(b)");
-Console.WriteLine(results[0]); // 12345hello
-```
-
-## Global Variables
-
-Luau's global variables can be read and written through the indexer of `LuauState`.
-
-```cs
-state["a"] = 10;
-var results = state.DoString("return a");
-Console.WriteLine(results[0]);
-```
-
-## Synchronous/Asynchronous API
-
-`LuauState` provides both synchronous and asynchronous APIs for executing Luau scripts.
-
-```cs
-using var state = LuauState.Create();
-
-// sync
-state.DoString("foo()");
-
-// async
-await state.DoStringAsync("foo()");
-```
-
-The synchronous API is superior in terms of performance and ease of use, but if the Luau script to be executed contains asynchronous functions defined on the C# side, an exception will occur when executing it with the synchronous API. Use the asynchronous API when including asynchronous processing.
-
-## Functions
-
-Lua functions are represented by the `LuauFunction` type. Using `LuauFunction`, you can call Luau functions from the C# side or call functions defined in C# from the Luau side.
-
-### Calling Luau Functions from C#
-
-```lua
--- sample.luau
-
-local function add(a: number, b: number): number
-    return a + b
-end
-
-return add
-```
-
-```cs
-using var state = LuauState.Create();
-var bytes = await File.ReadAllBytes("sample.luau");
-
-var func = state.DoString(bytes)[0]
-    .Read<LuauFunction>();
-
-// Execute with arguments
-var results = await func.InvokeAsync([1, 2]);
-Console.WriteLine(results[0]); // 3
-```
-
-### Calling C# Functions from Luau
-
-You can create LuauFunction from lambda expressions using `CreateFunction()`. This is achieved by processing with Source Generator to generate code at compile time.
-
-```cs
-state["add"] = state.CreateFunction((double a, double b) =>
-{
-    return a + b;
-});
-
-// Execute on Luau side
-var results = state.DoString("return add(1, 2)");
-Console.WriteLine(results[0]); // 3
-```
-
-Also, the lambda expression of `CreateFunction()` can be asynchronous. When Luau includes calls to asynchronous functions, you need to use the asynchronous API for execution.
-
-```cs
-state["wait"] = state.CreateFunction(async (double seconds, CancellationToken ct) =>
-{
-    await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
-});
-
-await state.DoStringAsync("wait(1)"); // Wait for 1 second
-```
-
-> [!TIP]
-> For defining multiple functions, the use of `[LuauLibrary]` is recommended. For details, see the [LuauLibrary](#luaulibrary) section.
-
-## Threads / Coroutines
-
-Luau threads are represented by `LuauState`.
-
-You can create threads that share the global environment using `state.CreateThread()`. This is convenient when executing multiple independent Luau scripts.
-
-```cs
-var thread = state.CreateThread();
-thread.DoString("return 1 + 2");
-```
-
-You can also get Luau coroutines as `LuauState` and manipulate them from the C# side.
-
-```lua
--- coroutine.luau
-
-local co = coroutine.create(function()
-    for i = 1, 10 do
-        print(i)
-        coroutine.yield()
-    end
-end)
-
-return co
-```
-
-```cs
-var bytes = File.ReadAllBytes("coroutine.luau");
-var results = state.DoString(bytes);
-var co = results[0].Read<LuaState>();
-
-for (int i = 0; i < 10; i++)
-{
-    var resumeResults = co.Resume(state);
-
-    // Similar to coroutine.resume(), returns true in the first element on success, followed by function return values
-    // 1, 2, 3, 4, ...
-    Console.WriteLine(resumeResults[1]);
-}
-```
-
-## Libraries
-
-### Standard Libraries
-
-You can specify libraries to add to `LuauState` using the `Open~` methods.
-
-```cs
-using var state = LuauState.Create();
-state.OpenBaseLibrary();
-state.OpenMathLibrary();
-state.OpenTableLibrary();
-state.OpenStringLibrary();
-state.OpenCoroutineLibrary();
-state.OpenBit32Library();
-state.OpenUtf8Library();
-state.OpenBufferLibrary();
-state.OpenVectorLibrary();
-```
-
-`OpenOSLibrary()` and `OpenDebugLibrary()` are privileged host operations and must not be enabled for untrusted scripts. The transitional `OpenLibraries()` compatibility method is unsupported because it hides those capabilities behind one broad call and is scheduled for removal. `LuauUnity.CreateState()` opens the Unity-safe standard set without OS or debug libraries.
-
-### Require Library
-
-Luau's `require()` implementation is significantly different from Lua's. The managed host API provides corresponding C\# hooks for module resolution.
-
-The `LuauRequirer` class abstracts Luau's module resolution, allowing you to customize how `require()` loads modules by implementing it. By default, `FileSystemLuauRequirer` is provided, which searches for `*.luau` and `.luaurc` files starting from a specified directory. Additionally, implementations for loading modules from Resources and Addressables are available for Unity.
-
-To add a Require library, call `OpenRequireLibrary()` and pass an instance of the `LuauRequirer` you want to use as an argument.
+The limits above are examples; tune them against representative workloads.
+Native VM memory accounting does not include arbitrary allocations performed by
+managed callbacks.
+
+Controlled failures use typed managed exceptions. The shared operation engine
+restores its stack boundary and leaves the root reusable when safe; a failed
+terminal reset poisons and disposes the entire root. Failure precedence is hard
+stop, then managed callback failure, then allocator or native failure.
+
+## Managed `require()`
+
+`require()` is an opt-in managed host capability. It does not link Luau's native
+Require implementation. The resolver controls aliases, paths, I/O, byte limits,
+and trust. Module execution uses a fresh sandboxed child under a sandboxed root,
+requires exactly one result, and caches results VM-wide without capturing a
+sibling's private globals.
+
+Unity includes resolvers for `Resources` and, when installed, Addressables:
 
 ```csharp
-state.OpenRequireLibrary(new FileSystemLuauRequirer
-{
-    WorkingDirectory = "scripts/"       // Base directory
-    ConfigFilePath = "scripts/.luaurc"  // Path to .luaurc
-});
-```
-
-> [!TIP]
-> It's recommended to use aliases configured in your `.luaurc` for specifying paths.
->
-> ```json
-> {
->   "aliases": {
->      "Script": "."
->   }    
-> }
-> ```
->
-> ```lua
-> require "@Script/foo"
-> ```
-
-### LuauLibrary
-
-You can easily create custom libraries using `[LuauLibrary]`.
-
-```cs
-// The partial keyword is required because Source Generator generates necessary code
-[LuauLibrary("foo")]
-partial class FooLibrary
-{
-    [LuauMember]
-    public double field = 10;
-
-    [LuauMember("property")]
-    public double Property { get; set; } = 20;
-
-    [LuauMember("hello")]
-    public static void Hello()
-    {
-        Console.WriteLine("hello!");
-    }
-
-    [LuauMember("echo")]
-    public static void Echo(string value)
-    {
-        Console.WriteLine(value);
-    }
-
-    [LuauMember("getfield")]
-    public double GetField()
-    {
-        return field;
-    }
-}
-```
-
-Created libraries can be added using `OpenLibrary<T>()`.
-
-```cs
-state.OpenLibrary<FooLibrary>();
-```
-
-This can be used in Luau as follows.
-
-```lua
-print(foo.field)      -- 10
-print(foo.property)   -- 20
-
-foo.field = 50
-
-foo.hello()           -- hello!
-foo.echo("foo")       -- foo
-print(foo.getfield()) -- 50
-```
-
-## Bytecode
-
-Trusted hosts can convert bundled Luau scripts to bytecode using `LuauCompiler.Compile()`. Precompiled bytecode is privileged input: a size bound is not provenance validation, and untrusted mods should enter as source.
-
-```cs
-byte[] bytecode = LuauCompiler.Compile("return 1 + 2"u8);
-```
-
-Bundled compiler output can be loaded as a `LuauFunction` using the explicitly trusted API. The normal `Load()` and `Execute()` methods apply the state's bytecode policy, which rejects host-supplied bytecode by default.
-
-```cs
-using var func = state.LoadTrustedBytecode(bytecode);
-var results = await func.InvokeAsync([]);
-Console.WriteLine(results[0]); // 3
-```
-
-## Unsupported low-level migration surface
-
-Preview-era raw stack methods, native callback delegates, pointer accessors, and the handwritten `Luau.Native` host declarations remain mechanically public where the current assembly split still requires them. They are not supported consumer API and will be internalized or removed in the managed-consolidation stage. Compatibility diagnostics mark native-leaking high-level members where the current runtime can do so without changing packaging.
-
-Use `LuauValue`, `LuauTable`, `LuauFunction`, `CreateFunction`, `[LuauLibrary]`, `DoString*`, `Execute*`, sandboxing, and the typed hardening options instead. Do not build new integrations on raw stack or native declarations.
-
-## Unity
-
-The Luau.Unity package includes Unity assets, module resolvers, and convenience APIs in addition to the managed runtime.
-
-### LuauAsset
-
-By introducing Luau.Unity, you can treat .luau extension files as LuauAsset.
-
-![img](./docs/images/img-luau-asset-inspector.png)
-
-By checking `Precompile`, you can pre-compile bundled Luau scripts to bytecode. The resulting asset is trusted host content and must not be replaceable by an untrusted mod.
-
-Execute source/untrusted assets with `state.Execute()`. Execute a bundled asset that may be precompiled with `state.ExecuteTrusted()` so the trust assertion is visible at the call site.
-
-```cs
-using UnityEngine;
-using Luau;
-using Luau.Unity;
-
-public class Example : MonoBehaviour
-{
-    [SerializeField] LuauAsset script;
-
-    void Start()
-    {
-        using var state = LuauUnity.CreateState();
-        state.ExecuteTrusted(script);
-    }
-}
-```
-
-### Resources / Addressables
-
-In Luau.Unity, `LuauRequirer` implementations that support Resources and Addressables are available.
-
-`LuauUnity.CreateState()` sandboxes the root before returning it, so configure the resolver during state creation rather than mutating the finished root. For example, a Resources resolver with aliases can be enabled explicitly:
-
-```csharp
-var requirer = new ResourcesLuauRequirer
-{
-    Aliases =
-    {
-        ["Resources"] = "."
-    }
-};
-
 using var state = LuauUnity.CreateState(new LuauUnityOptions
 {
     EnableRequire = true,
-    Requirer = requirer,
+    Requirer = ResourcesLuauRequirer.Default,
 });
 ```
 
+There is no product filesystem resolver. A host needing filesystem I/O must own
+and review that policy outside this package.
+
+## Bytecode
+
+Ordinary host-supplied bytecode is rejected by default. Untrusted content should
+enter as source. Use explicitly trusted APIs only for bundled content whose
+provenance the host has already established:
+
+```csharp
+var bytecode = LuauCompiler.Compile("return 42"u8);
+using var function = state.LoadTrustedBytecode(
+    bytecode,
+    "@bundled/example.luau");
+```
+
+Unity's `LuauAsset` importer can precompile bundled `.luau` assets. Execute a
+possibly precompiled bundled asset with `ExecuteTrusted`; use ordinary `Execute`
+for source/untrusted assets. Byte-size limits still apply to trusted bytecode.
+
+## Repository Validation
+
+The repository is intentionally small: Unity is the product, and .NET is its
+test harness.
+
+```powershell
+# Fast validation; never mutates package artifacts.
+dotnet test Luau.slnx --no-restore
+
+# Explicit deterministic Release artifact build/check/refresh.
+powershell -ExecutionPolicy Bypass -File tools/Copy-DotNetArtifactsToUnity.ps1 -Configuration Release
+
+# Unity compile and EditMode tests.
+Push-Location src/Luau.Unity
+ucp compile
+ucp run-tests --mode edit
+Pop-Location
+```
+
+Native plugins are built separately with the CMake presets under
+`native/luau-host`. Managed refresh copies only `Luau.dll` and
+`Luau.SourceGenerator.dll`; the package already owns its interop source.
+
+See the [maintainer guide](docs/maintainer-guide.md) for authority boundaries,
+operation semantics, and validation recipes.
+
 ## License
 
-This library is provided under the [MIT License](LICENSE).
+MIT

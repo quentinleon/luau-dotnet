@@ -1,11 +1,11 @@
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
 internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManagedCallbackFunction
 {
-    static readonly lua_CFunction callback = Call;
+    static readonly LuauHostManagedFunction callback = Call;
     readonly Func<LuauState, CancellationToken, ValueTask<int>> csharpDelegate;
     readonly LuauVmContext context;
     int registrationId;
@@ -21,29 +21,16 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
     }
 
     int ILuauManagedCallbackFunction.RegistrationId => Volatile.Read(ref registrationId);
+    LuauHostManagedFunction ILuauManagedCallbackFunction.Callback => callback;
 
-    public override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
+    internal override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
     {
         using var access = AcquireFunctionAccess();
         return csharpDelegate(access.State, cancellationToken);
     }
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public unsafe override void* AsPointer()
-    {
-        using var access = AcquireFunctionAccess();
-        return (void*)(nint)registrationId;
-    }
-
-    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
-    public unsafe override lua_CFunction AsCFunction()
-    {
-        using var access = AcquireFunctionAccess();
-        return callback;
-    }
-
-    [AOT.MonoPInvokeCallback(typeof(lua_CFunction))]
-    static unsafe int Call(lua_State* l)
+    [AOT.MonoPInvokeCallback(typeof(LuauHostManagedFunction))]
+    static unsafe int Call(LuauHostState* l)
     {
         ScriptOperation? operation = null;
         LuauManagedCallbackRegistration? registration = null;
@@ -56,7 +43,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                 return 0;
             }
 
-            var idPointer = (int*)lua_touserdata(l, (int)lua_upvalueindex(1));
+            var idPointer = (int*)luau_host_callback_userdata(l, 1);
             if (idPointer == null)
             {
                 operation.RecordCallbackFailure(
@@ -83,7 +70,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                 return YieldFailureIfPossible(l);
             }
 
-            if (lua_isyieldable(l) == 0)
+            if (luau_host_is_yieldable(l) == 0)
             {
                 operation.RecordCallbackFailure(
                     registration.Name,
@@ -92,16 +79,16 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                 return 0;
             }
 
-            // Do not invoke managed user code while lua_resume is still on the
+            // Do not invoke managed user code while luau_host_resume is still on the
             // native stack. The runner dispatches the delegate only after it has
             // observed LUA_YIELD, so synchronous portions and fast continuations
             // can safely use the callback state.
             operation.QueueAsyncCallback(registration);
             // Preserve the Luau arguments as the internal yield payload. The
             // runner does not expose this yield to the host; it dispatches the
-            // managed callback after lua_resume has unwound, where generated
+            // managed callback after luau_host_resume has unwound, where generated
             // async wrappers can safely read the original argument stack.
-            return lua_yield(l, lua_gettop(l));
+            return luau_host_yield(l, luau_host_stack_get_top(l));
         }
         catch (Exception ex)
         {
@@ -110,9 +97,9 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
         }
     }
 
-    static unsafe int YieldFailureIfPossible(lua_State* state)
+    static unsafe int YieldFailureIfPossible(LuauHostState* state)
     {
-        return lua_isyieldable(state) != 0 ? lua_yield(state, 0) : 0;
+        return luau_host_is_yieldable(state) != 0 ? luau_host_yield(state, 0) : 0;
     }
 
     public override string ToString()

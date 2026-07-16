@@ -1,8 +1,8 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -36,17 +36,17 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
             var state = access.State;
 
             var pointer = state.PointerUnsafe;
-            var originalTop = lua_gettop(pointer);
+            var originalTop = luau_host_stack_get_top(pointer);
             try
             {
-                nuint length;
+                ulong length;
                 LuauReferenceHelper.PushReference(state, access.Reference, "read a Luau buffer");
-                lua_tobuffer(pointer, -1, &length);
+                luau_host_to_buffer(pointer, -1, &length);
                 return checked((int)length);
             }
             finally
             {
-                lua_settop(pointer, originalTop);
+                state.SetTop(originalTop);
             }
         }
     }
@@ -63,30 +63,23 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
         return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public void* AsPointer()
-    {
-        using var access = AcquireReference();
-        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
-    }
-
     public Span<byte> AsSpan()
     {
         using var access = AcquireReference();
         var state = access.State;
 
         var pointer = state.PointerUnsafe;
-        var originalTop = lua_gettop(pointer);
+        var originalTop = luau_host_stack_get_top(pointer);
         try
         {
-            nuint length;
+            ulong length;
             LuauReferenceHelper.PushReference(state, access.Reference, "read a Luau buffer");
-            var buffer = lua_tobuffer(pointer, -1, &length);
+            var buffer = luau_host_to_buffer(pointer, -1, &length);
             return new Span<byte>(buffer, checked((int)length));
         }
         finally
         {
-            lua_settop(pointer, originalTop);
+            state.SetTop(originalTop);
         }
     }
 

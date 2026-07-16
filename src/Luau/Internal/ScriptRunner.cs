@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -212,7 +212,7 @@ internal sealed class ScriptRunner : IDisposable
         while (true)
         {
             operation.PrepareResume();
-            int status;
+            LuauHostStatus status;
 
             if (resumeWithError)
             {
@@ -225,7 +225,7 @@ internal sealed class ScriptRunner : IDisposable
                 status = Resume(operation, state, from, argumentCount);
             }
 
-            if ((lua_Status)status == lua_Status.LUA_OK)
+            if (status == LuauHostStatus.Ok)
             {
                 operation.ClearInjectedCallbackFailure();
                 ThrowIfHardStopped(operation, state);
@@ -233,7 +233,7 @@ internal sealed class ScriptRunner : IDisposable
                 return GetResultCount(operation, state, baseTop);
             }
 
-            if ((lua_Status)status != lua_Status.LUA_YIELD)
+            if (status != LuauHostStatus.Yielded)
             {
                 ThrowExecutionFailure(operation, state);
             }
@@ -283,7 +283,7 @@ internal sealed class ScriptRunner : IDisposable
         while (true)
         {
             operation.PrepareResume();
-            int status;
+            LuauHostStatus status;
 
             if (resumeWithError)
             {
@@ -301,7 +301,7 @@ internal sealed class ScriptRunner : IDisposable
                     () => Resume(operation, state, from, resumeArgumentCount)).ConfigureAwait(false);
             }
 
-            if ((lua_Status)status == lua_Status.LUA_OK)
+            if (status == LuauHostStatus.Ok)
             {
                 operation.ClearInjectedCallbackFailure();
                 return await LuauContinuationDispatcher.InvokeAsync(
@@ -314,7 +314,7 @@ internal sealed class ScriptRunner : IDisposable
                     }).ConfigureAwait(false);
             }
 
-            if ((lua_Status)status != lua_Status.LUA_YIELD)
+            if (status != LuauHostStatus.Yielded)
             {
                 await LuauContinuationDispatcher.InvokeAsync(
                     scheduler,
@@ -526,7 +526,7 @@ internal sealed class ScriptRunner : IDisposable
         throw new LuauException(message, operation.ChunkName);
     }
 
-    static unsafe int ResumeErrorWithCallbackFailure(
+    static unsafe LuauHostStatus ResumeErrorWithCallbackFailure(
         ScriptOperation operation,
         IntPtr state,
         IntPtr from)
@@ -537,15 +537,15 @@ internal sealed class ScriptRunner : IDisposable
         // details remain attached to the managed exception; a Luau pcall
         // receives only this opaque non-nil failure token.
         LuauNativeProtection.Prepare(operation.Context);
-        var pushStatus = luau_ffi_protected_pushlightuserdatatagged(
-            (lua_State*)state,
+        var pushStatus = luau_host_push_light_userdata(
+            (LuauHostState*)state,
             operation.CallbackFailureToken.ToPointer(),
             0);
         try
         {
             LuauNativeProtection.ThrowIfFailed(
                 operation.State,
-                (lua_State*)state,
+                (LuauHostState*)state,
                 pushStatus,
                 "inject a managed callback failure",
                 operation.ChunkName);
@@ -556,32 +556,32 @@ internal sealed class ScriptRunner : IDisposable
             throw;
         }
 
-        return lua_resumeerror((lua_State*)state, (lua_State*)from);
+        return luau_host_resume_error((LuauHostState*)state, (LuauHostState*)from);
     }
 
     static unsafe bool IsCallbackFailureToken(ScriptOperation operation, IntPtr state)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        return (lua_Type)lua_type((lua_State*)state, -1) == lua_Type.LUA_TLIGHTUSERDATA &&
-            (IntPtr)lua_tolightuserdata((lua_State*)state, -1) == operation.CallbackFailureToken;
+        return (LuauHostType)luau_host_type((LuauHostState*)state, -1) == LuauHostType.LightUserdata &&
+            (IntPtr)luau_host_to_light_userdata((LuauHostState*)state, -1) == operation.CallbackFailureToken;
     }
 
     static unsafe string PopError(ScriptOperation operation, IntPtr state)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        var pointer = (lua_State*)state;
+        var pointer = (LuauHostState*)state;
         try
         {
-            // lua_tolstring may allocate when coercing numbers. Execution can
+            // String coercion may allocate. Execution can
             // arrive here with the allocator exhausted, so only read values
             // that are already strings and never coerce arbitrary error data.
-            if ((lua_Type)lua_type(pointer, -1) != lua_Type.LUA_TSTRING)
+            if ((LuauHostType)luau_host_type(pointer, -1) != LuauHostType.String)
             {
                 return "Luau execution failed with a non-string error value.";
             }
 
-            nuint length = 0;
-            var text = lua_tolstring(pointer, -1, &length);
+            ulong length = 0;
+            var text = luau_host_to_string_view(pointer, -1, &length);
             if (text == null || length == 0)
             {
                 return "Luau execution failed without an error message.";
@@ -596,15 +596,15 @@ internal sealed class ScriptRunner : IDisposable
         }
         finally
         {
-            lua_pop(pointer, 1);
+            RequireStackSetTopSuccess(luau_host_stack_set_top(pointer, -2));
         }
     }
 
     static unsafe void Abort(ScriptOperation operation, IntPtr state)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        var status = luau_ffi_protected_resetthread((lua_State*)state);
-        if (status == (int)lua_Status.LUA_OK)
+        var status = luau_host_thread_reset((LuauHostState*)state);
+        if (status == LuauHostStatus.Ok)
         {
             return;
         }
@@ -612,7 +612,7 @@ internal sealed class ScriptRunner : IDisposable
         // Protected reset contains the native longjmp but cannot restore a
         // partially reset CallInfo/stack. Capture diagnostics without reading
         // that stack, poison the whole root, and let EndOperation perform the
-        // only remaining native action: deferred lua_close.
+        // only remaining native action: deferred state close.
         Exception? failure = null;
         try
         {
@@ -639,7 +639,7 @@ internal sealed class ScriptRunner : IDisposable
         Abort(operation, operation.ThreadPointer);
     }
 
-    static Exception CreateTerminalResetFailure(ScriptOperation operation, int status)
+    static Exception CreateTerminalResetFailure(ScriptOperation operation, LuauHostStatus status)
     {
         if (operation.Context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
         {
@@ -652,7 +652,7 @@ internal sealed class ScriptRunner : IDisposable
         }
 
         if (operation.Context.AllocatorFailure == LuauAllocatorFailure.SystemOutOfMemory ||
-            status == (int)lua_Status.LUA_ERRMEM)
+            status == LuauHostStatus.SystemOutOfMemory)
         {
             return new OutOfMemoryException(
                 LuauDiagnosticMessages.WithChunk(
@@ -662,7 +662,7 @@ internal sealed class ScriptRunner : IDisposable
 
         return new LuauException(
             LuauDiagnosticMessages.WithChunk(
-                $"The Luau VM reset failed with native status {status} and the VM was disposed.",
+                $"The Luau VM reset failed with native status {(int)status} and the VM was disposed.",
                 operation.ChunkName),
             operation.ChunkName);
     }
@@ -670,23 +670,32 @@ internal sealed class ScriptRunner : IDisposable
     static unsafe int GetTop(ScriptOperation operation, IntPtr state)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        return lua_gettop((lua_State*)state);
+        return luau_host_stack_get_top((LuauHostState*)state);
     }
 
     static unsafe void SetTop(ScriptOperation operation, IntPtr state, int top)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        lua_settop((lua_State*)state, top);
+        RequireStackSetTopSuccess(luau_host_stack_set_top((LuauHostState*)state, top));
     }
 
-    static unsafe int Resume(
+    static void RequireStackSetTopSuccess(LuauHostStatus status)
+    {
+        if (status != LuauHostStatus.Ok)
+        {
+            throw new InvalidOperationException(
+                $"The Luau host returned status {(int)status} while attempting to set the stack top.");
+        }
+    }
+
+    static unsafe LuauHostStatus Resume(
         ScriptOperation operation,
         IntPtr state,
         IntPtr from,
         int argumentCount)
     {
         using var access = operation.Context.EnterOperationNativeAccess(operation);
-        return lua_resume((lua_State*)state, (lua_State*)from, argumentCount);
+        return luau_host_resume((LuauHostState*)state, (LuauHostState*)from, argumentCount);
     }
 
     public void Dispose()

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Threading;
 using System.Threading.Tasks;
 using Luau;
 using UnityEngine;
@@ -55,45 +56,10 @@ namespace Luau.Unity.Verification
                     ConfigureHostApis = state =>
                     {
                         state["hostAnswer"] = 42L;
-                        // This typed overload is emitted by Luau.SourceGenerator;
-                        // keeping it in the player smoke validates the AOT host
-                        // callback path rather than only the runtime delegate API.
-                        state["hostGeneratedAddOne"] = state.CreateFunction(
-                            (Func<long, long>)GeneratedAddOne);
-                        state["hostAddOne"] = state.CreateFunction(
-                            "hostAddOne",
-                            callbackState =>
-                            {
-                                callbackState.PushInteger(callbackState.ToInteger(1) + 1);
-                                return 1;
-                            });
-                        state["hostAsyncAnswer"] = state.CreateFunction(
-                            "hostAsyncAnswer",
-                            async (callbackState, cancellationToken) =>
-                            {
-                                await Task.Delay(1, cancellationToken);
-                                if (System.Environment.CurrentManagedThreadId != unityThreadId)
-                                {
-                                    throw new InvalidOperationException(
-                                        "The asynchronous host callback left the Unity main thread.");
-                                }
-
-                                callbackState.PushInteger(77);
-                                return 1;
-                            });
-                        state["hostAssertUnityThread"] = state.CreateFunction(
-                            "hostAssertUnityThread",
-                            callbackState =>
-                            {
-                                if (System.Environment.CurrentManagedThreadId != unityThreadId)
-                                {
-                                    throw new InvalidOperationException(
-                                        "Luau resumed off the Unity main thread after an asynchronous callback.");
-                                }
-
-                                callbackState.PushBoolean(true);
-                                return 1;
-                            });
+                        state.OpenLibrary(new LuauPlayerSmokeHost(unityThreadId));
+                        state["hostManualAddOne"] = state.CreateFunction(
+                            "hostManualAddOne",
+                            context => context.Return(context.Read<long>(0) + 1));
                     },
                     Log = message => Debug.Log("[Luau] " + message),
                 });
@@ -111,14 +77,14 @@ namespace Luau.Unity.Verification
                     "and getfenv == nil " +
                     "and setfenv == nil, " +
                     "hostAnswer, " +
-                    "hostAddOne(41), " +
-                    "hostGeneratedAddOne(41)",
+                    "hostManualAddOne(41), " +
+                    "smokeHost.addOne(41)",
                     "@unity/player-smoke-first.luau");
                 var secondResult = second.DoString(
                     "return scriptLocal == nil, hostAnswer",
                     "@unity/player-smoke-second.luau");
                 var asyncResult = await first.DoStringAsync(
-                    "local answer = hostAsyncAnswer(); return answer, hostAssertUnityThread()",
+                    "local answer = smokeHost.asyncAnswer(); return answer, smokeHost.assertUnityThread()",
                     "@unity/player-smoke-async.luau");
 
                 if (firstResult.Length != 4 ||
@@ -160,15 +126,50 @@ namespace Luau.Unity.Verification
             }
         }
 
-        static long GeneratedAddOne(long value)
-        {
-            return value + 1;
-        }
-
         static IEnumerator QuitAfterLogFlush(int exitCode)
         {
             yield return null;
             Application.Quit(exitCode);
+        }
+    }
+
+    [LuauLibrary("smokeHost")]
+    internal sealed partial class LuauPlayerSmokeHost
+    {
+        readonly int unityThreadId;
+
+        public LuauPlayerSmokeHost(int unityThreadId)
+        {
+            this.unityThreadId = unityThreadId;
+        }
+
+        [LuauMember("addOne")]
+        public static long AddOne(long value)
+        {
+            return value + 1;
+        }
+
+        [LuauMember("asyncAnswer")]
+        public async ValueTask<int> AsyncAnswer(CancellationToken cancellationToken)
+        {
+            await Task.Delay(1, cancellationToken);
+            AssertUnityThread("The asynchronous host callback left the Unity main thread.");
+            return 77;
+        }
+
+        [LuauMember("assertUnityThread")]
+        public bool AssertUnityThread()
+        {
+            AssertUnityThread("Luau resumed off the Unity main thread after an asynchronous callback.");
+            return true;
+        }
+
+        void AssertUnityThread(string message)
+        {
+            if (System.Environment.CurrentManagedThreadId != unityThreadId)
+            {
+                throw new InvalidOperationException(message);
+            }
         }
     }
 }

@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="PublicApi.approved.txt" LogicalName="Luau.Tests.PublicApi.approved.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Luau\Luau.csproj" />
     <ProjectReference Include="..\..\src\Luau.SourceGenerator\Luau.SourceGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>

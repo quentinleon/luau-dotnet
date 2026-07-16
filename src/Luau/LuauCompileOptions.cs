@@ -1,50 +1,14 @@
-using Luau.Native;
-
 namespace Luau;
 
 public record LuauCompileOptions
 {
     public static readonly LuauCompileOptions Default = new();
 
-    public LuauCompileOptions()
-    {
-    }
+    public int OptimizationLevel { get; init; } = 1;
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativeCompileOptions)]
-    public LuauCompileOptions(lua_CompileOptions options)
-    {
-        this.options = options;
-    }
+    public int DebugLevel { get; init; } = 1;
 
-    public int OptimizationLevel
-    {
-        get => options.optimizationLevel;
-        init => options.optimizationLevel = value;
-    }
+    public int TypeInfoLevel { get; init; } = 1;
 
-    public int DebugLevel
-    {
-        get => options.debugLevel;
-        init => options.debugLevel = value;
-    }
-
-    public int TypeInfoLevel
-    {
-        get => options.typeInfoLevel;
-        init => options.typeInfoLevel = value;
-    }
-
-    public int CoverageLevel
-    {
-        get => options.coverageLevel;
-        init => options.coverageLevel = value;
-    }
-
-    internal lua_CompileOptions options = new()
-    {
-        debugLevel = 1,
-        optimizationLevel = 1,
-        typeInfoLevel = 1,
-        coverageLevel = 2,
-    };
+    public int CoverageLevel { get; init; } = 2;
 }

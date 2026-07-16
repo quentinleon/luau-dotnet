@@ -1,5 +1,5 @@
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -62,18 +62,9 @@ public unsafe partial class LuauState
         this["getfenv"] = LuauValue.Nil;
         this["setfenv"] = LuauValue.Nil;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_sandbox(l);
+        var status = luau_host_sandbox_root(l);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "sandbox the root environment");
         context.MarkRootSandboxed();
-    }
-
-    /// <summary>
-    /// Alias for <see cref="SandboxRoot"/>.
-    /// </summary>
-    [Obsolete(LuauCompatibilityDiagnostics.SandboxAlias)]
-    public void Sandbox()
-    {
-        SandboxRoot();
     }
 
     /// <summary>
@@ -131,7 +122,7 @@ public unsafe partial class LuauState
 
         using var access = EnterNativeAccess();
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_sandboxthread(l);
+        var status = luau_host_sandbox_thread(l);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "sandbox a child thread");
 
         var guardResults = DoStringForRequire(
@@ -146,17 +137,23 @@ public unsafe partial class LuauState
 
         using (guard)
         {
-            var originalTop = lua_gettop(l);
+            var originalTop = luau_host_stack_get_top(l);
             try
             {
-                SandboxPushValue(LUA_GLOBALSINDEX, "inspect the sandboxed global environment");
+                SandboxPushGlobal("inspect the sandboxed global environment");
                 if (!SandboxGetMetatable(-1))
                 {
                     throw new LuauException("The sandboxed global environment has no proxy metatable.");
                 }
 
-                var metatableIndex = lua_absindex(l, -1);
-                lua_setreadonly(l, metatableIndex, 0);
+                var metatableIndex = luau_host_stack_abs_index(l, -1);
+                LuauNativeProtection.Prepare(context);
+                var writableStatus = luau_host_table_set_readonly(l, metatableIndex, 0);
+                LuauNativeProtection.ThrowIfFailed(
+                    this,
+                    l,
+                    writableStatus,
+                    "unlock the sandbox metatable");
                 try
                 {
                     PushFunction(guard);
@@ -167,12 +164,18 @@ public unsafe partial class LuauState
                 }
                 finally
                 {
-                    lua_setreadonly(l, metatableIndex, 1);
+                    LuauNativeProtection.Prepare(context);
+                    var readonlyStatus = luau_host_table_set_readonly(l, metatableIndex, 1);
+                    LuauNativeProtection.ThrowIfFailed(
+                        this,
+                        l,
+                        readonlyStatus,
+                        "freeze the sandbox metatable");
                 }
             }
             finally
             {
-                lua_settop(l, originalTop);
+                SetTop(originalTop);
             }
         }
 
@@ -181,18 +184,18 @@ public unsafe partial class LuauState
 
     void EnsureSandboxBaseLibrary()
     {
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         bool hasGlobalEnvironment;
         try
         {
             SandboxGetGlobal(GlobalEnvironmentName, "inspect the root global environment");
             hasGlobalEnvironment =
-                lua_type(l, -1) == (int)lua_Type.LUA_TTABLE &&
-                lua_rawequal(l, -1, LUA_GLOBALSINDEX) != 0;
+                luau_host_type(l, -1) == (int)LuauHostType.Table &&
+                luau_host_is_global(l, -1) != 0;
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
 
         if (!hasGlobalEnvironment ||
@@ -208,15 +211,15 @@ public unsafe partial class LuauState
 
     bool HasGlobalFunction(ReadOnlySpan<byte> name)
     {
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             SandboxGetGlobal(name, "inspect a required sandbox function");
-            return lua_type(l, -1) == (int)lua_Type.LUA_TFUNCTION;
+            return luau_host_type(l, -1) == (int)LuauHostType.Function;
         }
         finally
         {
-            lua_settop(l, originalTop);
+            SetTop(originalTop);
         }
     }
 
@@ -226,15 +229,22 @@ public unsafe partial class LuauState
         fixed (byte* pointer = name)
         {
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_getfield(l, LUA_GLOBALSINDEX, pointer, &resultType);
+            var status = luau_host_global_get(l, pointer, &resultType);
             LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
         }
+    }
+
+    void SandboxPushGlobal(string operation)
+    {
+        LuauNativeProtection.Prepare(context);
+        var status = luau_host_global_push(l);
+        LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
     }
 
     void SandboxPushValue(int index, string operation)
     {
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_pushvalue(l, index);
+        var status = luau_host_push_value(l, index);
         LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
     }
 
@@ -242,7 +252,7 @@ public unsafe partial class LuauState
     {
         var result = 0;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_getmetatable(l, index, &result);
+        var status = luau_host_metatable_get(l, index, &result);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "inspect a sandbox metatable");
         return result != 0;
     }
@@ -252,20 +262,32 @@ public unsafe partial class LuauState
         fixed (byte* value = nullTerminatedValue)
         {
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_pushlstring(
+            var status = luau_host_push_string(
                 l,
                 value,
-                checked((nuint)(nullTerminatedValue.Length - 1)));
+                checked((ulong)(nullTerminatedValue.Length - 1)));
             LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
         }
     }
 
     void SandboxSetField(int index, ReadOnlySpan<byte> key, string operation)
     {
+        var tableIndex = luau_host_stack_abs_index(l, index);
         fixed (byte* pointer = key)
         {
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_setfield(l, index, pointer);
+            var pushStatus = luau_host_push_string(
+                l,
+                pointer,
+                checked((ulong)(key.Length - 1)));
+            LuauNativeProtection.ThrowIfFailed(this, l, pushStatus, operation);
+
+            LuauNativeProtection.Prepare(context);
+            var insertStatus = luau_host_stack_insert(l, -2);
+            LuauNativeProtection.ThrowIfFailed(this, l, insertStatus, operation);
+
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_table_set(l, tableIndex);
             LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
         }
     }

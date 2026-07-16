@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -35,7 +35,7 @@ public unsafe static class LuauCompiler
         {
             fixed (byte* ptr = source)
             {
-                var nativeOptions = CreateHostCompileOptions((options ?? LuauCompileOptions.Default).options);
+                var nativeOptions = CreateHostCompileOptions(options ?? LuauCompileOptions.Default);
                 var status = luau_host_compile(
                     ptr,
                     checked((ulong)source.Length),
@@ -81,7 +81,7 @@ public unsafe static class LuauCompiler
         {
             fixed (byte* ptr = source)
             {
-                var nativeOptions = CreateHostCompileOptions((options ?? LuauCompileOptions.Default).options);
+                var nativeOptions = CreateHostCompileOptions(options ?? LuauCompileOptions.Default);
                 var status = luau_host_compile(
                     ptr,
                     checked((ulong)source.Length),
@@ -102,31 +102,16 @@ public unsafe static class LuauCompiler
         }
     }
 
-    static LuauHostCompileOptions CreateHostCompileOptions(lua_CompileOptions options)
+    static LuauHostCompileOptions CreateHostCompileOptions(LuauCompileOptions options)
     {
-        if (options.vectorLib != null ||
-            options.vectorCtor != null ||
-            options.vectorType != null ||
-            options.mutableGlobals != null ||
-            options.userdataTypes != null ||
-            options.librariesWithKnownMembers != null ||
-            options.libraryMemberTypeCb != null ||
-            options.libraryMemberConstantCb != null ||
-            options.disabledBuiltins != null)
-        {
-            throw new PlatformNotSupportedException(
-                "The Luau host compile ABI does not support vector-library names, mutable globals, " +
-                "userdata types, known-library members, library-member callbacks, or disabled builtins.");
-        }
-
         return new LuauHostCompileOptions
         {
             struct_size = checked((uint)sizeof(LuauHostCompileOptions)),
             version = 1,
-            optimization_level = options.optimizationLevel,
-            debug_level = options.debugLevel,
-            type_info_level = options.typeInfoLevel,
-            coverage_level = options.coverageLevel,
+            optimization_level = options.OptimizationLevel,
+            debug_level = options.DebugLevel,
+            type_info_level = options.TypeInfoLevel,
+            coverage_level = options.CoverageLevel,
         };
     }
 

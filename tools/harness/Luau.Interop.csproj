@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Luau.Interop</AssemblyName>
+    <RootNamespace>Luau.Internal.Interop</RootNamespace>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\AssemblyInfo.cs"
+             Link="AssemblyInfo.cs" />
+    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\NativeTypes.cs"
+             Link="NativeTypes.cs" />
+    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\NativeMethods.cs"
+             Link="NativeMethods.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\native\luau-host\out\install\windows-x64\luau_host.dll"
+          Link="luau_host.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('..\..\native\luau-host\out\install\windows-x64\luau_host.dll')" />
+    <None Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\Plugins\win-x64\luau_host.dll"
+          Link="luau_host.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Condition="!Exists('..\..\native\luau-host\out\install\windows-x64\luau_host.dll')" />
+  </ItemGroup>
+
+</Project>

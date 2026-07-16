@@ -48,12 +48,7 @@ public sealed class HighLevelProtectedRegressionTests
         });
         state["pushHugeString"] = state.CreateFunction(
             "pushHugeString",
-            callbackState =>
-            {
-                callbackState.PushString(new string('x', 2_097_152));
-                return 1;
-            });
-        var originalTop = state.GetTop();
+            context => context.Return(new string('x', 2_097_152)));
 
         var exception = Assert.Throws<LuauManagedCallbackException>(
             () => state.DoString("return pushHugeString()", chunkName));
@@ -63,12 +58,9 @@ public sealed class HighLevelProtectedRegressionTests
         var memoryException = Assert.IsType<LuauMemoryLimitException>(exception.InnerException);
         Assert.Equal(memoryLimit, memoryException.LimitBytes);
         Assert.True(memoryException.AttemptedBytes > memoryLimit);
-        Assert.Equal(originalTop, state.GetTop());
-
         var results = state.DoString("return 40 + 2", "@callbacks/recovered.luau");
         Assert.Single(results);
         Assert.Equal(42, results[0].Read<int>());
-        Assert.Equal(originalTop, state.GetTop());
     }
 
     [Fact]
@@ -76,7 +68,7 @@ public sealed class HighLevelProtectedRegressionTests
     {
         const string expected = "héllø 🐺 東京";
         using var state = LuauState.Create();
-        state.OpenLibraries();
+        state.OpenBaseLibrary();
         using var value = Assert.Single(state.DoString(
             $$"""
             return setmetatable({}, {
@@ -86,18 +78,15 @@ public sealed class HighLevelProtectedRegressionTests
             })
             """,
             "@display/utf8.luau")).Read<LuauTable>();
-        var originalTop = state.GetTop();
+        state["value"] = value;
+        state["display"] = state.CreateFunction("display", context =>
+        {
+            var text = context.ToDisplayString(0, 1_024, out var wasTruncated);
+            Assert.False(wasTruncated);
+            context.Return(text);
+        });
 
-        state.PushTable(value);
-        try
-        {
-            Assert.Equal(expected, state.ToDisplayString(-1));
-            Assert.Equal(originalTop + 1, state.GetTop());
-        }
-        finally
-        {
-            state.SetTop(originalTop);
-        }
+        Assert.Equal(expected, Assert.Single(state.DoString("return display(value)")).Read<string>());
     }
 
     [Fact]
@@ -105,7 +94,8 @@ public sealed class HighLevelProtectedRegressionTests
     {
         const string expected = "A🐺東京";
         using var state = LuauState.Create();
-        state.OpenLibraries();
+        state.OpenBaseLibrary();
+        state.OpenStringLibrary();
         using var value = Assert.Single(state.DoString(
             $$"""
             return setmetatable({}, {
@@ -115,33 +105,31 @@ public sealed class HighLevelProtectedRegressionTests
             })
             """,
             "@display/bounded-utf8.luau")).Read<LuauTable>();
-        var originalTop = state.GetTop();
-
-        state.PushTable(value);
-        try
+        state["value"] = value;
+        state["display"] = state.CreateFunction("display", context =>
         {
-            var bounded = state.ToDisplayString(-1, 5, out var wasTruncated);
+            var bounded = context.ToDisplayString(0, context.Read<int>(1), out var wasTruncated);
+            context.Return(bounded);
+            context.Return(wasTruncated);
+        });
 
-            Assert.Equal("A🐺", bounded);
-            Assert.True(wasTruncated);
-            Assert.Equal(5, Encoding.UTF8.GetByteCount(bounded));
-            Assert.Equal(originalTop + 1, state.GetTop());
+        var results = state.DoString(
+            "local a, at = display(value, 5); local b, bt = display(value, 0); return a, at, b, bt");
+        var bounded = results[0].Read<string>();
+        var wasTruncated = results[1].Read<bool>();
 
-            Assert.Equal(string.Empty, state.ToDisplayString(-1, 0, out wasTruncated));
-            Assert.True(wasTruncated);
-            Assert.Equal(originalTop + 1, state.GetTop());
-        }
-        finally
-        {
-            state.SetTop(originalTop);
-        }
+        Assert.Equal("A🐺", bounded);
+        Assert.True(wasTruncated);
+        Assert.Equal(5, Encoding.UTF8.GetByteCount(bounded));
+        Assert.Equal(string.Empty, results[2].Read<string>());
+        Assert.True(results[3].Read<bool>());
     }
 
     [Fact]
     public void ThrowingDisplayMetamethodRestoresStackAndLeavesVmReusable()
     {
         using var state = LuauState.Create();
-        state.OpenLibraries();
+        state.OpenBaseLibrary();
         using var value = Assert.Single(state.DoString(
             """
             return setmetatable({}, {
@@ -151,24 +139,17 @@ public sealed class HighLevelProtectedRegressionTests
             })
             """,
             "@display/throwing.luau")).Read<LuauTable>();
-        var originalTop = state.GetTop();
+        state["value"] = value;
+        state["display"] = state.CreateFunction("display", context =>
+            context.Return(context.ToDisplayString(0, 1_024, out _)));
 
-        state.PushTable(value);
-        try
-        {
-            var exception = Assert.Throws<LuauException>(() => state.ToDisplayString(-1));
-            Assert.Contains("display boom", exception.Message, StringComparison.Ordinal);
-            Assert.Equal(originalTop + 1, state.GetTop());
-        }
-        finally
-        {
-            state.SetTop(originalTop);
-        }
+        var exception = Assert.Throws<LuauManagedCallbackException>(() =>
+            state.DoString("return display(value)"));
+        Assert.Contains("display boom", exception.InnerException!.Message, StringComparison.Ordinal);
 
         var results = state.DoString("return 21 * 2", "@display/recovered.luau");
         Assert.Single(results);
         Assert.Equal(42, results[0].Read<int>());
-        Assert.Equal(originalTop, state.GetTop());
     }
 
     [Fact]
@@ -187,7 +168,7 @@ public sealed class HighLevelProtectedRegressionTests
     }
 
     [Fact]
-    public void PublicPushNilGrowsTheNativeStackSafely()
+    public void InternalPushNilGrowsTheNativeStackSafely()
     {
         using var state = LuauState.Create();
 
@@ -204,7 +185,7 @@ public sealed class HighLevelProtectedRegressionTests
     }
 
     [Fact]
-    public void PublicSetTopQuotaFailurePreservesStackAndTypedDiagnostics()
+    public void InternalSetTopQuotaFailurePreservesStackAndTypedDiagnostics()
     {
         using var state = LuauState.Create(new LuauStateOptions
         {
@@ -223,7 +204,7 @@ public sealed class HighLevelProtectedRegressionTests
     }
 
     [Fact]
-    public void PublicXMoveQuotaFailurePreservesBothStacksAndTypedDiagnostics()
+    public void InternalXMoveQuotaFailurePreservesBothStacksAndTypedDiagnostics()
     {
         using var root = LuauState.Create(new LuauStateOptions
         {

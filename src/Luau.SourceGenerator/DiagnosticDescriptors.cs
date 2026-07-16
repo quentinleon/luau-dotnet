@@ -65,11 +65,18 @@ public static class DiagnosticDescriptors
         3,
         "LuauLibrary type must not be abstract");
 
-    public static DiagnosticDescriptor DefinedInOtherProject { get; } = Create(
-        10,
-        "Cannot register type/method in another project outside the SourceGenerator referenced project.");
+    public static DiagnosticDescriptor DuplicateMemberName { get; } = Create(
+        4,
+        "Duplicate Luau member name",
+        "Luau member name '{0}' is used more than once in the same host library.");
 
-    public static DiagnosticDescriptor ArgumentMustBeMethodGroupOrLambda { get; } = Create(
-        11,
-        "The argument to CreateFunction must be a lambda expression or a method group.");
+    public static DiagnosticDescriptor UnsupportedSignature { get; } = Create(
+        5,
+        "Unsupported Luau host member signature",
+        "Luau host member '{0}' is unsupported: {1}");
+
+    public static DiagnosticDescriptor InvalidName { get; } = Create(
+        6,
+        "Invalid Luau host name",
+        "Luau {0} name must not be null or contain a NUL character.");
 }

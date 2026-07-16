@@ -156,7 +156,7 @@ $exportsPath = Join-Path $hostRoot "exports/luau_host.exports"
 $cmakePath = Join-Path $hostRoot "CMakeLists.txt"
 $luauHeaderPath = Join-Path $repositoryRoot "luau/VM/include/lua.h"
 $managedProtectionPath = Join-Path $repositoryRoot "src/Luau/Internal/LuauNativeProtection.cs"
-$managedTypesPath = Join-Path $repositoryRoot "src/Luau.Native/LuauHost.NativeTypes.cs"
+$managedTypesPath = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/Interop/NativeTypes.cs"
 
 foreach ($requiredPath in @(
     $headerPath,

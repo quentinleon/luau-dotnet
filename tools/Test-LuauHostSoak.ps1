@@ -41,7 +41,7 @@ function Invoke-CheckedCommand {
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $project = Join-Path $repositoryRoot "tests/Luau.HostSoak/Luau.HostSoak.csproj"
-$plugin = Join-Path $repositoryRoot "src/Luau.Native/runtimes/win-x64/native/luau_host.dll"
+$plugin = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/Interop/Plugins/win-x64/luau_host.dll"
 if (!(Test-Path -LiteralPath $plugin -PathType Leaf)) {
     throw "The Windows luau_host plugin was not found at $plugin. Build the windows-x64 CMake preset and install the artifact first."
 }

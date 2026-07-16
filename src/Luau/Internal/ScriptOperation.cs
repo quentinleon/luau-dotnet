@@ -10,6 +10,13 @@ internal enum ScriptYieldReason
     HardStop,
 }
 
+internal enum ScriptOperationMode
+{
+    TopLevelResume,
+    NestedProtectedCall,
+    DirectHostOperation,
+}
+
 internal enum AsyncCallbackPhase
 {
     None,
@@ -53,6 +60,7 @@ internal sealed class ScriptOperation : IDisposable
         LuauExecutionOptions options,
         CancellationToken cancellationToken,
         bool isAsync,
+        ScriptOperationMode mode,
         ScriptOperation? previousAmbient)
     {
         Context = context;
@@ -60,6 +68,7 @@ internal sealed class ScriptOperation : IDisposable
         ChunkName = string.IsNullOrEmpty(chunkName) ? null : chunkName;
         Options = options;
         IsAsync = isAsync;
+        Mode = mode;
         ThreadPointer = (IntPtr)state.PointerUnsafe;
         FromPointer = state.From == null ? IntPtr.Zero : (IntPtr)state.From.PointerUnsafe;
         callerCancellationToken = cancellationToken;
@@ -78,6 +87,7 @@ internal sealed class ScriptOperation : IDisposable
     internal string? ChunkName { get; }
     internal LuauExecutionOptions Options { get; }
     internal bool IsAsync { get; }
+    internal ScriptOperationMode Mode { get; }
     internal IntPtr ThreadPointer { get; }
     internal IntPtr FromPointer { get; }
     internal IntPtr CallbackFailureToken { get; }

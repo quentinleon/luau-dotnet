@@ -1,5 +1,3 @@
-using Luau.Native;
-
 namespace Luau.Tests;
 
 public sealed class IntegerValueTests
@@ -13,15 +11,11 @@ public sealed class IntegerValueTests
     public void SignedIntegerBoundariesRoundTripLosslessly(long expected)
     {
         using var state = LuauState.Create();
-        var originalTop = state.GetTop();
+        state["value"] = expected;
 
-        state.PushInteger(expected);
-
-        Assert.Equal(LuauType.Integer, state.GetLuauType(-1));
-        var actual = state.Pop();
+        var actual = state["value"];
         Assert.Equal(LuauType.Integer, actual.Type);
         Assert.Equal(expected, actual.Read<long>());
-        Assert.Equal(originalTop, state.GetTop());
     }
 
     [Fact]
@@ -135,26 +129,9 @@ public sealed class IntegerValueTests
         Assert.Equal(42, result.Read<int>());
     }
 
-    [Fact]
-    public void StackDoubleConversionRequiresAnExplicitLossyCall()
-    {
-        const long value = 9_007_199_254_740_993;
-        using var state = LuauState.Create();
-        var originalTop = state.GetTop();
-        state.PushInteger(value);
-
-        Assert.Throws<InvalidOperationException>(() => state.ToNumber(-1));
-        Assert.Equal((double)value, state.ToNumberLossy(-1));
-        Assert.Equal(value, state.ToInteger64(-1));
-        Assert.Equal(originalTop + 1, state.GetTop());
-
-        state.Pop(1);
-        Assert.Equal(originalTop, state.GetTop());
-    }
-
     [Theory]
-    [InlineData((int)lua_Type.LUA_TCLASS, "class")]
-    [InlineData((int)lua_Type.LUA_TOBJECT, "object")]
+    [InlineData(12, "class")]
+    [InlineData(13, "object")]
     public void UnsupportedUpstreamObjectKindsFailDeliberately(
         int nativeType,
         string expectedKind)
@@ -164,7 +141,7 @@ public sealed class IntegerValueTests
         var originalTop = state.GetTop();
 
         var exception = Assert.Throws<LuauUnsupportedValueException>(
-            () => state.ToValueForNativeTypeFixture(-1, (lua_Type)nativeType));
+            () => state.ToValueForNativeTypeFixture(-1, nativeType));
 
         Assert.Equal(expectedKind, exception.ValueKind);
         Assert.Contains(expectedKind, exception.Message, StringComparison.Ordinal);

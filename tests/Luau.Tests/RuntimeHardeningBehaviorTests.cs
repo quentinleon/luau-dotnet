@@ -1,5 +1,3 @@
-#pragma warning disable CS0618 // Deliberate native-GC coverage for the transitional pointer escape hatch.
-
 using System.Diagnostics;
 
 namespace Luau.Tests;
@@ -18,23 +16,21 @@ public sealed class RuntimeHardeningBehaviorTests
         var releaseFirst = NewSignal();
         var releaseSecond = NewSignal();
 
-        firstRoot["waitForHost"] = firstRoot.CreateFunction(
+        firstRoot["waitForHost"] = firstRoot.CreateAsyncFunction(
             "waitForHost",
-            async (state, _) =>
+            async context =>
             {
                 firstEntered.TrySetResult();
                 await releaseFirst.Task.ConfigureAwait(false);
-                state.PushInteger(11);
-                return 1;
+                context.Return(11);
             });
-        secondRoot["waitForHost"] = secondRoot.CreateFunction(
+        secondRoot["waitForHost"] = secondRoot.CreateAsyncFunction(
             "waitForHost",
-            async (state, _) =>
+            async context =>
             {
                 secondEntered.TrySetResult();
                 await releaseSecond.Task.ConfigureAwait(false);
-                state.PushInteger(22);
-                return 1;
+                context.Return(22);
             });
 
         var firstExecution = firstRoot
@@ -113,14 +109,13 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         using var root = LuauState.Create();
         using var child = root.CreateThread();
-        child["inspect"] = child.CreateFunction(
+        child["inspect"] = child.CreateAsyncFunction(
             "inspect",
-            async (callbackState, _) =>
+            async context =>
             {
-                using var table = callbackState.ToTable(1);
+                using var table = context.Read<LuauTable>(0);
                 await Task.Yield();
-                callbackState.PushInteger(table["value"].Read<int>() + 1);
-                return 1;
+                context.Return(table["value"].Read<int>() + 1);
             });
 
         var results = await child.DoStringAsync(
@@ -139,13 +134,12 @@ public sealed class RuntimeHardeningBehaviorTests
         var callbackEntered = NewSignal();
         var allowLateCompletion = NewSignal();
 
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             "pending",
-            async (_, _) =>
+            async _ =>
             {
                 callbackEntered.TrySetResult();
                 await allowLateCompletion.Task.ConfigureAwait(false);
-                return 0;
             });
 
         var execution = state.DoStringAsync(
@@ -184,14 +178,13 @@ public sealed class RuntimeHardeningBehaviorTests
         var lateAccessFailure = new TaskCompletionSource<Exception?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             "pending",
-            async (callbackState, _) =>
+            async context =>
             {
                 callbackEntered.TrySetResult();
                 await allowLateCompletion.Task.ConfigureAwait(false);
-                lateAccessFailure.TrySetResult(Record.Exception(() => callbackState.PushInteger(1)));
-                return 0;
+                lateAccessFailure.TrySetResult(Record.Exception(() => context.Return(1)));
             });
 
         var execution = state.DoStringAsync(
@@ -238,9 +231,9 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         using var state = LuauState.Create();
         var cause = new ApplicationException("async callback exploded");
-        state["explodeAsync"] = state.CreateFunction(
+        state["explodeAsync"] = state.CreateAsyncFunction(
             "explodeAsync",
-            async (_, _) =>
+            async _ =>
             {
                 await Task.Yield();
                 throw cause;
@@ -278,9 +271,9 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         using var state = LuauState.Create();
         state.OpenBaseLibrary();
-        state["explode"] = state.CreateFunction(
+        state["explode"] = state.CreateAsyncFunction(
             "explode",
-            async (_, _) =>
+            async _ =>
             {
                 await Task.Yield();
                 throw new InvalidOperationException("caught async");
@@ -315,16 +308,12 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         using var state = LuauState.Create();
         state.OpenBaseLibrary();
-        state.SetTop(0);
-        var originalTop = state.GetTop();
-
         var exception = Assert.Throws<LuauException>(() => state.DoString(
             "error({ code = 42 })",
             "@errors/non-string.luau"));
 
         Assert.Contains("non-string error value", exception.Message);
         Assert.Equal("@errors/non-string.luau", exception.ChunkName);
-        Assert.Equal(originalTop, state.GetTop());
         Assert.Equal(6, state.DoString("return 2 * 3").Single().Read<int>());
     }
 
@@ -368,8 +357,6 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         using var state = LuauState.Create();
         state.OpenStringLibrary();
-        state.SetTop(0);
-
         var exception = Assert.Throws<LuauExecutionBudgetException>(() => state.DoString(
             "return string.match(string.rep('a', 100000), '^.*b$')",
             "@budgets/native-pattern.luau",
@@ -393,7 +380,6 @@ public sealed class RuntimeHardeningBehaviorTests
         Assert.Equal("@results/limited.luau", exception.ChunkName);
         Assert.Equal(3, exception.ActualCount);
         Assert.Equal(2, exception.Limit);
-        Assert.Equal(0, state.GetTop());
         Assert.Equal(7, Assert.Single(state.DoString("return 7")).Read<int>());
     }
 
@@ -408,7 +394,6 @@ public sealed class RuntimeHardeningBehaviorTests
             destination,
             "@results/short-destination.luau"));
 
-        Assert.Equal(0, state.GetTop());
         Assert.Equal(8, Assert.Single(state.DoString("return 8")).Read<int>());
     }
 
@@ -416,12 +401,11 @@ public sealed class RuntimeHardeningBehaviorTests
     public async Task PerCallRunnerReuseRemainsCleanAcrossManyAsyncExecutions()
     {
         using var state = LuauState.Create();
-        state["tick"] = state.CreateFunction(
+        state["tick"] = state.CreateAsyncFunction(
             "tick",
-            async (_, _) =>
+            async _ =>
             {
                 await Task.Yield();
-                return 0;
             });
 
         for (var i = 0; i < 200; i++)
@@ -435,7 +419,7 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
-    public unsafe void DisposingManagedCallbackWrappersKeepsNativeClosuresAliveUntilLuauGc()
+    public void DisposingManagedCallbackWrappersKeepsNativeClosuresAliveUntilLuauGc()
     {
         using var state = LuauState.Create();
 
@@ -443,11 +427,7 @@ public sealed class RuntimeHardeningBehaviorTests
         {
             using var callback = state.CreateFunction(
                 $"callback-{i}",
-                callbackState =>
-                {
-                    callbackState.PushInteger(0);
-                    return 1;
-                });
+                context => context.Return(0));
             state["callback"] = callback;
         }
 
@@ -455,21 +435,21 @@ public sealed class RuntimeHardeningBehaviorTests
         Assert.Equal(0, Assert.Single(state.DoString("return callback()", "@callbacks/retained.luau")).Read<int>());
 
         state["callback"] = LuauValue.Nil;
-        Luau.Native.NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
+        state.CollectGarbage();
         ForceManagedFinalizers();
 
         Assert.Equal(0, state.Context.ManagedCallbackCount);
     }
 
     [Fact]
-    public unsafe void NativeGcReleasesUnreachableManagedCallbackRegistrations()
+    public void NativeGcReleasesUnreachableManagedCallbackRegistrations()
     {
         using var state = LuauState.Create();
 
         PushTransientCallbacks(state, 500);
 
         state["callback"] = LuauValue.Nil;
-        Luau.Native.NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
+        state.CollectGarbage();
         ForceManagedFinalizers();
 
         Assert.Equal(0, state.Context.ManagedCallbackCount);
@@ -477,13 +457,13 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
-    public unsafe void CollectingOneOfTwoNativeClosuresKeepsSharedCallbackAlive()
+    public void CollectingOneOfTwoNativeClosuresKeepsSharedCallbackAlive()
     {
         using var state = LuauState.Create();
         var wrapper = PushCallbackIntoTwoGlobals(state);
 
         state["first"] = LuauValue.Nil;
-        Luau.Native.NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
+        state.CollectGarbage();
         ForceManagedFinalizers();
 
         Assert.False(wrapper.IsAlive);
@@ -491,7 +471,7 @@ public sealed class RuntimeHardeningBehaviorTests
         Assert.Equal(42, Assert.Single(state.DoString("return second()" )).Read<int>());
 
         state["second"] = LuauValue.Nil;
-        Luau.Native.NativeMethods.lua_gc(state.AsPointer(), 2, 0); // LUA_GCCOLLECT
+        state.CollectGarbage();
         Assert.Equal(0, state.Context.ManagedCallbackCount);
     }
 
@@ -512,12 +492,12 @@ public sealed class RuntimeHardeningBehaviorTests
     public async Task AsyncCallbackCanUseStateImmediatelyAfterNativeYieldCompletes()
     {
         using var state = LuauState.Create();
-        state["immediate"] = state.CreateFunction(
+        state["immediate"] = state.CreateAsyncFunction(
             "immediate",
-            (callbackState, _) =>
+            context =>
             {
-                callbackState.PushInteger(2);
-                return ValueTask.FromResult(1);
+                context.Return(2);
+                return ValueTask.CompletedTask;
             });
 
         for (var i = 0; i < 500; i++)
@@ -535,13 +515,12 @@ public sealed class RuntimeHardeningBehaviorTests
         using var root = LuauState.Create();
         var child = root.CreateThread();
         var entered = NewSignal();
-        child["wait"] = child.CreateFunction(
+        child["wait"] = child.CreateAsyncFunction(
             "wait",
-            async (_, cancellationToken) =>
+            async context =>
             {
                 entered.TrySetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-                return 0;
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken).ConfigureAwait(false);
             });
 
         var execution = child.DoStringAsync("wait()", "@callbacks/child-dispose.luau").AsTask();
@@ -558,13 +537,12 @@ public sealed class RuntimeHardeningBehaviorTests
         using var state = LuauState.Create();
         var callbackEntered = NewSignal();
         var releaseCallback = NewSignal();
-        state["pending"] = state.CreateFunction(
+        state["pending"] = state.CreateAsyncFunction(
             "pending",
-            async (_, _) =>
+            async _ =>
             {
                 callbackEntered.TrySetResult();
                 await releaseCallback.Task.ConfigureAwait(false);
-                return 0;
             });
 
         var running = state.DoStringAsync(
@@ -595,10 +573,9 @@ public sealed class RuntimeHardeningBehaviorTests
         using var state = LuauState.Create();
         state["reenter"] = state.CreateFunction(
             "reenter",
-            callbackState =>
+            context =>
             {
-                callbackState.DoString("return 99", "@serialization/nested.luau");
-                return 0;
+                context.State.DoString("return 99", "@serialization/nested.luau");
             });
 
         var exception = Assert.Throws<LuauManagedCallbackException>(
@@ -621,11 +598,7 @@ public sealed class RuntimeHardeningBehaviorTests
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     static WeakReference PushCallbackIntoTwoGlobals(LuauState state)
     {
-        var callback = state.CreateFunction("shared", callbackState =>
-        {
-            callbackState.PushInteger(42);
-            return 1;
-        });
+        var callback = state.CreateFunction("shared", context => context.Return(42));
         state["first"] = callback;
         state["second"] = callback;
         return new WeakReference(callback);
@@ -634,7 +607,7 @@ public sealed class RuntimeHardeningBehaviorTests
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     static WeakReference CreateAbandonedCallback(LuauState state)
     {
-        return new WeakReference(state.CreateFunction("abandoned", _ => 0));
+        return new WeakReference(state.CreateFunction("abandoned", _ => { }));
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -642,7 +615,7 @@ public sealed class RuntimeHardeningBehaviorTests
     {
         for (var i = 0; i < count; i++)
         {
-            state["callback"] = state.CreateFunction($"transient-{i}", _ => 0);
+            state["callback"] = state.CreateFunction($"transient-{i}", _ => { });
         }
     }
 

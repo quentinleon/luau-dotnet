@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
-using static Luau.Native.NativeMethods;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -34,15 +34,15 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
             using var access = AcquireReference();
             var state = access.State;
             var pointer = state.PointerUnsafe;
-            var originalTop = lua_gettop(pointer);
+            var originalTop = luau_host_stack_get_top(pointer);
             try
             {
                 LuauReferenceHelper.PushReference(state, access.Reference, "read Luau userdata");
-                return lua_objlen(pointer, -1);
+                return luau_host_object_length(pointer, -1);
             }
             finally
             {
-                lua_settop(pointer, originalTop);
+                state.SetTop(originalTop);
             }
         }
     }
@@ -66,12 +66,12 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
 #pragma warning disable CS8500
         var pointer = state.PointerUnsafe;
-        var originalTop = lua_gettop(pointer);
+        var originalTop = luau_host_stack_get_top(pointer);
 
         try
         {
             LuauReferenceHelper.PushReference(state, access.Reference, "read Luau userdata");
-            var size = lua_objlen(pointer, -1);
+            var size = luau_host_object_length(pointer, -1);
 
             if (size != sizeof(T))
             {
@@ -79,13 +79,13 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
                 return false;
             }
 
-            var ptr = (T*)lua_touserdata(pointer, -1);
+            var ptr = (T*)luau_host_to_userdata(pointer, -1);
             result = *ptr;
             return true;
         }
         finally
         {
-            lua_settop(pointer, originalTop);
+            state.SetTop(originalTop);
         }
 #pragma warning restore CS8500
 
@@ -95,13 +95,6 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
     {
         if (TryRead<T>(out var result)) return result;
         throw new InvalidOperationException($"Cannot convert {typeof(T)} to {typeof(T).Name}");
-    }
-
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public void* AsPointer()
-    {
-        using var access = AcquireReference();
-        return LuauReferenceHelper.GetRefPointer(access.State, access.Reference);
     }
 
     public override string ToString()

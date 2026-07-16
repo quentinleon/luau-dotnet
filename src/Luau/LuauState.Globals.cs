@@ -1,6 +1,6 @@
 using System.Buffers;
 using System.Text;
-using static Luau.Native.NativeMethods;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -17,11 +17,8 @@ public unsafe partial class LuauState
             }
 
             using var access = EnterNativeAccess();
-            using var hostOperation = BeginHostOperationIfNeeded();
-            var originalTop = lua_gettop(l);
+            using var hostOperation = new LuauDirectHostOperationScope(this);
             var buffer = ArrayPool<byte>.Shared.Rent(checked(key.Length + 1));
-            var restoreStack = true;
-            var resetAttempted = false;
             try
             {
                 key.CopyTo(buffer);
@@ -30,42 +27,17 @@ public unsafe partial class LuauState
                 {
                     var ignoredType = 0;
                     LuauNativeProtection.Prepare(context);
-                    var status = luau_ffi_protected_getfield(
-                        l,
-                        LUA_GLOBALSINDEX,
-                        s,
-                        &ignoredType);
+                    var status = luau_host_global_get(l, s, &ignoredType);
                     LuauNativeProtection.ThrowIfFailed(this, l, status, "read a Luau global");
                 }
 
-                if (hostOperation.IsOwnedOperationSuspended)
-                {
-                    restoreStack = false;
-                    resetAttempted = true;
-                    hostOperation.AbortSuspendedOperation();
-                    throw new LuauException("A direct host global read cannot yield or suspend the Luau thread.");
-                }
-
-                return Pop();
-            }
-            catch
-            {
-                if (!resetAttempted && hostOperation.IsOwnedOperationSuspended)
-                {
-                    restoreStack = false;
-                    resetAttempted = true;
-                    hostOperation.AbortSuspendedOperation();
-                }
-
-                throw;
+                var result = Pop();
+                hostOperation.Complete(
+                    "A direct host global read cannot yield or suspend the Luau thread.");
+                return result;
             }
             finally
             {
-                if (restoreStack)
-                {
-                    lua_settop(l, originalTop);
-                }
-
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         }
@@ -85,10 +57,7 @@ public unsafe partial class LuauState
 
             var buffer = ArrayPool<byte>.Shared.Rent(checked(key.Length + 1));
             using var access = EnterNativeAccess();
-            using var hostOperation = BeginHostOperationIfNeeded();
-            var originalTop = lua_gettop(l);
-            var restoreStack = true;
-            var resetAttempted = false;
+            using var hostOperation = new LuauDirectHostOperationScope(this);
             try
             {
                 key.CopyTo(buffer);
@@ -97,36 +66,15 @@ public unsafe partial class LuauState
                 fixed (byte* s = buffer)
                 {
                     LuauNativeProtection.Prepare(context);
-                    var status = luau_ffi_protected_setfield(l, LUA_GLOBALSINDEX, s);
+                    var status = luau_host_global_set(l, s);
                     LuauNativeProtection.ThrowIfFailed(this, l, status, "write a Luau global");
                 }
 
-                if (hostOperation.IsOwnedOperationSuspended)
-                {
-                    restoreStack = false;
-                    resetAttempted = true;
-                    hostOperation.AbortSuspendedOperation();
-                    throw new LuauException("A direct host global write cannot yield or suspend the Luau thread.");
-                }
-            }
-            catch
-            {
-                if (!resetAttempted && hostOperation.IsOwnedOperationSuspended)
-                {
-                    restoreStack = false;
-                    resetAttempted = true;
-                    hostOperation.AbortSuspendedOperation();
-                }
-
-                throw;
+                hostOperation.Complete(
+                    "A direct host global write cannot yield or suspend the Luau thread.");
             }
             finally
             {
-                if (restoreStack)
-                {
-                    lua_settop(l, originalTop);
-                }
-
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         }

@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Luau.Native/Luau.Native.csproj" />
     <Project Path="src/Luau.SourceGenerator/Luau.SourceGenerator.csproj" />
     <Project Path="src/Luau/Luau.csproj" />
   </Folder>
@@ -9,5 +8,8 @@
     <Project Path="tests/Luau.HostSoak/Luau.HostSoak.csproj" />
     <Project Path="tests/Luau.SourceGenerator.Tests/Luau.SourceGenerator.Tests.csproj" />
     <Project Path="tests/Luau.Tests/Luau.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/harness/Luau.Interop.csproj" />
   </Folder>
 </Solution>

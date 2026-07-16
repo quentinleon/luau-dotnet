@@ -1,12 +1,9 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
-
-[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-internal unsafe delegate int LuauInterrupt(lua_State* state, int gcState);
 
 internal enum LuauAllocatorFailure
 {
@@ -21,7 +18,7 @@ internal sealed unsafe class LuauVmContext
     static readonly ConcurrentDictionary<IntPtr, WeakReference<LuauVmContext>> globalContexts = new();
     static readonly ConcurrentDictionary<int, WeakReference<LuauVmContext>> managedCallbackOwners = new();
     static readonly AsyncLocal<ScriptOperation?> ambientOperation = new();
-    static readonly LuauInterrupt interruptCallback = Interrupt;
+    static readonly LuauHostInterruptPoll interruptCallback = Interrupt;
     static readonly IntPtr interruptPointer = Marshal.GetFunctionPointerForDelegate(interruptCallback);
     static int nextGlobalManagedCallbackId;
 
@@ -47,7 +44,7 @@ internal sealed unsafe class LuauVmContext
     LuauHostMemoryInfo finalMemoryInfo;
     bool hasFinalMemoryInfo;
 
-    internal LuauVmContext(lua_State* main, LuauStateOptions options)
+    internal LuauVmContext(LuauHostState* main, LuauStateOptions options)
     {
         mainPointer = (IntPtr)main;
         Options = options;
@@ -146,7 +143,7 @@ internal sealed unsafe class LuauVmContext
                 return;
             }
 
-            var status = luau_host_memory_reset_failure((lua_State*)mainPointer);
+            var status = luau_host_memory_reset_failure((LuauHostState*)mainPointer);
             if (status != LuauHostStatus.Ok)
             {
                 throw new LuauException(
@@ -164,7 +161,7 @@ internal sealed unsafe class LuauVmContext
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
             }
 
-            var status = luau_host_memory_arm_quota_failure((lua_State*)mainPointer);
+            var status = luau_host_memory_arm_quota_failure((LuauHostState*)mainPointer);
             if (status == LuauHostStatus.Unsupported)
             {
                 throw new InvalidOperationException(
@@ -189,7 +186,7 @@ internal sealed unsafe class LuauVmContext
         {
             struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
         };
-        var status = luau_host_memory_get((lua_State*)mainPointer, &info);
+        var status = luau_host_memory_get((LuauHostState*)mainPointer, &info);
         if (status != LuauHostStatus.Ok)
         {
             throw new LuauException(
@@ -209,7 +206,8 @@ internal sealed unsafe class LuauVmContext
         string? chunkName,
         LuauExecutionOptions? options,
         CancellationToken cancellationToken,
-        bool isAsync)
+        bool isAsync,
+        ScriptOperationMode mode)
     {
         var effectiveOptions = options ?? Options.DefaultExecutionOptions;
         if (effectiveOptions.ContinuationScheduler is { } scheduler && !scheduler.CheckAccess())
@@ -240,11 +238,18 @@ internal sealed unsafe class LuauVmContext
                     effectiveOptions,
                     cancellationToken,
                     isAsync,
+                    mode,
                     ambientOperation.Value);
 
-                if (luau_ffi_protected_install_interrupt(
-                        (lua_State*)mainPointer,
-                        interruptPointer.ToPointer()) == 0)
+                var callbacks = new LuauHostCallbackTable
+                {
+                    struct_size = (uint)sizeof(LuauHostCallbackTable),
+                    version = 1,
+                    interrupt_poll = interruptPointer,
+                };
+                if (luau_host_interrupt_install(
+                        (LuauHostState*)mainPointer,
+                        &callbacks) != LuauHostStatus.Ok)
                 {
                     operation.Dispose();
                     throw new PlatformNotSupportedException(
@@ -274,7 +279,7 @@ internal sealed unsafe class LuauVmContext
 
                 if (mainPointer != IntPtr.Zero)
                 {
-                    luau_ffi_protected_uninstall_interrupt((lua_State*)mainPointer);
+                    luau_host_interrupt_uninstall((LuauHostState*)mainPointer);
                 }
 
                 activeOperation = null;
@@ -287,7 +292,7 @@ internal sealed unsafe class LuauVmContext
                 {
                     foreach (var reference in deferredReferences)
                     {
-                        lua_unref((lua_State*)mainPointer, reference);
+                        luau_host_reference_release((LuauHostState*)mainPointer, reference);
                         Interlocked.Increment(ref releasedReferenceCount);
                     }
                 }
@@ -376,7 +381,9 @@ internal sealed unsafe class LuauVmContext
         return Volatile.Read(ref activeOperation);
     }
 
-    internal int RegisterManagedCallback(string? name, Func<LuauState, int> callback)
+    internal int RegisterManagedCallback(
+        string? name,
+        Func<LuauState, CancellationToken, int> callback)
     {
         lock (lifecycleGate)
         {
@@ -555,7 +562,7 @@ internal sealed unsafe class LuauVmContext
         }
     }
 
-    internal LuauState GetOrCreateThread(lua_State* source, lua_State* thread, int stackIndex)
+    internal LuauState GetOrCreateThread(LuauHostState* source, LuauHostState* thread, int stackIndex)
     {
         var pointer = (IntPtr)thread;
 
@@ -582,7 +589,7 @@ internal sealed unsafe class LuauVmContext
 
                 var reference = -1;
                 LuauNativeProtection.Prepare(this);
-                var referenceStatus = luau_ffi_protected_ref(source, stackIndex, &reference);
+                var referenceStatus = luau_host_reference_create(source, stackIndex, &reference);
                 LuauNativeProtection.ThrowIfFailed(
                     root,
                     source,
@@ -599,7 +606,7 @@ internal sealed unsafe class LuauVmContext
         }
     }
 
-    internal static bool TryGetState(lua_State* pointer, out LuauState state)
+    internal static bool TryGetState(LuauHostState* pointer, out LuauState state)
     {
         var key = (IntPtr)pointer;
         if (globalStates.TryGetValue(key, out var entry) &&
@@ -618,11 +625,11 @@ internal sealed unsafe class LuauVmContext
         return false;
     }
 
-    internal static bool TryGetContext(lua_State* pointer, out LuauVmContext context)
+    internal static bool TryGetContext(LuauHostState* pointer, out LuauVmContext context)
     {
         if (pointer != null)
         {
-            var mainPointer = (IntPtr)lua_mainthread(pointer);
+            var mainPointer = (IntPtr)luau_host_main_thread(pointer);
             if (globalContexts.TryGetValue(mainPointer, out var entry) &&
                 entry.TryGetTarget(out context!))
             {
@@ -639,7 +646,7 @@ internal sealed unsafe class LuauVmContext
         return false;
     }
 
-    internal void ReleaseChild(LuauState child, lua_State* pointer, int reference, WeakReference<LuauState>? entry)
+    internal void ReleaseChild(LuauState child, LuauHostState* pointer, int reference, WeakReference<LuauState>? entry)
     {
         lock (nativeGate)
         {
@@ -652,7 +659,7 @@ internal sealed unsafe class LuauVmContext
                 {
                     if (activeOperation == null)
                     {
-                        lua_unref((lua_State*)mainPointer, reference);
+                        luau_host_reference_release((LuauHostState*)mainPointer, reference);
                         Interlocked.Increment(ref releasedReferenceCount);
                     }
                     else
@@ -685,7 +692,7 @@ internal sealed unsafe class LuauVmContext
 
                 if (activeOperation == null)
                 {
-                    lua_unref((lua_State*)mainPointer, reference);
+                    luau_host_reference_release((LuauHostState*)mainPointer, reference);
                     Interlocked.Increment(ref releasedReferenceCount);
                 }
                 else
@@ -789,8 +796,8 @@ internal sealed unsafe class LuauVmContext
                 struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
             };
             var preserveMemoryInfo =
-                luau_host_memory_get((lua_State*)pointer, &closingMemoryInfo) == LuauHostStatus.Ok;
-            luau_host_state_close((lua_State*)pointer);
+                luau_host_memory_get((LuauHostState*)pointer, &closingMemoryInfo) == LuauHostStatus.Ok;
+            luau_host_state_close((LuauHostState*)pointer);
             if (preserveMemoryInfo)
             {
                 // lua_close releases every VM allocation. Preserve the peak,
@@ -872,12 +879,12 @@ internal sealed unsafe class LuauVmContext
         return true;
     }
 
-    [AOT.MonoPInvokeCallback(typeof(LuauInterrupt))]
-    static int Interrupt(lua_State* state, int gcState)
+    [AOT.MonoPInvokeCallback(typeof(LuauHostInterruptPoll))]
+    static int Interrupt(LuauHostState* state, LuauHostInterruptKind kind)
     {
         try
         {
-            if (gcState >= 0 || !TryGetContext(state, out var context))
+            if (kind != LuauHostInterruptKind.Execution || !TryGetContext(state, out var context))
             {
                 return 0;
             }

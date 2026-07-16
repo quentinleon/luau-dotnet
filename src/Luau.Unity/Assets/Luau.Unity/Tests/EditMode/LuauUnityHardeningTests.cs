@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using NUnit.Framework;
@@ -10,6 +11,29 @@ namespace Luau.Unity.Tests
 {
     public sealed class LuauUnityHardeningTests
     {
+        [Test]
+        public void UnityFacadeExportsOnlyApprovedProductTypes()
+        {
+            var actual = typeof(LuauUnity).Assembly
+                .GetExportedTypes()
+                .Where(type => type.Namespace != null &&
+                    type.Namespace.StartsWith("Luau.Unity", StringComparison.Ordinal))
+                .Select(type => type.FullName)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.That(actual, Is.EqualTo(new[]
+            {
+                "Luau.Unity.AddressablesLuauRequirer",
+                "Luau.Unity.LuauAsset",
+                "Luau.Unity.LuauStateExtensions",
+                "Luau.Unity.LuauUnity",
+                "Luau.Unity.LuauUnityOptions",
+                "Luau.Unity.ResourcesLuauRequirer",
+                "Luau.Unity.Verification.LuauPlayerSmoke",
+            }));
+        }
+
         [Test]
         public void OptionsDefaultToHardenedModSettings()
         {

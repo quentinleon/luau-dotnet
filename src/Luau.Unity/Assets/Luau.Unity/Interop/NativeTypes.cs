@@ -1,79 +1,39 @@
-
 #pragma warning disable IDE1006
 
 using System;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-[assembly: InternalsVisibleTo("Luau")]
-[assembly: InternalsVisibleTo("Luau.Tests")]
-[assembly: InternalsVisibleTo("Luau.HostSoak")]
-
-namespace Luau.Native
+namespace Luau.Internal.Interop
 {
-    // Public compatibility types remain only where the current high-level API
-    // still exposes them. All final host ABI declarations stay internal.
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public unsafe delegate int lua_CFunction(lua_State* L);
+    internal unsafe delegate int LuauHostManagedFunction(LuauHostState* state);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    internal unsafe delegate void lua_UserdataDestructor(void* userdata);
+    internal unsafe delegate int LuauHostInterruptPoll(LuauHostState* state, LuauHostInterruptKind kind);
 
-    internal enum lua_Status
-    {
-        LUA_OK = 0,
-        LUA_YIELD,
-        LUA_ERRRUN,
-        LUA_ERRSYNTAX,
-        LUA_ERRMEM,
-        LUA_ERRERR,
-        LUA_BREAK,
-    }
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal unsafe delegate void LuauHostUserdataDestructor(void* userdata);
 
-    internal enum lua_Type
+    internal enum LuauHostType
     {
-        LUA_TNIL = 0,
-        LUA_TBOOLEAN = 1,
-        LUA_TLIGHTUSERDATA,
-        LUA_TNUMBER,
-        LUA_TINTEGER,
-        LUA_TVECTOR,
-        LUA_TSTRING,
-        LUA_TTABLE,
-        LUA_TFUNCTION,
-        LUA_TUSERDATA,
-        LUA_TTHREAD,
-        LUA_TBUFFER,
-        LUA_TCLASS,
-        LUA_TOBJECT,
-        LUA_TDEADKEY,
-        LUA_TPROTO,
-        LUA_TUPVAL,
-        LUA_T_COUNT = LUA_TDEADKEY,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe partial struct lua_State
-    {
-        public fixed byte _unused[1];
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe partial struct lua_CompileOptions
-    {
-        public int optimizationLevel;
-        public int debugLevel;
-        public int typeInfoLevel;
-        public int coverageLevel;
-        public byte* vectorLib;
-        public byte* vectorCtor;
-        public byte* vectorType;
-        public byte** mutableGlobals;
-        public byte** userdataTypes;
-        public byte** librariesWithKnownMembers;
-        public void* libraryMemberTypeCb;
-        public void* libraryMemberConstantCb;
-        public byte** disabledBuiltins;
+        Nil = 0,
+        Boolean = 1,
+        LightUserdata,
+        Number,
+        Integer,
+        Vector,
+        String,
+        Table,
+        Function,
+        Userdata,
+        Thread,
+        Buffer,
+        Class,
+        Object,
+        DeadKey,
+        Proto,
+        Upvalue,
+        Count = DeadKey,
     }
 
     internal enum LuauHostStatus : int
@@ -96,6 +56,12 @@ namespace Luau.Native
         None = 0,
         Quota = 1,
         System = 2,
+    }
+
+    internal enum LuauHostInterruptKind : int
+    {
+        Execution = -1,
+        GarbageCollection = 0,
     }
 
     internal enum LuauHostLibrary : int
@@ -133,6 +99,12 @@ namespace Luau.Native
     {
         None = 0,
         TrackMemory = 1 << 0,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct LuauHostState
+    {
+        internal fixed byte unused[1];
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 8)]

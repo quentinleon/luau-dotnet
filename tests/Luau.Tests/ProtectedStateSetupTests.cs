@@ -1,14 +1,8 @@
-#pragma warning disable CS0618 // Deliberate regression coverage for transitional unsupported APIs.
-
-using Luau.Native;
-using static Luau.Native.NativeMethods;
-
 namespace Luau.Tests;
 
-public sealed unsafe class ProtectedStateSetupTests
+public sealed class ProtectedStateSetupTests
 {
     [Theory]
-    [InlineData(nameof(LuauState.OpenLibraries))]
     [InlineData(nameof(LuauState.OpenBaseLibrary))]
     [InlineData(nameof(LuauState.OpenMathLibrary))]
     [InlineData(nameof(LuauState.OpenTableLibrary))]
@@ -60,7 +54,7 @@ public sealed unsafe class ProtectedStateSetupTests
     }
 
     [Fact]
-    public void LibraryQuotaFailureRestoresTheStackAndCanBeRetriedAfterCollection()
+    public void NamedLibraryQuotaFailureRestoresTheStackAndCanBeRetriedAfterCollection()
     {
         const long memoryLimit = 1_048_576;
         using var state = LuauState.Create(new LuauStateOptions
@@ -73,20 +67,18 @@ public sealed unsafe class ProtectedStateSetupTests
         using var filler = state.CreateBuffer(fillerSize);
         var originalTop = state.GetTop();
 
-        Assert.Throws<LuauMemoryLimitException>(state.OpenLibraries);
+        Assert.Throws<LuauMemoryLimitException>(state.OpenMathLibrary);
         Assert.Equal(originalTop, state.GetTop());
 
         filler.Dispose();
-        Collect(state);
+        state.CollectGarbage();
 
-        state.OpenLibraries();
+        state.OpenMathLibrary();
         var results = state.DoString(
-            "return math.floor(41.9) + 1, type(string.byte) == 'function'",
+            "return math.floor(41.9) + 1",
             "@protected-library-recovery");
 
-        Assert.Equal(2, results.Length);
-        Assert.Equal(42, results[0].Read<int>());
-        Assert.True(results[1].Read<bool>());
+        Assert.Equal(42, Assert.Single(results).Read<int>());
         Assert.Equal(originalTop, state.GetTop());
     }
 
@@ -122,56 +114,10 @@ public sealed unsafe class ProtectedStateSetupTests
         Assert.Equal(0, child.GetTop());
     }
 
-    [Fact]
-    public void ProtectedCheckStackReportsAnImpossibleGrowthWithoutDamagingTheState()
-    {
-        var pointer = luaL_newstate();
-        Assert.NotEqual(IntPtr.Zero, (IntPtr)pointer);
-
-        try
-        {
-            var result = -1;
-            var status = luau_ffi_protected_checkstack(pointer, int.MaxValue, &result);
-
-            Assert.Equal((int)lua_Status.LUA_OK, status);
-            Assert.Equal(0, result);
-            Assert.Equal(0, lua_gettop(pointer));
-
-            status = luau_ffi_protected_checkstack(pointer, 64, &result);
-            Assert.Equal((int)lua_Status.LUA_OK, status);
-            Assert.Equal(1, result);
-            Assert.Equal(0, lua_gettop(pointer));
-        }
-        finally
-        {
-            lua_close(pointer);
-        }
-    }
-
-    static void Collect(LuauState state)
-    {
-        using var access = state.EnterNativeAccess();
-        var result = 0;
-        LuauNativeProtection.Prepare(state.Context);
-        var status = luau_ffi_protected_gc(
-            state.PointerUnsafe,
-            operation: 2, // LUA_GCCOLLECT
-            data: 0,
-            &result);
-        LuauNativeProtection.ThrowIfFailed(
-            state,
-            state.PointerUnsafe,
-            status,
-            "collect unreachable test allocations");
-    }
-
     static void OpenStandardLibrary(LuauState state, string openMethod)
     {
         switch (openMethod)
         {
-            case nameof(LuauState.OpenLibraries):
-                state.OpenLibraries();
-                break;
             case nameof(LuauState.OpenBaseLibrary):
                 state.OpenBaseLibrary();
                 break;

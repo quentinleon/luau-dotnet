@@ -40,8 +40,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return new(LuauType.String, default, value);
     }
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public static LuauValue FromLightUserData(IntPtr value)
+    internal static LuauValue FromLightUserData(IntPtr value)
     {
         return new(LuauType.LightUserData, new() { PointerValue = value }, null);
     }
@@ -63,7 +62,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
 
     public static LuauValue FromFunction(LuauFunction value)
     {
-        return new(LuauType.Funciton, default, value);
+        return new(LuauType.Function, default, value);
     }
 
     public static LuauValue FromThread(LuauState value)
@@ -81,6 +80,10 @@ public readonly struct LuauValue : IEquatable<LuauValue>
     readonly object? reference;
 
     public LuauType Type => type;
+
+    internal IntPtr LightUserDataPointer => type == LuauType.LightUserData
+        ? value.PointerValue
+        : throw new InvalidOperationException($"Cannot read {type} as light userdata.");
 
     LuauValue(LuauType type, ValueUnion value, object? reference)
     {
@@ -101,7 +104,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
             LuauType.Vector => VectorToString(value.VectorValue),
             LuauType.String => ((string)reference!).ToString(),
             LuauType.Table => ((LuauTable)reference!).ToString(),
-            LuauType.Funciton => ((LuauFunction)reference!).ToString()!,
+            LuauType.Function => ((LuauFunction)reference!).ToString()!,
             LuauType.UserData => ((LuauUserData)reference!).ToString(),
             LuauType.Thread => ((LuauState)reference!).ToString()!,
             LuauType.Buffer => ((LuauBuffer)reference!).ToString()!,
@@ -189,18 +192,6 @@ public readonly struct LuauValue : IEquatable<LuauValue>
                 }
                 break;
             case LuauType.LightUserData:
-                if (typeof(T) == typeof(IntPtr))
-                {
-                    var r = value.PointerValue;
-                    result = Unsafe.As<IntPtr, T>(ref r);
-                    return true;
-                }
-                if (typeof(T) == typeof(object))
-                {
-                    var r = (object)value.PointerValue;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
-                }
                 break;
             case LuauType.Number:
                 var number = value.NumberValue;
@@ -380,7 +371,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
                     return true;
                 }
                 break;
-            case LuauType.Funciton:
+            case LuauType.Function:
                 if (typeof(T) == typeof(LuauFunction))
                 {
                     var r = (LuauFunction)reference!;

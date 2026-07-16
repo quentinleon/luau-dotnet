@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace Luau.Tests;
 
@@ -229,6 +230,29 @@ public sealed class SandboxTests
         Assert.Equal(1, requirer.LoadCount);
     }
 
+    [Theory]
+    [InlineData("return")]
+    [InlineData("return 1, 2")]
+    public void RequireRejectsInvalidResultCountsWithoutCachingOrPoisoningTheRoot(string source)
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        var requirer = new SourceRequirer(source);
+        root.OpenRequireLibrary(requirer);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var exception = Assert.Throws<LuauManagedCallbackException>(
+                () => root.DoString("return require('invalid-result-module')"));
+
+            var moduleFailure = Assert.IsType<LuauException>(exception.InnerException);
+            Assert.Contains("exactly 1 value", moduleFailure.Message);
+            Assert.Equal(42, Assert.Single(root.DoString("return 42")).Read<int>());
+        }
+
+        Assert.Equal(2, requirer.LoadCount);
+    }
+
     [Fact]
     public void SandboxedContextRejectsLibraryRegistrationFromChild()
     {
@@ -273,10 +297,11 @@ public sealed class SandboxTests
         protected override bool TryLoadModule(
             LuauState state,
             string fullPath,
-            string requireArgument)
+            string requireArgument,
+            out LuauValue result)
         {
             Interlocked.Increment(ref loadCount);
-            state.PushNumber(73);
+            result = LuauValue.FromNumber(73);
             return true;
         }
 
@@ -298,15 +323,46 @@ public sealed class SandboxTests
         protected override bool TryLoadModule(
             LuauState state,
             string fullPath,
-            string requireArgument)
+            string requireArgument,
+            out LuauValue result)
         {
             Interlocked.Increment(ref loadCount);
-            var results = ExecuteModuleSource(
+            result = ExecuteModuleSource(
                 state,
+                requireArgument,
                 "return function() return privateGlobal end"u8,
                 "@closure-module"u8);
+            return true;
+        }
 
-            state.Push(Assert.Single(results));
+        protected override bool TryGetAliasPath(
+            string alias,
+            [NotNullWhen(true)] out string? path)
+        {
+            path = null;
+            return false;
+        }
+    }
+
+    sealed class SourceRequirer(string source) : LuauRequirer
+    {
+        readonly byte[] source = Encoding.UTF8.GetBytes(source);
+        int loadCount;
+
+        public int LoadCount => Volatile.Read(ref loadCount);
+
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument,
+            out LuauValue result)
+        {
+            Interlocked.Increment(ref loadCount);
+            result = ExecuteModuleSource(
+                state,
+                requireArgument,
+                source,
+                "@invalid-result-module"u8);
             return true;
         }
 

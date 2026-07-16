@@ -1,16 +1,19 @@
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
 internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCallbackFunction
 {
-    static readonly lua_CFunction callback = Call;
-    readonly Func<LuauState, int> csharpDelegate;
+    static readonly LuauHostManagedFunction callback = Call;
+    readonly Func<LuauState, CancellationToken, int> csharpDelegate;
     readonly LuauVmContext context;
     int registrationId;
 
-    public LuauCSharpFunction(LuauState state, Func<LuauState, int> func, string? name = null) : base(state)
+    public LuauCSharpFunction(
+        LuauState state,
+        Func<LuauState, CancellationToken, int> func,
+        string? name = null) : base(state)
     {
         csharpDelegate = func;
         context = state.Context;
@@ -18,29 +21,16 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
     }
 
     int ILuauManagedCallbackFunction.RegistrationId => Volatile.Read(ref registrationId);
+    LuauHostManagedFunction ILuauManagedCallbackFunction.Callback => callback;
 
-    public override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
+    internal override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
     {
         using var access = AcquireFunctionAccess();
-        return new(csharpDelegate(access.State));
+        return new(csharpDelegate(access.State, cancellationToken));
     }
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public unsafe override void* AsPointer()
-    {
-        using var access = AcquireFunctionAccess();
-        return (void*)(nint)registrationId;
-    }
-
-    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
-    public unsafe override lua_CFunction AsCFunction()
-    {
-        using var access = AcquireFunctionAccess();
-        return callback;
-    }
-
-    [AOT.MonoPInvokeCallback(typeof(lua_CFunction))]
-    public unsafe static int Call(lua_State* l)
+    [AOT.MonoPInvokeCallback(typeof(LuauHostManagedFunction))]
+    static unsafe int Call(LuauHostState* l)
     {
         ScriptOperation? operation = null;
         LuauManagedCallbackRegistration? registration = null;
@@ -53,7 +43,7 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
                 return 0;
             }
 
-            var idPointer = (int*)lua_touserdata(l, (int)lua_upvalueindex(1));
+            var idPointer = (int*)luau_host_callback_userdata(l, 1);
             if (idPointer == null)
             {
                 operation.RecordCallbackFailure(
@@ -72,11 +62,11 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
             }
 
             var state = LuauState.GetCachedState(l);
-            var resultCount = registration.SynchronousCallback(state);
-            if (resultCount < 0 || resultCount > lua_gettop(l))
+            var resultCount = registration.SynchronousCallback(state, operation.CancellationToken);
+            if (resultCount < 0 || resultCount > luau_host_stack_get_top(l))
             {
                 throw new InvalidOperationException(
-                    $"Managed callback returned invalid result count {resultCount} for a stack containing {lua_gettop(l)} values.");
+                    $"Managed callback returned invalid result count {resultCount} for a stack containing {luau_host_stack_get_top(l)} values.");
             }
 
             return resultCount;
@@ -88,9 +78,9 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
         }
     }
 
-    static unsafe int YieldFailureIfPossible(lua_State* state)
+    static unsafe int YieldFailureIfPossible(LuauHostState* state)
     {
-        return lua_isyieldable(state) != 0 ? lua_yield(state, 0) : 0;
+        return luau_host_is_yieldable(state) != 0 ? luau_host_yield(state, 0) : 0;
     }
 
     public override string ToString()

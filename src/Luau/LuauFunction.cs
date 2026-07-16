@@ -1,5 +1,3 @@
-using Luau.Native;
-
 namespace Luau;
 
 public abstract class LuauFunction(LuauState state) : IDisposable
@@ -49,13 +47,7 @@ public abstract class LuauFunction(LuauState state) : IDisposable
     /// </summary>
     protected virtual LuauState ResolvePublicState(LuauState owningState) => owningState;
 
-    public abstract ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default);
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public unsafe abstract void* AsPointer();
-
-    [Obsolete(LuauCompatibilityDiagnostics.NativeCallback)]
-    public abstract lua_CFunction AsCFunction();
-
+    internal abstract ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default);
     protected virtual void DisposeCore() { }
 
     public void Dispose()

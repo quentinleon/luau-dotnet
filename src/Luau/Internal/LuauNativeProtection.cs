@@ -1,7 +1,7 @@
 using System.Text;
 using System.Runtime.InteropServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -32,7 +32,7 @@ internal static unsafe class LuauNativeProtection
     {
         // This is the sole process-wide compatibility handshake. Calling the
         // raw query here keeps the internal facade free of a second verifier.
-        return (int)HostNativeMethods.luau_host_get_abi_info(
+        return (int)luau_host_get_abi_info(
             infoSize,
             (LuauHostAbiInfo*)info);
     }
@@ -44,19 +44,17 @@ internal static unsafe class LuauNativeProtection
 
     internal static void ThrowIfFailed(
         LuauState state,
-        lua_State* pointer,
-        int status,
+        LuauHostState* pointer,
+        LuauHostStatus status,
         string operation,
         string? chunkName = null)
     {
         var context = state.Context;
         string? nativeMessage = null;
-        if (!TryDecodeProtectedResult(status, out var hostStatus, out var hasErrorObject))
-        {
-            throw new LuauException(
-                $"The Luau host returned an invalid managed result code {status} while attempting to {operation}.");
-        }
-        if (hasErrorObject)
+        if (status is LuauHostStatus.LuaError
+            or LuauHostStatus.MemoryQuota
+            or LuauHostStatus.SystemOutOfMemory
+            or LuauHostStatus.Canceled)
         {
             nativeMessage = ReadProtectedError(pointer, operation);
         }
@@ -74,7 +72,7 @@ internal static unsafe class LuauNativeProtection
             throw callbackFailure;
         }
 
-        if (hostStatus == LuauHostStatus.Ok)
+        if (status == LuauHostStatus.Ok)
         {
             return;
         }
@@ -82,7 +80,7 @@ internal static unsafe class LuauNativeProtection
         var allocatorFailure = context.AllocatorFailure;
 
         if (allocatorFailure == LuauAllocatorFailure.QuotaExceeded
-            || hostStatus == LuauHostStatus.MemoryQuota
+            || status == LuauHostStatus.MemoryQuota
             )
         {
             var usage = context.MemoryUsage;
@@ -92,7 +90,7 @@ internal static unsafe class LuauNativeProtection
         }
 
         if (allocatorFailure == LuauAllocatorFailure.SystemOutOfMemory ||
-            hostStatus == LuauHostStatus.SystemOutOfMemory)
+            status == LuauHostStatus.SystemOutOfMemory)
         {
             throw new OutOfMemoryException(
                 LuauDiagnosticMessages.WithChunk(
@@ -100,34 +98,34 @@ internal static unsafe class LuauNativeProtection
                     chunkName));
         }
 
-        if (hostStatus == LuauHostStatus.InvalidArgument)
+        if (status == LuauHostStatus.InvalidArgument)
         {
             throw new InvalidOperationException(
                 $"The Luau host rejected the arguments supplied to {operation}.");
         }
-        if (hostStatus == LuauHostStatus.Unsupported)
+        if (status == LuauHostStatus.Unsupported)
         {
             throw new PlatformNotSupportedException(
                 $"The Luau host does not support the requested operation to {operation}.");
         }
 
-        nativeMessage ??= $"The Luau host failed with status {(int)hostStatus} while attempting to {operation}.";
+        nativeMessage ??= $"The Luau host failed with status {(int)status} while attempting to {operation}.";
         throw new LuauException(
             LuauDiagnosticMessages.WithChunk(nativeMessage!, chunkName),
             chunkName);
     }
 
-    static string ReadProtectedError(lua_State* pointer, string operation)
+    static string ReadProtectedError(LuauHostState* pointer, string operation)
     {
         try
         {
             // lua_tolstring may allocate while coercing a number. Native errors
             // may be arbitrary Luau values, so only inspect an existing string.
-            if (lua_gettop(pointer) > 0 &&
-                (lua_Type)lua_type(pointer, -1) == lua_Type.LUA_TSTRING)
+            if (luau_host_stack_get_top(pointer) > 0 &&
+                (LuauHostType)luau_host_type(pointer, -1) == LuauHostType.String)
             {
-                nuint length = 0;
-                var value = lua_tolstring(pointer, -1, &length);
+                ulong length = 0;
+                var value = luau_host_to_string_view(pointer, -1, &length);
                 if (value != null && length <= int.MaxValue)
                 {
                     return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(value, (int)length));
@@ -138,9 +136,9 @@ internal static unsafe class LuauNativeProtection
         }
         finally
         {
-            if (lua_gettop(pointer) > 0)
+            if (luau_host_stack_get_top(pointer) > 0)
             {
-                lua_pop(pointer, 1);
+                _ = luau_host_stack_set_top(pointer, -2);
             }
         }
     }
@@ -313,20 +311,20 @@ internal sealed unsafe class LuauNativeAbiVerifier
             }
         }
 
-        ValidateTypeTag("nil", info.type_nil, lua_Type.LUA_TNIL, context);
-        ValidateTypeTag("boolean", info.type_boolean, lua_Type.LUA_TBOOLEAN, context);
-        ValidateTypeTag("light userdata", info.type_lightuserdata, lua_Type.LUA_TLIGHTUSERDATA, context);
-        ValidateTypeTag("number", info.type_number, lua_Type.LUA_TNUMBER, context);
-        ValidateTypeTag("integer", info.type_integer, lua_Type.LUA_TINTEGER, context);
-        ValidateTypeTag("vector", info.type_vector, lua_Type.LUA_TVECTOR, context);
-        ValidateTypeTag("string", info.type_string, lua_Type.LUA_TSTRING, context);
-        ValidateTypeTag("table", info.type_table, lua_Type.LUA_TTABLE, context);
-        ValidateTypeTag("function", info.type_function, lua_Type.LUA_TFUNCTION, context);
-        ValidateTypeTag("userdata", info.type_userdata, lua_Type.LUA_TUSERDATA, context);
-        ValidateTypeTag("thread", info.type_thread, lua_Type.LUA_TTHREAD, context);
-        ValidateTypeTag("buffer", info.type_buffer, lua_Type.LUA_TBUFFER, context);
-        ValidateTypeTag("class", info.type_class, lua_Type.LUA_TCLASS, context);
-        ValidateTypeTag("object", info.type_object, lua_Type.LUA_TOBJECT, context);
+        ValidateTypeTag("nil", info.type_nil, LuauHostType.Nil, context);
+        ValidateTypeTag("boolean", info.type_boolean, LuauHostType.Boolean, context);
+        ValidateTypeTag("light userdata", info.type_lightuserdata, LuauHostType.LightUserdata, context);
+        ValidateTypeTag("number", info.type_number, LuauHostType.Number, context);
+        ValidateTypeTag("integer", info.type_integer, LuauHostType.Integer, context);
+        ValidateTypeTag("vector", info.type_vector, LuauHostType.Vector, context);
+        ValidateTypeTag("string", info.type_string, LuauHostType.String, context);
+        ValidateTypeTag("table", info.type_table, LuauHostType.Table, context);
+        ValidateTypeTag("function", info.type_function, LuauHostType.Function, context);
+        ValidateTypeTag("userdata", info.type_userdata, LuauHostType.Userdata, context);
+        ValidateTypeTag("thread", info.type_thread, LuauHostType.Thread, context);
+        ValidateTypeTag("buffer", info.type_buffer, LuauHostType.Buffer, context);
+        ValidateTypeTag("class", info.type_class, LuauHostType.Class, context);
+        ValidateTypeTag("object", info.type_object, LuauHostType.Object, context);
 
         if (info.upstream_revision_hash != LuauNativeProtection.ExpectedUpstreamRevisionHash)
         {
@@ -362,7 +360,7 @@ internal sealed unsafe class LuauNativeAbiVerifier
         }
     }
 
-    static void ValidateTypeTag(string name, int actual, lua_Type expected, string context)
+    static void ValidateTypeTag(string name, int actual, LuauHostType expected, string context)
     {
         if (actual != (int)expected)
         {

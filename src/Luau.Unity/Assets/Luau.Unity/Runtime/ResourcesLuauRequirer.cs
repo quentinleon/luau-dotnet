@@ -10,7 +10,11 @@ namespace Luau.Unity
 
         public IDictionary<string, string> Aliases { get; init; } = new Dictionary<string, string>();
 
-        protected override bool TryLoadModule(LuauState state, string fullPath, string requireArgument)
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument,
+            out LuauValue result)
         {
             fullPath = fullPath.Replace(".luau", "");
             if (fullPath.StartsWith('/')) fullPath = fullPath[1..];
@@ -19,20 +23,14 @@ namespace Luau.Unity
             var asset = Resources.Load<LuauAsset>(fullPath);
             if (asset == null)
             {
+                result = default;
                 return false;
             }
 
             var chunkName = Encoding.UTF8.GetBytes(asset.name);
-            var results = asset.IsPrecompiled
-                ? ExecuteModuleBytecode(state, asset.AsSpan(), chunkName)
-                : ExecuteModuleSource(state, asset.AsSpan(), chunkName);
-
-            if (results.Length != 1)
-            {
-                throw new LuauException($"Module '{requireArgument}' does not return exactly 1 value. It cannot be required.");
-            }
-
-            state.Push(results[0]);
+            result = asset.IsPrecompiled
+                ? ExecuteModuleBytecode(state, requireArgument, asset.AsSpan(), chunkName)
+                : ExecuteModuleSource(state, requireArgument, asset.AsSpan(), chunkName);
             return true;
         }
 

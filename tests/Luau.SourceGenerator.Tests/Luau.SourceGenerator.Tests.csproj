@@ -19,7 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Luau\Luau.csproj" />
     <ProjectReference Include="..\..\src\Luau.SourceGenerator\Luau.SourceGenerator.csproj" />
   </ItemGroup>
 

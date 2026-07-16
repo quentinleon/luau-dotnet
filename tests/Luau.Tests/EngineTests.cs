@@ -43,44 +43,14 @@ public sealed class EngineTests
     }
 
     [Fact]
-    public void LoadsModulesWithFileSystemRequire()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), "Luau.Tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
-
-        try
-        {
-            var modulePath = Path.Combine(directory, "module.luau");
-            File.WriteAllText(modulePath, "return { answer = 42 }");
-
-            using var state = LuauState.Create();
-            state.OpenRequireLibrary(new FileSystemLuauRequirer
-            {
-                WorkingDirectory = directory,
-            });
-
-            var luauPath = modulePath.Replace('\\', '/').Replace("'", "\\'");
-            var results = state.DoString($"local module = require('{luauPath}'); return module.answer");
-
-            Assert.Single(results);
-            Assert.Equal(42, results[0].Read<int>());
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Fact]
     public void InvokesCSharpCallbacksFromLuau()
     {
         using var state = LuauState.Create();
-        state["add"] = state.CreateFunction(l =>
+        state["add"] = state.CreateFunction(context =>
         {
-            var rhs = l.ToNumber(-1);
-            var lhs = l.ToNumber(-2);
-            l.PushNumber(lhs + rhs);
-            return 1;
+            var lhs = context.Read<double>(0);
+            var rhs = context.Read<double>(1);
+            context.Return(lhs + rhs);
         });
 
         var results = state.DoString("return add(2, 3)");
@@ -93,10 +63,9 @@ public sealed class EngineTests
     public async Task InvokesAsyncCSharpCallbacksFromLuau()
     {
         using var state = LuauState.Create();
-        state["wait"] = state.CreateFunction(async (l, ct) =>
+        state["wait"] = state.CreateAsyncFunction(async context =>
         {
-            await Task.Delay(1, ct);
-            return 0;
+            await Task.Delay(1, context.CancellationToken);
         });
 
         var results = await state.DoStringAsync("wait(); return 7");
@@ -109,15 +78,9 @@ public sealed class EngineTests
     public async Task GeneratedAsyncCallbackReceivesArgumentsAfterNativeYield()
     {
         using var state = LuauState.Create();
-        state["addLater"] = state.CreateFunction(
-            async (CancellationToken cancellationToken, double lhs, double rhs) =>
-            {
-                await Task.Yield();
-                cancellationToken.ThrowIfCancellationRequested();
-                return lhs + rhs;
-            });
+        state.OpenLibrary(new EngineTestLibrary());
 
-        var results = await state.DoStringAsync("return addLater(19, 23)");
+        var results = await state.DoStringAsync("return engineTest.addLater(19, 23)");
 
         Assert.Equal(42, Assert.Single(results).Read<int>());
     }
@@ -140,6 +103,21 @@ public sealed class EngineTests
 
         state.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => state.GetTop());
+        Assert.Throws<ObjectDisposedException>(() => state.CreateTable());
+    }
+}
+
+[LuauLibrary("engineTest")]
+public sealed partial class EngineTestLibrary
+{
+    [LuauMember("addLater")]
+    public static async ValueTask<double> AddLater(
+        CancellationToken cancellationToken,
+        double lhs,
+        double rhs)
+    {
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        return lhs + rhs;
     }
 }

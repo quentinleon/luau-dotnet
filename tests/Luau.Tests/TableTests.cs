@@ -79,8 +79,7 @@ public sealed class TableTests
 
         Assert.Contains("protected table failure", exception.Message);
         Assert.Equal(originalTop, state.GetTop());
-        state.PushInteger(42);
-        Assert.Equal(42, state.Pop().Read<double>());
+        Assert.Equal(42, Assert.Single(state.DoString("return 40 + 2")).Read<int>());
     }
 
     [Fact]
@@ -94,7 +93,6 @@ public sealed class TableTests
             },
         });
         state.OpenBaseLibrary();
-        state.SetTop(0);
         using var table = state.DoString(
             "return setmetatable({}, { " +
             "__index = function() while true do end end, " +
@@ -112,7 +110,6 @@ public sealed class TableTests
     {
         using var state = LuauState.Create();
         state.OpenBaseLibrary();
-        state.SetTop(0);
         var cause = new InvalidOperationException("host metamethod callback failed");
         using var callback = state.CreateFunction("explode", _ => throw cause);
         state["explode"] = callback;

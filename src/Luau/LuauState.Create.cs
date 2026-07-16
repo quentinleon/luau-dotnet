@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -20,7 +20,7 @@ unsafe partial class LuauState
         using var access = EnterNativeAccess();
 
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_createtable(l, nArr, nRec);
+        var status = luau_host_table_create(l, nArr, nRec);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "create a table");
 
         try
@@ -29,7 +29,7 @@ unsafe partial class LuauState
         }
         finally
         {
-            lua_pop(l, 1);
+            SetTop(-2);
         }
     }
 
@@ -59,44 +59,80 @@ unsafe partial class LuauState
         return table;
     }
 
-    public LuauFunction CreateFunction(Func<LuauState, int> func)
+    public LuauFunction CreateFunction(Action<LuauCallContext> callback)
     {
-        return CreateFunction(name: null, func);
+        return CreateFunction(name: null, callback);
     }
 
-    public LuauFunction CreateFunction(string? name, Func<LuauState, int> func)
+    public LuauFunction CreateFunction(string? name, Action<LuauCallContext> callback)
     {
         ThrowIfDisposed();
-        if (func == null) throw new ArgumentNullException(nameof(func));
+        if (callback == null) throw new ArgumentNullException(nameof(callback));
 
-        var function = new LuauCSharpFunction(this, func, name);
-        return function;
+        return CreateRawFunction(
+            name,
+            (state, cancellationToken) =>
+            {
+                var frame = new LuauCallFrame(state, name, state.GetTop(), cancellationToken);
+                try
+                {
+                    callback(new LuauCallContext(frame));
+                    return frame.Complete();
+                }
+                finally
+                {
+                    frame.Invalidate();
+                }
+            });
     }
 
-    public LuauFunction CreateFunction(Func<LuauState, CancellationToken, ValueTask<int>> func)
+    public LuauFunction CreateAsyncFunction(Func<LuauCallContext, ValueTask> callback)
     {
-        return CreateFunction(name: null, func);
+        return CreateAsyncFunction(name: null, callback);
     }
 
-    public LuauFunction CreateFunction(
+    public LuauFunction CreateAsyncFunction(
         string? name,
-        Func<LuauState, CancellationToken, ValueTask<int>> func)
+        Func<LuauCallContext, ValueTask> callback)
     {
         ThrowIfDisposed();
-        if (func == null) throw new ArgumentNullException(nameof(func));
+        if (callback == null) throw new ArgumentNullException(nameof(callback));
 
-        var function = new LuauCSharpAsyncFunction(this, func, name);
-        return function;
+        return CreateRawAsyncFunction(
+            name,
+            (state, cancellationToken) => LuauManagedCallbackInvoker.InvokeAsync(
+                state,
+                name,
+                callback,
+                cancellationToken));
     }
 
-    public LuauState CreateThread()
+    internal LuauFunction CreateRawFunction(
+        string? name,
+        Func<LuauState, CancellationToken, int> callback)
+    {
+        ThrowIfDisposed();
+        if (callback == null) throw new ArgumentNullException(nameof(callback));
+        return new LuauCSharpFunction(this, callback, name);
+    }
+
+    internal LuauFunction CreateRawAsyncFunction(
+        string? name,
+        Func<LuauState, CancellationToken, ValueTask<int>> callback)
+    {
+        ThrowIfDisposed();
+        if (callback == null) throw new ArgumentNullException(nameof(callback));
+        return new LuauCSharpAsyncFunction(this, callback, name);
+    }
+
+    public unsafe LuauState CreateThread()
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
-        lua_State* threadPtr = null;
+        LuauHostState* threadPtr = null;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_newthread(l, &threadPtr);
+        var status = luau_host_thread_create(l, &threadPtr);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "create a Luau thread");
 
         try
@@ -105,11 +141,11 @@ unsafe partial class LuauState
         }
         finally
         {
-            lua_pop(l, 1);
+            SetTop(-2);
         }
     }
 
-    public LuauBuffer CreateBuffer(int size)
+    public unsafe LuauBuffer CreateBuffer(int size)
     {
         ThrowIfDisposed();
         if (size < 0) ThrowHelper.ThrowArgumentException(nameof(size), "Buffer size must be greater than 0");
@@ -117,7 +153,7 @@ unsafe partial class LuauState
 
         void* data = null;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_newbuffer(l, (nuint)size, &data);
+        var status = luau_host_buffer_create(l, (ulong)size, &data);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "create a buffer");
 
         try
@@ -126,17 +162,17 @@ unsafe partial class LuauState
         }
         finally
         {
-            lua_pop(l, 1);
+            SetTop(-2);
         }
     }
 
-    public LuauBuffer CreateBuffer(ReadOnlySpan<byte> str)
+    public unsafe LuauBuffer CreateBuffer(ReadOnlySpan<byte> str)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
         void* data = null;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_newbuffer(l, (nuint)str.Length, &data);
+        var status = luau_host_buffer_create(l, (ulong)str.Length, &data);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "create a buffer");
 
         try
@@ -150,11 +186,11 @@ unsafe partial class LuauState
         }
         finally
         {
-            lua_pop(l, 1);
+            SetTop(-2);
         }
     }
 
-    public LuauUserData CreateUserData<T>(T value)
+    public unsafe LuauUserData CreateUserData<T>(T value)
         where T : unmanaged
     {
         ThrowIfDisposed();
@@ -163,7 +199,7 @@ unsafe partial class LuauState
         var size = sizeof(T);
         void* ptr = null;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_newuserdatatagged(l, (nuint)size, 0, &ptr);
+        var status = luau_host_userdata_create(l, (ulong)size, 0, &ptr);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
 
         try
@@ -174,11 +210,11 @@ unsafe partial class LuauState
         }
         finally
         {
-            lua_pop(l, 1);
+            SetTop(-2);
         }
     }
 
-    public LuauValue CreateFrom<T>(T? value)
+    public unsafe LuauValue CreateFrom<T>(T? value)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
@@ -216,7 +252,7 @@ unsafe partial class LuauState
             var size = sizeof(T);
             void* ptr = null;
             LuauNativeProtection.Prepare(context);
-            var status = luau_ffi_protected_newuserdatatagged(l, (nuint)size, 0, &ptr);
+            var status = luau_host_userdata_create(l, (ulong)size, 0, &ptr);
             LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
 
             try
@@ -228,7 +264,7 @@ unsafe partial class LuauState
             }
             finally
             {
-                lua_pop(l, 1);
+                SetTop(-2);
             }
 #pragma warning restore CS8500
         }
@@ -237,12 +273,33 @@ unsafe partial class LuauState
         return default; // dummy
     }
 
-    int ReferenceTopValue(string operation)
+    unsafe int ReferenceTopValue(string operation)
     {
         var reference = -1;
         LuauNativeProtection.Prepare(context);
-        var status = luau_ffi_protected_ref(l, -1, &reference);
+        var status = luau_host_reference_create(l, -1, &reference);
         LuauNativeProtection.ThrowIfFailed(this, l, status, operation);
         return reference;
+    }
+}
+
+internal static class LuauManagedCallbackInvoker
+{
+    internal static async ValueTask<int> InvokeAsync(
+        LuauState state,
+        string? name,
+        Func<LuauCallContext, ValueTask> callback,
+        CancellationToken cancellationToken)
+    {
+        var frame = new LuauCallFrame(state, name, state.GetTop(), cancellationToken);
+        try
+        {
+            await callback(new LuauCallContext(frame)).ConfigureAwait(false);
+            return frame.Complete();
+        }
+        finally
+        {
+            frame.Invalidate();
+        }
     }
 }

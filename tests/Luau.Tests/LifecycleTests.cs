@@ -1,5 +1,3 @@
-#pragma warning disable CS0618 // Deliberate lifetime coverage for transitional pointer escape hatches.
-
 using System.Runtime.CompilerServices;
 
 namespace Luau.Tests;
@@ -47,7 +45,7 @@ public sealed class LifecycleTests
         child.Dispose();
         nestedChild.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => child.GetTop());
+        Assert.Throws<ObjectDisposedException>(() => child.CreateTable());
         Assert.Throws<ObjectDisposedException>(() => nestedChild.GetMainThread());
     }
 
@@ -80,13 +78,11 @@ public sealed class LifecycleTests
         using var root = LuauState.Create();
         var context = root.Context;
         root.OpenCoroutineLibrary();
-        root.SetTop(0);
         LuauState? callbackState = null;
-        root["inspectThread"] = root.CreateFunction(state =>
+        root["inspectThread"] = root.CreateFunction(context =>
         {
-            callbackState = state;
-            state.PushBoolean(!state.IsMainThread);
-            return 1;
+            callbackState = context.State;
+            context.Return(!context.State.IsMainThread);
         });
 
         var results = root.DoString(
@@ -105,14 +101,14 @@ public sealed class LifecycleTests
     }
 
     [Fact]
-    public unsafe void ReferenceWrappersAreIdempotentAndRejectUseAfterDispose()
+    public void ReferenceWrappersAreIdempotentAndRejectUseAfterDispose()
     {
         using var root = LuauState.Create();
         var table = root.CreateTable();
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
         var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
-        var callback = root.CreateFunction(_ => 0);
+        var callback = root.CreateFunction(_ => { });
 
         Parallel.For(0, 8, _ => table.Dispose());
         Parallel.For(0, 8, _ => userData.Dispose());
@@ -128,8 +124,8 @@ public sealed class LifecycleTests
         Assert.Throws<ObjectDisposedException>(() => _ = table.Count);
         Assert.Throws<ObjectDisposedException>(() => _ = userData.Size);
         Assert.Throws<ObjectDisposedException>(() => _ = buffer.Length);
-        Assert.Throws<ObjectDisposedException>(() => function.AsPointer());
-        Assert.Throws<ObjectDisposedException>(() => callback.AsPointer());
+        Assert.Throws<ObjectDisposedException>(() => _ = function.State);
+        Assert.Throws<ObjectDisposedException>(() => _ = callback.State);
     }
 
     [Fact]
@@ -140,7 +136,7 @@ public sealed class LifecycleTests
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
         var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
-        var callback = root.CreateFunction(_ => 0);
+        var callback = root.CreateFunction(_ => { });
 
         root.Dispose();
 
@@ -172,7 +168,7 @@ public sealed class LifecycleTests
         root.Dispose();
 
         Assert.True(root.IsMainThread);
-        Assert.Throws<ObjectDisposedException>(() => root.GetTop());
+        Assert.Throws<ObjectDisposedException>(() => root.CreateTable());
         Assert.Throws<ObjectDisposedException>(() => root.GetMainThread());
         Assert.Throws<ObjectDisposedException>(() => root.CreateThread());
         Assert.Throws<ObjectDisposedException>(() => root.Execute(bytecode));
@@ -224,7 +220,10 @@ public sealed class LifecycleTests
 
         Assert.Equal(2, context.CachedStateCount);
 
-        ForceFinalizersUntil(() => !child.TryGetTarget(out _));
+        ForceFinalizersUntil(() =>
+            !child.TryGetTarget(out _) &&
+            context.CachedStateCount == 1 &&
+            context.ReleasedReferenceCount == releasedBefore + 1);
 
         Assert.False(child.TryGetTarget(out _));
         Assert.Equal(1, context.CachedStateCount);
@@ -276,15 +275,13 @@ public sealed class LifecycleTests
         using var root = LuauState.Create();
         using var table = root.CreateTable();
         using var userData = root.CreateUserData((byte)7);
-        var baseline = root.GetTop();
-
         for (var i = 0; i < 250; i++)
         {
             table.Clear();
             Assert.False(userData.TryRead<long>(out _));
         }
 
-        Assert.Equal(baseline, root.GetTop());
+        Assert.Equal(9, root.DoString("return 9").Single().Read<int>());
     }
 
     [Fact]
@@ -331,18 +328,14 @@ public sealed class LifecycleTests
             var userData = root.CreateUserData(123);
             var buffer = root.CreateBuffer(16);
             var script = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
-            var callback = root.CreateFunction(_ => 0);
+            var callback = root.CreateFunction(_ => { });
 
             await RaceUseAndDisposeAsync(() => Assert.Equal(1, table.Count), table.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.Equal(sizeof(int), userData.Size), userData.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.Equal(16, buffer.Length), buffer.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.StartsWith("function:", script.ToString()), script.Dispose);
             await RaceUseAndDisposeAsync(
-                () =>
-                {
-                    root.PushFunction(callback);
-                    root.Pop();
-                },
+                () => Assert.Same(root, callback.State),
                 callback.Dispose);
         }
     }
@@ -397,7 +390,7 @@ public sealed class LifecycleTests
         var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
         var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
-        var callback = root.CreateFunction(_ => 0);
+        var callback = root.CreateFunction(_ => { });
 
         root.Dispose();
 

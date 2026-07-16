@@ -1,6 +1,6 @@
 using System.Text;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
@@ -13,7 +13,7 @@ internal unsafe static class LuauReferenceHelper
         var reference = -1;
 
         LuauNativeProtection.Prepare(state.Context);
-        var status = luau_ffi_protected_ref(pointer, index, &reference);
+        var status = luau_host_reference_create(pointer, index, &reference);
         LuauNativeProtection.ThrowIfFailed(state, pointer, status, operation);
         return reference;
     }
@@ -25,28 +25,8 @@ internal unsafe static class LuauReferenceHelper
         var ignoredType = 0;
 
         LuauNativeProtection.Prepare(state.Context);
-        var status = luau_ffi_protected_rawgeti(
-            pointer,
-            LUA_REGISTRYINDEX,
-            reference,
-            &ignoredType);
+        var status = luau_host_reference_push(pointer, reference, &ignoredType);
         LuauNativeProtection.ThrowIfFailed(state, pointer, status, operation);
-    }
-
-    public static void* GetRefPointer(LuauState state, int reference)
-    {
-        using var access = state.EnterNativeAccess();
-        var pointer = state.PointerUnsafe;
-        var originalTop = lua_gettop(pointer);
-        try
-        {
-            PushReference(state, reference, "read a managed Luau reference");
-            return lua_topointer(pointer, -1);
-        }
-        finally
-        {
-            lua_settop(pointer, originalTop);
-        }
     }
 
     public static string RefToString(LuauState state, int reference)
@@ -61,26 +41,26 @@ internal unsafe static class LuauReferenceHelper
             return $"thread: 0x{(nuint)(nint)pointer:x}";
         }
 
-        var originalTop = lua_gettop(pointer);
+        var originalTop = luau_host_stack_get_top(pointer);
         try
         {
             PushReference(state, reference, "format a managed Luau reference");
-            var type = lua_type(pointer, -1);
+            var type = luau_host_type(pointer, -1);
             var typeName = ReadTypeName(pointer, type);
-            var valuePointer = (nuint)(nint)lua_topointer(pointer, -1);
+            var valuePointer = (nuint)(nint)luau_host_to_pointer(pointer, -1);
             return valuePointer == 0
                 ? typeName
                 : $"{typeName}: 0x{valuePointer:x}";
         }
         finally
         {
-            lua_settop(pointer, originalTop);
+            state.SetTop(originalTop);
         }
     }
 
-    static string ReadTypeName(lua_State* state, int type)
+    static string ReadTypeName(LuauHostState* state, int type)
     {
-        var text = lua_typename(state, type);
+        var text = luau_host_type_name(state, type);
         if (text == null)
         {
             return "value";

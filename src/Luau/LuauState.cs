@@ -1,12 +1,12 @@
 using System.Runtime.CompilerServices;
-using Luau.Native;
-using static Luau.Native.NativeMethods;
+using Luau.Internal.Interop;
+using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
 public unsafe partial class LuauState : IDisposable, ILuauReference
 {
-    lua_State* l;
+    LuauHostState* l;
     readonly LuauVmContext context;
     LuauState? root;
     readonly bool isMainThread;
@@ -30,7 +30,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
 
     internal LuauState? From => isMainThread ? null : root;
     internal LuauVmContext Context => context;
-    internal lua_State* PointerUnsafe => l;
+    internal LuauHostState* PointerUnsafe => l;
     internal int RegisteredDisposableCount => disposables.Count;
     internal CancellationToken LifetimeToken => lifetimeCancellationSource.Token;
 
@@ -89,7 +89,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
             nativeOptionsPointer = &nativeOptions;
         }
 
-        lua_State* statePointer = null;
+        LuauHostState* statePointer = null;
         var failureInfo = new LuauHostMemoryInfo
         {
             struct_size = checked((uint)sizeof(LuauHostMemoryInfo)),
@@ -131,7 +131,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         return CreateStateInternal(statePointer, options);
     }
 
-    internal static LuauState GetCachedState(lua_State* l)
+    internal static LuauState GetCachedState(LuauHostState* l)
     {
         if (l == null)
         {
@@ -143,34 +143,36 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
             return state;
         }
 
-        var main = lua_mainthread(l);
+        var main = luau_host_main_thread(l);
         if (!LuauVmContext.TryGetState(main, out var root))
         {
             ThrowHelper.ThrowInvalidOperationException("The Luau VM is not owned by a managed LuauState");
         }
 
         using var access = root.context.EnterNativeAccess(root);
-        var originalTop = lua_gettop(l);
+        var originalTop = luau_host_stack_get_top(l);
         try
         {
             var ignoredIsMainThread = 0;
             LuauNativeProtection.Prepare(root.context);
-            var status = luau_ffi_protected_pushthread(l, &ignoredIsMainThread);
+            var status = luau_host_push_thread(l, &ignoredIsMainThread);
             LuauNativeProtection.ThrowIfFailed(root, l, status, "retain the current Luau thread");
             return root.context.GetOrCreateThread(l, l, -1);
         }
         finally
         {
-            lua_settop(l, originalTop);
+            LuauNativeProtection.Prepare(root.context);
+            var status = luau_host_stack_set_top(l, originalTop);
+            LuauNativeProtection.ThrowIfFailed(root, l, status, "restore the callback stack");
         }
     }
 
-    internal static LuauState CreateStateInternal(lua_State* l)
+    internal static LuauState CreateStateInternal(LuauHostState* l)
     {
         return CreateStateInternal(l, LuauStateOptions.Default);
     }
 
-    static LuauState CreateStateInternal(lua_State* l, LuauStateOptions options)
+    static LuauState CreateStateInternal(LuauHostState* l, LuauStateOptions options)
     {
         if (l == null)
         {
@@ -196,7 +198,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         }
     }
 
-    internal LuauState(lua_State* l, LuauVmContext context, LuauState? root, int reference, bool isMainThread)
+    internal LuauState(LuauHostState* l, LuauVmContext context, LuauState? root, int reference, bool isMainThread)
     {
         this.l = l;
         this.context = context;
@@ -205,19 +207,17 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         this.isMainThread = isMainThread;
     }
 
-    [Obsolete(LuauCompatibilityDiagnostics.NativePointer)]
-    public lua_State* AsPointer()
-    {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        return l;
-    }
-
     public LuauThreadStatus GetStatus()
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
-        return (LuauThreadStatus)lua_status(l);
+        return luau_host_thread_status(l) switch
+        {
+            LuauHostStatus.Ok => LuauThreadStatus.Running,
+            LuauHostStatus.Yielded => LuauThreadStatus.Suspended,
+            LuauHostStatus.Break => LuauThreadStatus.Normal,
+            _ => LuauThreadStatus.Error,
+        };
     }
 
     public LuauState GetMainThread()

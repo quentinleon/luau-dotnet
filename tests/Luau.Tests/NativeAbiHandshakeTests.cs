@@ -1,7 +1,3 @@
-using Luau.Native;
-using static Luau.Native.NativeMethods;
-
-
 namespace Luau.Tests;
 
 public sealed unsafe class NativeAbiHandshakeTests
@@ -237,20 +233,20 @@ public sealed unsafe class NativeAbiHandshakeTests
             state_options_size = 16,
             memory_info_size = 48,
             buffer_size = 16,
-            type_nil = (int)lua_Type.LUA_TNIL,
-            type_boolean = (int)lua_Type.LUA_TBOOLEAN,
-            type_lightuserdata = (int)lua_Type.LUA_TLIGHTUSERDATA,
-            type_number = (int)lua_Type.LUA_TNUMBER,
-            type_integer = (int)lua_Type.LUA_TINTEGER,
-            type_vector = (int)lua_Type.LUA_TVECTOR,
-            type_string = (int)lua_Type.LUA_TSTRING,
-            type_table = (int)lua_Type.LUA_TTABLE,
-            type_function = (int)lua_Type.LUA_TFUNCTION,
-            type_userdata = (int)lua_Type.LUA_TUSERDATA,
-            type_thread = (int)lua_Type.LUA_TTHREAD,
-            type_buffer = (int)lua_Type.LUA_TBUFFER,
-            type_class = (int)lua_Type.LUA_TCLASS,
-            type_object = (int)lua_Type.LUA_TOBJECT,
+            type_nil = (int)LuauType.Nil,
+            type_boolean = (int)LuauType.Boolean,
+            type_lightuserdata = (int)LuauType.LightUserData,
+            type_number = (int)LuauType.Number,
+            type_integer = (int)LuauType.Integer,
+            type_vector = (int)LuauType.Vector,
+            type_string = (int)LuauType.String,
+            type_table = (int)LuauType.Table,
+            type_function = (int)LuauType.Function,
+            type_userdata = (int)LuauType.UserData,
+            type_thread = (int)LuauType.Thread,
+            type_buffer = (int)LuauType.Buffer,
+            type_class = 12,
+            type_object = 13,
             upstream_revision_hash = LuauNativeProtection.ExpectedUpstreamRevisionHash,
             host_build_fingerprint = LuauNativeProtection.ExpectedHostBuildFingerprint,
         };

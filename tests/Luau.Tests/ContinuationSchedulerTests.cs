@@ -94,23 +94,21 @@ public sealed class ContinuationSchedulerTests
                     });
                     try
                     {
-                        created["hostAsyncValue"] = created.CreateFunction(
+                        created["hostAsyncValue"] = created.CreateAsyncFunction(
                             "hostAsyncValue",
-                            async (callbackState, cancellationToken) =>
+                            async context =>
                             {
                                 callbackStartThreadId = Environment.CurrentManagedThreadId;
-                                await Task.Delay(1, cancellationToken);
+                                await Task.Delay(1, context.CancellationToken);
                                 callbackContinuationThreadId = Environment.CurrentManagedThreadId;
-                                callbackState.PushNumber(41);
-                                return 1;
+                                context.Return(41d);
                             });
                         created["hostAfterAsync"] = created.CreateFunction(
                             "hostAfterAsync",
-                            callbackState =>
+                            context =>
                             {
                                 postCallbackThreadId = Environment.CurrentManagedThreadId;
-                                callbackState.PushBoolean(true);
-                                return 1;
+                                context.Return(true);
                             });
                         return created;
                     }
@@ -165,13 +163,12 @@ public sealed class ContinuationSchedulerTests
                             ContinuationScheduler = scheduler,
                         },
                     });
-                    created["leaveOwner"] = created.CreateFunction(
+                    created["leaveOwner"] = created.CreateAsyncFunction(
                         "leaveOwner",
-                        async (callbackState, cancellationToken) =>
+                        async context =>
                         {
-                            await Task.Delay(1, cancellationToken).ConfigureAwait(false);
-                            callbackState.PushInteger(1);
-                            return 1;
+                            await Task.Delay(1, context.CancellationToken).ConfigureAwait(false);
+                            context.Return(1);
                         });
                     return created;
                 });
