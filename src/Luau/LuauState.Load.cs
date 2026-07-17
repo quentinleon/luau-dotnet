@@ -9,15 +9,18 @@ public unsafe partial class LuauState
 {
     static readonly byte[] defaultChunkName = [.. "main"u8, 0];
 
-    /// <summary>
-    /// Loads host-supplied bytecode after applying the configured
-    /// <see cref="LuauStateOptions.BytecodePolicy"/> and byte-size limit.
-    /// Untrusted content should normally enter as source through
-    /// <c>DoString</c> instead.
-    /// </summary>
-    public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<char> chunkName)
+    /// <summary>Loads opaque bytecode returned by this process's compiler.</summary>
+    public LuauFunction LoadCompilerOutput(
+        LuauCompilerOutput output,
+        ReadOnlySpan<char> chunkName = default)
     {
+        if (output == null)
+        {
+            throw new ArgumentNullException(nameof(output));
+        }
+
         ThrowIfDisposed();
+        ValidateCompilerOutput(output, DecodeChunkName(chunkName));
         using var access = EnterNativeAccess();
         var originalTop = luau_host_stack_get_top(l);
 
@@ -26,10 +29,9 @@ public unsafe partial class LuauState
         try
         {
             var encodedCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
-            LoadInternal(
-                bytecode,
+            LoadAcceptedBytecodeInternal(
+                output.Bytecode,
                 chunkBuffer.AsSpan(0, encodedCount),
-                trustedCompilerOutput: false,
                 DecodeChunkName(chunkName));
             var function = ToFunction(-1);
             Pop(1);
@@ -42,86 +44,51 @@ public unsafe partial class LuauState
         }
     }
 
-    /// <inheritdoc cref="Load(ReadOnlySpan{byte}, ReadOnlySpan{char})"/>
-    public LuauFunction Load(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName = default)
+    /// <summary>
+    /// Loads a persistent artifact after build-identity and configured
+    /// provenance validation. Caller-provided chunk names are diagnostic only.
+    /// </summary>
+    public LuauFunction LoadVerifiedBytecode(
+        LuauBytecodeArtifact artifact,
+        ReadOnlySpan<char> chunkName = default)
     {
+        if (artifact == null)
+        {
+            throw new ArgumentNullException(nameof(artifact));
+        }
+
         ThrowIfDisposed();
+        ValidateArtifact(artifact, DecodeChunkName(chunkName));
         using var access = EnterNativeAccess();
         var originalTop = luau_host_stack_get_top(l);
+
+        var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
+        var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
         try
         {
-            LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: false);
-            return ToFunction(-1);
+            var encodedCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
+            LoadAcceptedBytecodeInternal(
+                artifact.Bytecode,
+                chunkBuffer.AsSpan(0, encodedCount),
+                DecodeChunkName(chunkName));
+            var function = ToFunction(-1);
+            Pop(1);
+            return function;
         }
         finally
         {
             SetTop(originalTop);
+            ArrayPool<byte>.Shared.Return(chunkBuffer);
         }
     }
 
-    /// <summary>
-    /// Loads bytecode whose provenance has already been established by the
-    /// host, bypassing <see cref="LuauStateOptions.BytecodePolicy"/> while still
-    /// enforcing the configured bytecode-size limit. Invoking the returned
-    /// function still observes the state's execution limits. A size limit is
-    /// not provenance validation, and untrusted mods must never reach this API.
-    /// </summary>
-    public LuauFunction LoadTrustedBytecode(
+    unsafe void LoadAcceptedBytecodeInternal(
         ReadOnlySpan<byte> bytecode,
         ReadOnlySpan<char> chunkName)
     {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        var originalTop = luau_host_stack_get_top(l);
-
-        var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
-        var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
-        try
-        {
-            var encodedCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
-            LoadInternal(
-                bytecode,
-                chunkBuffer.AsSpan(0, encodedCount),
-                trustedCompilerOutput: true,
-                DecodeChunkName(chunkName));
-            var function = ToFunction(-1);
-            Pop(1);
-            return function;
-        }
-        finally
-        {
-            SetTop(originalTop);
-            ArrayPool<byte>.Shared.Return(chunkBuffer);
-        }
-    }
-
-    /// <inheritdoc cref="LoadTrustedBytecode(ReadOnlySpan{byte}, ReadOnlySpan{char})"/>
-    public LuauFunction LoadTrustedBytecode(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<byte> utf8ChunkName = default)
-    {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        var originalTop = luau_host_stack_get_top(l);
-        try
-        {
-            LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput: true);
-            return ToFunction(-1);
-        }
-        finally
-        {
-            SetTop(originalTop);
-        }
-    }
-
-    unsafe void LoadInternal(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<char> chunkName,
-        bool trustedCompilerOutput = false)
-    {
         if (chunkName.IsEmpty)
         {
-            LoadInternal(bytecode, ReadOnlySpan<byte>.Empty, trustedCompilerOutput);
+            LoadAcceptedBytecodeInternal(bytecode, ReadOnlySpan<byte>.Empty);
             return;
         }
 
@@ -130,10 +97,9 @@ public unsafe partial class LuauState
         try
         {
             var encodedCount = Encoding.UTF8.GetBytes(chunkName, buffer);
-            LoadInternal(
+            LoadAcceptedBytecodeInternal(
                 bytecode,
                 buffer.AsSpan(0, encodedCount),
-                trustedCompilerOutput,
                 DecodeChunkName(chunkName));
         }
         finally
@@ -142,17 +108,20 @@ public unsafe partial class LuauState
         }
     }
 
-    unsafe void LoadInternal(
+    /// <summary>
+    /// Raw native loader primitive. Callers must establish compiler-output or
+    /// persistent-artifact admission before reaching this method.
+    /// </summary>
+    unsafe void LoadAcceptedBytecodeInternal(
         ReadOnlySpan<byte> bytecode,
         ReadOnlySpan<byte> utf8ChunkName,
-        bool trustedCompilerOutput = false,
         string? decodedChunkName = null)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
         decodedChunkName ??= DecodeChunkName(utf8ChunkName);
-        ValidateBytecode(bytecode, utf8ChunkName, decodedChunkName, trustedCompilerOutput);
+        ValidateBytecodeSize(bytecode.Length, decodedChunkName);
         LuauNativeProtection.Prepare(context);
 
         var nameBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, utf8ChunkName.Length + 1));
@@ -237,49 +206,70 @@ public unsafe partial class LuauState
         }
     }
 
-    void ValidateBytecode(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<byte> utf8ChunkName,
-        string? decodedChunkName,
-        bool trustedCompilerOutput)
+    void ValidateCompilerOutput(LuauCompilerOutput output, string? chunkName)
     {
-        if (Options.MaxBytecodeBytes is { } limit && bytecode.Length > limit)
+        ValidateBytecodeSize(output.BytecodeLength, chunkName);
+        ValidateBytecodeIdentity(
+            output.UpstreamRevisionHash,
+            output.HostBuildFingerprint,
+            chunkName);
+    }
+
+    void ValidateArtifact(LuauBytecodeArtifact artifact, string? chunkName)
+    {
+        ValidateBytecodeSize(artifact.BytecodeLength, chunkName);
+        ValidateBytecodeIdentity(
+            artifact.UpstreamRevisionHash,
+            artifact.HostBuildFingerprint,
+            chunkName);
+
+        if (Options.BytecodePolicy == LuauBytecodePolicy.Reject)
+        {
+            throw new LuauException(
+                LuauDiagnosticMessages.WithChunk(
+                    "Persistent bytecode artifacts are disabled for this state.",
+                    chunkName),
+                chunkName);
+        }
+        if (Options.BytecodePolicy != LuauBytecodePolicy.RequireValidator)
+        {
+            throw new InvalidOperationException("Unknown bytecode policy.");
+        }
+        if (!Options.BytecodeValidator!.IsValid(artifact, artifact.Bytecode))
+        {
+            throw new LuauException(
+                LuauDiagnosticMessages.WithChunk(
+                    "The persistent bytecode artifact was rejected by the configured validator.",
+                    chunkName),
+                chunkName);
+        }
+    }
+
+    void ValidateBytecodeSize(int bytecodeLength, string? chunkName)
+    {
+        if (Options.MaxBytecodeBytes is { } limit && bytecodeLength > limit)
         {
             throw new LuauLoadLimitException(
-                decodedChunkName,
+                chunkName,
                 LuauLoadInputKind.Bytecode,
-                bytecode.Length,
+                bytecodeLength,
                 limit);
         }
+    }
 
-        if (trustedCompilerOutput)
+    static void ValidateBytecodeIdentity(
+        ulong upstreamRevisionHash,
+        ulong hostBuildFingerprint,
+        string? chunkName)
+    {
+        if (upstreamRevisionHash != LuauNativeProtection.ExpectedUpstreamRevisionHash ||
+            hostBuildFingerprint != LuauNativeProtection.ExpectedHostBuildFingerprint)
         {
-            return;
-        }
-
-        switch (Options.BytecodePolicy)
-        {
-            case LuauBytecodePolicy.AllowUnvalidated:
-                return;
-            case LuauBytecodePolicy.Reject:
-                throw new LuauException(
-                    LuauDiagnosticMessages.WithChunk(
-                        "Host-supplied precompiled bytecode is disabled for this state.",
-                        decodedChunkName),
-                    decodedChunkName);
-            case LuauBytecodePolicy.RequireValidator:
-                if (Options.BytecodeValidator!.IsValid(bytecode, utf8ChunkName))
-                {
-                    return;
-                }
-
-                throw new LuauException(
-                    LuauDiagnosticMessages.WithChunk(
-                        "Host-supplied precompiled bytecode was rejected by the configured validator.",
-                        decodedChunkName),
-                    decodedChunkName);
-            default:
-                throw new InvalidOperationException("Unknown bytecode policy.");
+            throw new LuauException(
+                LuauDiagnosticMessages.WithChunk(
+                    "The bytecode was produced for a different Luau runtime build.",
+                    chunkName),
+                chunkName);
         }
     }
 

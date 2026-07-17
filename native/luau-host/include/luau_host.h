@@ -114,6 +114,8 @@ enum
     LUAU_HOST_COMPILE_OPTIONS_VERSION = 1,
     LUAU_HOST_STATE_OPTIONS_VERSION = 1,
     LUAU_HOST_MULTIPLE_RESULTS = -1,
+    LUAU_HOST_CALLBACK_YIELD = -1,
+    LUAU_HOST_CALLBACK_ERROR = -2,
 };
 
 enum
@@ -135,9 +137,12 @@ enum
 };
 
 /* Managed functions return a count of topmost stack values
- * in [0, stack_get_top(state)], or exactly -1 only after calling host yield (or
- * entering the native break state). The host converts every other result to a
- * contained Lua error before Luau can consume it. Interrupt polls receive
+ * in [0, stack_get_top(state)], LUAU_HOST_CALLBACK_YIELD only after calling host
+ * yield (or entering the native break state), or LUAU_HOST_CALLBACK_ERROR after
+ * appending a callback failure value above the entry arguments. For callback
+ * error, the host immediately raises the topmost value as the Luau error. The
+ * host converts every other result to a contained generic Lua error before Luau
+ * can consume it. Interrupt polls receive
  * EXECUTION or GC, never an upstream collector phase. Reverse callbacks and the
  * code/delegates backing them must remain callable for their documented lifetime
  * and must never unwind across this C ABI. An invalid result/unwind is converted
@@ -284,6 +289,10 @@ LUAU_HOST_API void LUAU_HOST_CALL luau_host_state_close(luau_host_state* root);
 /* No-fail observers/control for the root-owned allocator; stack-neutral.
  * memory_info is caller-sized: initialize struct_size to at least the fixed
  * 8-byte prefix. The host preserves it and writes at most that many bytes.
+ * current_bytes and peak_bytes charge requested payload bytes still physically
+ * retained by the host allocator. A failed shrinking realloc remains charged at
+ * its prior size until a later successful realloc or free; platform allocator
+ * metadata and capacity rounding are outside these counters.
  * reset_failure clears allocator failure telemetry and sticky cancellation;
  * arm_quota_failure makes the next growing VM allocation fail deterministically. */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_memory_get(
@@ -550,8 +559,12 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_to_display_string(
     uint64_t* length);
 
 /* Protected bytecode load. chunk_name is a borrowed, NUL-terminated UTF-8 byte
- * string valid for the call (embedded NUL terminates it); bytecode is an explicit
- * borrowed span. environment is zero or an ordinary table index. On outer OK,
+ * string valid for the call (embedded NUL terminates it); bytecode is a nonempty
+ * explicit borrowed span. Empty input is rejected before entering the upstream
+ * loader. Luau bytecode has no general verifier: callers must only pass output
+ * produced in-process by luau_host_compile or authenticated against the exact
+ * host build fingerprint. environment is zero or an ordinary table index. On
+ * outer OK,
  * exactly one value is appended: a function with load_status=OK, or one load
  * error with load_status=LUA_ERROR. On outer non-argument failure, entry top is
  * restored and exactly one error is appended; load_status is not written. */
@@ -619,11 +632,12 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_sandbox_thread(luau_host
 /* Interrupt callback lifecycle. Install is stack-neutral and copies the poll
  * pointer. Under the root-serialization contract above, uninstall prevents
  * future entries and drains callbacks that already entered the host gate before
- * returning. The poll code/delegate must stay callable from successful install
- * through completed uninstall/root close. Polls are stack-neutral unless they
- * call documented callback-safe APIs; nonzero requests yield when possible or
- * a sticky CANCELED hard stop otherwise. Concurrently installed independent
- * roots in one process must use the same poll function pointer. Uninstall must
+ * returning without busy-waiting. The poll code/delegate must stay callable
+ * from successful install through completed uninstall/root close. Polls are
+ * stack-neutral unless they call documented callback-safe APIs; nonzero
+ * requests yield when possible or
+ * a sticky CANCELED hard stop otherwise. Each root owns its poll pointer, so
+ * independent roots may install different functions concurrently. Uninstall must
  * not be called by the poll itself. Poll callbacks must never unwind or reenter
  * lifecycle. */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_interrupt_install(

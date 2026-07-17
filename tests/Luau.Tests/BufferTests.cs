@@ -12,22 +12,22 @@ public class BufferTests
     }
 
     [Fact]
-    public void AsSpan()
+    public void BoundedReadsAndWrites()
     {
         using var state = LuauState.Create();
         state.OpenBufferLibrary();
 
         var buffer = state.CreateBuffer(10);
 
-        var span = buffer.AsSpan();
-        span[0] = (byte)'1';
-        span[1] = (byte)'2';
-        span[2] = (byte)'3';
-        span[3] = (byte)'4';
-        span[4] = (byte)'5';
-        "hello"u8.CopyTo(span[5..]);
+        buffer.Write(0, "12345"u8);
+        buffer.Write(5, "hello"u8);
 
-        Assert.Equal("12345hello", Encoding.UTF8.GetString(buffer.AsSpan()));
+        Span<byte> middle = stackalloc byte[5];
+        buffer.Read(2, middle);
+        Assert.Equal("345he", Encoding.UTF8.GetString(middle));
+        Assert.Equal("12345hello", Encoding.UTF8.GetString(buffer.ToArray()));
+        Assert.Throws<ArgumentException>(() => buffer.Write(6, "world"u8));
+        Assert.Throws<ArgumentException>(() => buffer.Read(6, new byte[5]));
 
         state["b"] = buffer;
         var results = state.DoString("return buffer.tostring(b)");

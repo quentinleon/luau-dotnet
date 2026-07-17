@@ -71,6 +71,13 @@ jobs:
             -AndroidNdk 27.2.12479018 `
             -OutputPath native/luau-host/out/install/${{ matrix.preset }}/luau_host.manifest.json
 
+      - name: Require current shipped Android plugin
+        shell: pwsh
+        run: >-
+          & ./tools/Copy-NativeArtifactsToUnity.ps1
+          -Platform ${{ matrix.platform }}
+          -Check
+
       - name: Upload host
         uses: actions/upload-artifact@v4
         with:

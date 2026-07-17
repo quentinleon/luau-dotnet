@@ -9,12 +9,16 @@
 #include "ltable.h"
 #include "ludata.h"
 
+#include "tracked_allocation.h"
+
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <string>
 
@@ -111,6 +115,7 @@ constexpr uint64_t kCallbackOwnerMagic = UINT64_C(0x6c75617563616c6c);
 constexpr uint64_t kUserdataOwnerMagic = UINT64_C(0x6c75617575646174);
 constexpr uint64_t kInterruptGateEnabled = UINT64_C(1) << 63;
 constexpr uint64_t kInterruptGateCountMask = ~kInterruptGateEnabled;
+using InterruptPoll = luau_host_interrupt_poll;
 constexpr uint32_t kRequiredFeatures =
     LUAU_HOST_FEATURE_SELF_DESCRIPTION |
     LUAU_HOST_FEATURE_PROTECTED_OPERATIONS |
@@ -132,6 +137,52 @@ constexpr uint64_t fnv1a(const char* text, uint64_t value = UINT64_C(14695981039
 constexpr uint64_t kUpstreamRevisionHash = fnv1a(LUAU_HOST_UPSTREAM_REVISION);
 constexpr uint64_t kHostBuildFingerprint =
     fnv1a("luau-host-inputs;" LUAU_HOST_BUILD_INPUT_FINGERPRINT ";" LUAU_HOST_BUILD_CONFIGURATION);
+
+#pragma pack(push, 1)
+struct BinaryIdentityRecord
+{
+    char magic[16];
+    uint32_t recordSize;
+    uint32_t abiMagic;
+    uint16_t abiMajor;
+    uint16_t abiMinor;
+    uint32_t featureFlags;
+    uint8_t pointerSize;
+    uint8_t sizeTSize;
+    uint8_t littleEndian;
+    uint8_t reserved;
+    uint64_t upstreamRevisionHash;
+    uint64_t hostBuildFingerprint;
+    char buildInputSha256[65];
+    char buildConfiguration[32];
+};
+#pragma pack(pop)
+
+static_assert(sizeof(BinaryIdentityRecord) == 149, "Unexpected binary-identity record size");
+static_assert(offsetof(BinaryIdentityRecord, recordSize) == 16, "Unexpected binary-identity layout");
+static_assert(offsetof(BinaryIdentityRecord, upstreamRevisionHash) == 36, "Unexpected binary-identity layout");
+static_assert(offsetof(BinaryIdentityRecord, hostBuildFingerprint) == 44, "Unexpected binary-identity layout");
+static_assert(offsetof(BinaryIdentityRecord, buildInputSha256) == 52, "Unexpected binary-identity layout");
+static_assert(sizeof(LUAU_HOST_BUILD_INPUT_FINGERPRINT) <= 65, "Build-input fingerprint is too long");
+static_assert(sizeof(LUAU_HOST_BUILD_CONFIGURATION) <= 32, "Build configuration is too long");
+
+// This hidden, referenced record lets release tooling verify the identity of a
+// cross-compiled artifact without executing it. It deliberately adds no export.
+const volatile BinaryIdentityRecord kBinaryIdentity = {
+    "LUAUHABI-PROBE1",
+    uint32_t(sizeof(BinaryIdentityRecord)),
+    LUAU_HOST_ABI_MAGIC,
+    LUAU_HOST_ABI_MAJOR,
+    LUAU_HOST_ABI_MINOR,
+    kRequiredFeatures,
+    uint8_t(sizeof(void*)),
+    uint8_t(sizeof(size_t)),
+    1,
+    0,
+    kUpstreamRevisionHash,
+    kHostBuildFingerprint,
+    LUAU_HOST_BUILD_INPUT_FINGERPRINT,
+    LUAU_HOST_BUILD_CONFIGURATION};
 
 lua_State* native(luau_host_state* state)
 {
@@ -155,7 +206,10 @@ struct AllocatorContext
     bool hasLimit = false;
     bool failNextGrowthWithQuota = false;
     bool interrupted = false;
+    std::atomic<InterruptPoll> interruptPoll = {nullptr};
     std::atomic<uint64_t> interruptGate = {0};
+    std::mutex interruptLifecycleMutex;
+    std::condition_variable interruptDrained;
 };
 
 size_t subtractsaturating(size_t value, size_t amount)
@@ -175,14 +229,17 @@ void* trackedallocator(void* userdata, void* block, size_t oldSize, size_t newSi
     if (!allocator || allocator->magic != kAllocatorMagic)
         return nullptr;
 
+    (void)oldSize;
+    const size_t previousRetainedSize = luau_host_internal::trackedallocationsize(block);
+
     if (newSize == 0)
     {
-        std::free(block);
-        allocator->currentBytes = subtractsaturating(allocator->currentBytes, oldSize);
+        luau_host_internal::freetrackedallocation(block);
+        allocator->currentBytes = subtractsaturating(allocator->currentBytes, previousRetainedSize);
         return nullptr;
     }
 
-    const size_t retainedBytes = subtractsaturating(allocator->currentBytes, oldSize);
+    const size_t retainedBytes = subtractsaturating(allocator->currentBytes, previousRetainedSize);
     if (newSize > std::numeric_limits<size_t>::max() - retainedBytes)
     {
         setallocatorfailure(
@@ -193,7 +250,7 @@ void* trackedallocator(void* userdata, void* block, size_t oldSize, size_t newSi
     }
 
     const size_t requestedBytes = retainedBytes + newSize;
-    const bool isGrowth = newSize > oldSize;
+    const bool isGrowth = newSize > previousRetainedSize;
 
     if (isGrowth && allocator->failNextGrowthWithQuota)
     {
@@ -211,29 +268,24 @@ void* trackedallocator(void* userdata, void* block, size_t oldSize, size_t newSi
         return nullptr;
     }
 
-    if (block && newSize == oldSize)
+    if (block && newSize == previousRetainedSize)
         return block;
 
-    void* result = std::realloc(block, newSize);
-    if (!result)
+    const luau_host_internal::TrackedAllocationResizeResult resized =
+        luau_host_internal::resizetrackedallocation(block, newSize);
+    if (resized.failed)
     {
-        // Luau requires shrinking reallocations not to fail. Retaining the old
-        // block while lowering its logical size preserves that contract.
-        if (block && newSize < oldSize)
-        {
-            allocator->currentBytes = requestedBytes;
-            return block;
-        }
-
         setallocatorfailure(allocator, LUAU_HOST_ALLOCATOR_FAILURE_SYSTEM, requestedBytes);
         return nullptr;
     }
 
-    allocator->currentBytes = requestedBytes;
-    if (requestedBytes > allocator->peakBytes)
-        allocator->peakBytes = requestedBytes;
+    // A failed physical shrink returns the original allocation and retained
+    // size. Keep charging that full size until a later realloc or free.
+    allocator->currentBytes = retainedBytes + resized.retainedSize;
+    if (allocator->currentBytes > allocator->peakBytes)
+        allocator->peakBytes = allocator->currentBytes;
 
-    return result;
+    return resized.block;
 }
 
 AllocatorContext* getallocator(lua_State* state)
@@ -562,13 +614,15 @@ int invalidcallbackreturn(lua_State* state, const char* message)
     luaD_throw(state, LUA_ERRERR);
 }
 
-int validatecallbackreturn(lua_State* state, int result)
+int validatecallbackreturn(lua_State* state, int result, int entryTop)
 {
     const int status = lua_status(state);
     if (result >= 0 && status == LUA_OK && result <= lua_gettop(state))
         return result;
-    if (result == -1 && (status == LUA_YIELD || status == LUA_BREAK))
+    if (result == LUAU_HOST_CALLBACK_YIELD && (status == LUA_YIELD || status == LUA_BREAK))
         return result;
+    if (result == LUAU_HOST_CALLBACK_ERROR && status == LUA_OK && lua_gettop(state) > entryTop)
+        lua_error(state);
     return invalidcallbackreturn(state, "managed callback returned an invalid result count");
 }
 
@@ -578,6 +632,7 @@ int managedcallbacktrampoline(lua_State* state)
     if (!owner || !owner->function)
         return invalidcallbackreturn(state, "managed callback metadata is invalid");
 
+    const int entryTop = lua_gettop(state);
     int result = 0;
     try
     {
@@ -587,7 +642,7 @@ int managedcallbacktrampoline(lua_State* state)
     {
         return invalidcallbackreturn(state, "managed callback crossed the no-unwind boundary");
     }
-    return validatecallbackreturn(state, result);
+    return validatecallbackreturn(state, result, entryTop);
 }
 
 void callbackownerdestructor(void* userdata)
@@ -842,12 +897,6 @@ void opopenall(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); lua
 void opsandboxroot(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); luaL_sandbox(state); }
 void opsandboxthread(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); luaL_sandboxthread(state); }
 
-using InterruptPoll = luau_host_interrupt_poll;
-std::atomic<InterruptPoll> interruptPoll = {nullptr};
-std::atomic<unsigned> interruptPollOperations = {0};
-std::atomic_flag interruptLifecycleLock = ATOMIC_FLAG_INIT;
-unsigned interruptInstalledStates = 0;
-
 bool enterinterrupt(AllocatorContext* allocator)
 {
     if (!allocator)
@@ -871,19 +920,11 @@ bool enterinterrupt(AllocatorContext* allocator)
 void leaveinterrupt(AllocatorContext* allocator)
 {
     if (allocator)
-        allocator->interruptGate.fetch_sub(1, std::memory_order_release);
-}
-
-void lockinterruptlifecycle()
-{
-    while (interruptLifecycleLock.test_and_set(std::memory_order_acquire))
     {
+        const uint64_t previous = allocator->interruptGate.fetch_sub(1, std::memory_order_acq_rel);
+        if ((previous & kInterruptGateCountMask) == 1)
+            allocator->interruptDrained.notify_all();
     }
-}
-
-void unlockinterruptlifecycle()
-{
-    interruptLifecycleLock.clear(std::memory_order_release);
 }
 
 void interrupttrampoline(lua_State* state, int gc)
@@ -892,24 +933,13 @@ void interrupttrampoline(lua_State* state, int gc)
     if (!enterinterrupt(allocator))
         return;
 
-    InterruptPoll pointer = nullptr;
-    for (;;)
+    InterruptPoll poll = allocator->interruptPoll.load(std::memory_order_acquire);
+    if (!poll)
     {
-        pointer = interruptPoll.load(std::memory_order_acquire);
-        if (!pointer)
-        {
-            leaveinterrupt(allocator);
-            return;
-        }
-
-        interruptPollOperations.fetch_add(1, std::memory_order_acq_rel);
-        if (pointer == interruptPoll.load(std::memory_order_acquire))
-            break;
-
-        interruptPollOperations.fetch_sub(1, std::memory_order_release);
+        leaveinterrupt(allocator);
+        return;
     }
 
-    InterruptPoll poll = pointer;
     int action = 0;
     try
     {
@@ -925,7 +955,6 @@ void interrupttrampoline(lua_State* state, int gc)
     }
 
     // Yield/throw may bypass C++ destructors; decrement before changing VM flow.
-    interruptPollOperations.fetch_sub(1, std::memory_order_release);
     leaveinterrupt(allocator);
 
     if (action == 0)
@@ -947,6 +976,8 @@ extern "C"
 luau_host_status LUAU_HOST_CALL luau_host_get_abi_info(uint32_t callerSize, luau_host_abi_info* output)
 {
     if (!output)
+        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
+    if (kBinaryIdentity.magic[0] != 'L')
         return LUAU_HOST_STATUS_INVALID_ARGUMENT;
 
     luau_host_abi_info value = {};
@@ -1118,7 +1149,7 @@ void LUAU_HOST_CALL luau_host_state_close(luau_host_state* root)
     if (!state || lua_mainthread(state) != state)
         return;
 
-    // Root close is the final lifecycle boundary. Do not leave a global
+    // Root close is the final lifecycle boundary. Do not leave this root's
     // interrupt callback registered if a caller omits the explicit uninstall.
     luau_host_interrupt_uninstall(root);
     AllocatorContext* allocator = getallocator(state);
@@ -1734,13 +1765,12 @@ luau_host_status LUAU_HOST_CALL luau_host_load(
     int32_t environment,
     luau_host_status* loadStatus)
 {
-    if (!state || !chunkName || (!bytecode && bytecodeSize != 0) || bytecodeSize > uint64_t(std::numeric_limits<size_t>::max()) ||
+    if (!state || !chunkName || !bytecode || bytecodeSize == 0 || bytecodeSize > uint64_t(std::numeric_limits<size_t>::max()) ||
         (environment != 0 && !validtableindex(native(state), environment)))
         return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    static const uint8_t empty = 0;
     LoadContext c = {
         reinterpret_cast<const char*>(chunkName),
-        reinterpret_cast<const char*>(bytecode ? bytecode : &empty),
+        reinterpret_cast<const char*>(bytecode),
         size_t(bytecodeSize),
         environment,
         LUA_OK};
@@ -1861,37 +1891,21 @@ luau_host_status LUAU_HOST_CALL luau_host_interrupt_install(luau_host_state* sta
         return LUAU_HOST_STATUS_INVALID_ARGUMENT;
     lua_Callbacks* nativeCallbacks = lua_callbacks(native(state));
     InterruptPoll poll = callbacks->interrupt_poll;
-    lockinterruptlifecycle();
+    std::lock_guard<std::mutex> lifecycle(allocator->interruptLifecycleMutex);
 
-    InterruptPoll current = interruptPoll.load(std::memory_order_relaxed);
+    InterruptPoll current = allocator->interruptPoll.load(std::memory_order_acquire);
     if (nativeCallbacks->interrupt == interrupttrampoline)
     {
         const bool enabled = (allocator->interruptGate.load(std::memory_order_acquire) & kInterruptGateEnabled) != 0;
-        luau_host_status result = current == poll && enabled ? LUAU_HOST_STATUS_OK : LUAU_HOST_STATUS_INVALID_ARGUMENT;
-        unlockinterruptlifecycle();
-        return result;
+        return current == poll && enabled ? LUAU_HOST_STATUS_OK : LUAU_HOST_STATUS_INVALID_ARGUMENT;
     }
-
-    if (interruptInstalledStates != 0 && current != poll)
-    {
-        unlockinterruptlifecycle();
-        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (interruptInstalledStates == 0)
-        interruptPoll.store(poll, std::memory_order_release);
 
     if (allocator->interruptGate.load(std::memory_order_acquire) != 0)
-    {
-        if (interruptInstalledStates == 0)
-            interruptPoll.store(nullptr, std::memory_order_release);
-        unlockinterruptlifecycle();
         return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    }
+
+    allocator->interruptPoll.store(poll, std::memory_order_release);
     allocator->interruptGate.store(kInterruptGateEnabled, std::memory_order_release);
     nativeCallbacks->interrupt = interrupttrampoline;
-    ++interruptInstalledStates;
-    unlockinterruptlifecycle();
     return LUAU_HOST_STATUS_OK;
 }
 
@@ -1904,24 +1918,15 @@ void LUAU_HOST_CALL luau_host_interrupt_uninstall(luau_host_state* state)
     if (!allocator)
         return;
     lua_Callbacks* callbacks = lua_callbacks(native(state));
-    lockinterruptlifecycle();
+    std::unique_lock<std::mutex> lifecycle(allocator->interruptLifecycleMutex);
     if (callbacks->interrupt == interrupttrampoline)
     {
         allocator->interruptGate.fetch_and(kInterruptGateCountMask, std::memory_order_acq_rel);
         callbacks->interrupt = nullptr;
-        if (interruptInstalledStates > 0)
-            --interruptInstalledStates;
-        if (interruptInstalledStates == 0)
-        {
-            interruptPoll.store(nullptr, std::memory_order_release);
-            while (interruptPollOperations.load(std::memory_order_acquire) != 0)
-            {
-            }
-        }
-        while ((allocator->interruptGate.load(std::memory_order_acquire) & kInterruptGateCountMask) != 0)
-        {
-        }
+        allocator->interruptDrained.wait(lifecycle, [allocator] {
+            return (allocator->interruptGate.load(std::memory_order_acquire) & kInterruptGateCountMask) == 0;
+        });
+        allocator->interruptPoll.store(nullptr, std::memory_order_release);
     }
-    unlockinterruptlifecycle();
 }
 } // extern "C"

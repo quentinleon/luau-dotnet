@@ -99,18 +99,31 @@ public sealed class PublicApiContractTests
     }
 
     [Fact]
-    public void TrustedBytecodeCapabilitiesAreExplicitlyNamed()
+    public void BytecodeCapabilitiesAreSeparatedAndRawLoadingIsNotPublic()
     {
         var names = typeof(LuauState).GetMethods(PublicDeclared)
             .Select(method => method.Name)
             .ToHashSet(StringComparer.Ordinal);
 
-        Assert.Contains("LoadTrustedBytecode", names);
-        Assert.Contains("ExecuteTrustedBytecode", names);
-        Assert.Contains("ExecuteTrustedBytecodeAsync", names);
+        Assert.Contains("LoadCompilerOutput", names);
+        Assert.Contains("ExecuteCompilerOutput", names);
+        Assert.Contains("ExecuteCompilerOutputAsync", names);
+        Assert.Contains("LoadVerifiedBytecode", names);
+        Assert.Contains("ExecuteVerifiedBytecode", names);
+        Assert.Contains("ExecuteVerifiedBytecodeAsync", names);
+        Assert.DoesNotContain("Load", names);
+        Assert.DoesNotContain("Execute", names);
+        Assert.DoesNotContain("ExecuteAsync", names);
+        Assert.DoesNotContain("LoadTrustedBytecode", names);
+        Assert.DoesNotContain("ExecuteTrustedBytecode", names);
+        Assert.DoesNotContain("ExecuteTrustedBytecodeAsync", names);
         Assert.DoesNotContain("LoadBytecode", names);
         Assert.DoesNotContain("ExecuteBytecode", names);
         Assert.DoesNotContain("ExecuteBytecodeAsync", names);
+
+        Assert.Empty(typeof(LuauCompilerOutput).GetConstructors(PublicDeclared));
+        var compile = Assert.Single(typeof(LuauCompiler).GetMethods(PublicDeclared));
+        Assert.Equal(typeof(LuauCompilerOutput), compile.ReturnType);
     }
 
     static string[] Snapshot(Assembly assembly) => assembly.GetExportedTypes()

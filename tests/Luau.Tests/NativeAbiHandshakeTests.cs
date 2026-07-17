@@ -174,7 +174,7 @@ public sealed unsafe class NativeAbiHandshakeTests
     {
         LuauNativeProtection.EnsureAvailable();
 
-        Assert.NotEmpty(LuauCompiler.Compile("return 42"u8));
+        Assert.True(LuauCompiler.Compile("return 42"u8).BytecodeLength > 0);
         using var state = LuauState.Create();
         Assert.False(state.IsDisposed);
     }

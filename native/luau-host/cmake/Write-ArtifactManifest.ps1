@@ -31,9 +31,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ApprovedBuildInputSha256 = "ac6eeae2677fe19905718a4cfe5b6bf2709920cdae78e0ba035d88d6ff2c7b0e"
+$ApprovedBuildInputSha256 = "d79ce03250269198a11053e31aa42cb0d6e3167e5f6e54e841dee6f46be54b16"
 $ApprovedUpstreamRevisionHash = [Convert]::ToUInt64("c45f010aabf167ac", 16)
-$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("105716f226c3f69f", 16)
+$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("a1b9012b8b6e7d0f", 16)
 $ApprovedFeatureFlags = [uint32]0x1ff
 $ApprovedExportCount = 85
 
@@ -113,6 +113,106 @@ function Get-Fnv1a64 {
     return [uint64]$value
 }
 
+function Get-CMakeCacheValue {
+    param(
+        [string] $Cache,
+        [string] $Name
+    )
+
+    $escapedName = [regex]::Escape($Name)
+    return (Get-RequiredMatchValue `
+        -Text $Cache `
+        -Pattern "(?m)^${escapedName}:[^=]+=(.+)$" `
+        -Description "CMake cache value $Name").Trim()
+}
+
+function Get-BinaryArchitecture {
+    param(
+        [byte[]] $Bytes,
+        [string] $ExpectedPlatform
+    )
+
+    if ($ExpectedPlatform -eq "win-x64") {
+        if ($Bytes.Length -lt 64 -or $Bytes[0] -ne 0x4d -or $Bytes[1] -ne 0x5a) {
+            throw "The Windows host artifact is not a PE binary."
+        }
+
+        $peOffset = [BitConverter]::ToInt32($Bytes, 0x3c)
+        if ($peOffset -lt 0 -or $peOffset + 26 -gt $Bytes.Length -or
+            $Bytes[$peOffset] -ne 0x50 -or $Bytes[$peOffset + 1] -ne 0x45 -or
+            $Bytes[$peOffset + 2] -ne 0 -or $Bytes[$peOffset + 3] -ne 0) {
+            throw "The Windows host artifact has an invalid PE header."
+        }
+
+        $machine = [BitConverter]::ToUInt16($Bytes, $peOffset + 4)
+        $optionalMagic = [BitConverter]::ToUInt16($Bytes, $peOffset + 24)
+        Assert-Equal "Windows host machine" $machine ([uint16]0x8664)
+        Assert-Equal "Windows host optional-header format" $optionalMagic ([uint16]0x020b)
+        return [ordered]@{ format = "PE32+"; machine = "x86_64"; pointer_bits = 64 }
+    }
+
+    if ($Bytes.Length -lt 20 -or
+        $Bytes[0] -ne 0x7f -or $Bytes[1] -ne 0x45 -or
+        $Bytes[2] -ne 0x4c -or $Bytes[3] -ne 0x46) {
+        throw "The Android host artifact is not an ELF binary."
+    }
+
+    Assert-Equal "Android ELF class" $Bytes[4] ([byte]2)
+    Assert-Equal "Android ELF byte order" $Bytes[5] ([byte]1)
+    $machine = [BitConverter]::ToUInt16($Bytes, 18)
+    if ($ExpectedPlatform -eq "android-arm64") {
+        Assert-Equal "Android ARM64 ELF machine" $machine ([uint16]183)
+        return [ordered]@{ format = "ELF64"; machine = "aarch64"; pointer_bits = 64 }
+    }
+    if ($ExpectedPlatform -eq "android-x64") {
+        Assert-Equal "Android x64 ELF machine" $machine ([uint16]62)
+        return [ordered]@{ format = "ELF64"; machine = "x86_64"; pointer_bits = 64 }
+    }
+
+    throw "Unsupported artifact platform: $ExpectedPlatform"
+}
+
+function Get-BinaryIdentity {
+    param([byte[]] $Bytes)
+
+    $marker = "LUAUHABI-PROBE1"
+    $binaryText = [Text.Encoding]::ASCII.GetString($Bytes)
+    $offset = $binaryText.IndexOf($marker, [StringComparison]::Ordinal)
+    if ($offset -lt 0) {
+        throw "The host artifact does not contain the required binary-identity record."
+    }
+    if ($binaryText.IndexOf($marker, $offset + 1, [StringComparison]::Ordinal) -ge 0) {
+        throw "The host artifact contains more than one binary-identity record."
+    }
+
+    $recordSize = [BitConverter]::ToUInt32($Bytes, $offset + 16)
+    if ($recordSize -ne 149 -or $offset + $recordSize -gt $Bytes.Length) {
+        throw "The host artifact contains an invalid binary-identity record size."
+    }
+
+    $inputLength = [Array]::IndexOf($Bytes, [byte]0, $offset + 52, 65) - ($offset + 52)
+    $configurationLength = [Array]::IndexOf($Bytes, [byte]0, $offset + 117, 32) - ($offset + 117)
+    if ($inputLength -lt 0 -or $configurationLength -lt 0) {
+        throw "The host artifact contains unterminated binary-identity text."
+    }
+
+    return [ordered]@{
+        record_size = $recordSize
+        abi_magic = [BitConverter]::ToUInt32($Bytes, $offset + 20)
+        abi_major = [BitConverter]::ToUInt16($Bytes, $offset + 24)
+        abi_minor = [BitConverter]::ToUInt16($Bytes, $offset + 26)
+        feature_flags = [BitConverter]::ToUInt32($Bytes, $offset + 28)
+        pointer_size = $Bytes[$offset + 32]
+        size_t_size = $Bytes[$offset + 33]
+        little_endian = $Bytes[$offset + 34]
+        reserved = $Bytes[$offset + 35]
+        upstream_revision_hash = [BitConverter]::ToUInt64($Bytes, $offset + 36)
+        host_build_fingerprint = [BitConverter]::ToUInt64($Bytes, $offset + 44)
+        build_input_sha256 = [Text.Encoding]::ASCII.GetString($Bytes, $offset + 52, $inputLength)
+        build_configuration = [Text.Encoding]::ASCII.GetString($Bytes, $offset + 117, $configurationLength)
+    }
+}
+
 function Get-EnumValues {
     param([string] $Body)
 
@@ -148,12 +248,49 @@ function Get-EnumValues {
     return $values
 }
 
+function Get-ManagedEnumValues {
+    param([string] $Body)
+
+    $values = @{}
+    $current = -1
+    $withoutComments = [regex]::Replace($Body, "//[^`r`n]*", "")
+
+    foreach ($entry in ($withoutComments -split ",")) {
+        $match = [regex]::Match(
+            $entry,
+            "(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(?<assigned>[A-Za-z_][A-Za-z0-9_]*|-?\d+))?")
+        if (!$match.Success) {
+            continue
+        }
+
+        $assigned = $match.Groups["assigned"].Value
+        if ([string]::IsNullOrEmpty($assigned)) {
+            $current++
+        }
+        elseif ($assigned -match "^-?\d+$") {
+            $current = [int]$assigned
+        }
+        elseif ($values.ContainsKey($assigned)) {
+            $current = [int]$values[$assigned]
+        }
+        else {
+            throw "Enum value '$($match.Groups['name'].Value)' references unknown value '$assigned'."
+        }
+
+        $values[$match.Groups["name"].Value] = $current
+    }
+
+    return $values
+}
+
 $hostRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $hostRoot "../.."))
 $headerPath = Join-Path $hostRoot "include/luau_host.h"
 $sourcePath = Join-Path $hostRoot "src/luau_host.cpp"
+$allocatorPath = Join-Path $hostRoot "src/tracked_allocation.h"
 $exportsPath = Join-Path $hostRoot "exports/luau_host.exports"
 $cmakePath = Join-Path $hostRoot "CMakeLists.txt"
+$exportAuditPath = Join-Path $hostRoot "cmake/AuditExports.cmake"
 $luauHeaderPath = Join-Path $repositoryRoot "luau/VM/include/lua.h"
 $managedProtectionPath = Join-Path $repositoryRoot "src/Luau/Internal/LuauNativeProtection.cs"
 $managedTypesPath = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/Interop/NativeTypes.cs"
@@ -161,13 +298,61 @@ $managedTypesPath = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/
 foreach ($requiredPath in @(
     $headerPath,
     $sourcePath,
+    $allocatorPath,
     $exportsPath,
     $cmakePath,
+    $exportAuditPath,
     $luauHeaderPath,
     $managedProtectionPath,
     $managedTypesPath)) {
     if (!(Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required manifest input does not exist: $requiredPath"
+    }
+}
+
+function Invoke-BinaryExportAudit {
+    param(
+        [string] $ArtifactPath,
+        [string] $ArtifactPlatform
+    )
+
+    $preset = switch ($ArtifactPlatform) {
+        "win-x64" { "windows-x64" }
+        "android-arm64" { "android-arm64" }
+        "android-x64" { "android-x64" }
+        default { throw "Unsupported artifact platform: $ArtifactPlatform" }
+    }
+    $cachePath = Join-Path $hostRoot "out/build/$preset/CMakeCache.txt"
+    if (!(Test-Path -LiteralPath $cachePath -PathType Leaf)) {
+        throw "The binary export audit requires its configured build cache: $cachePath"
+    }
+
+    $cache = Get-Content -LiteralPath $cachePath -Raw
+    $cmakeCommand = Get-CMakeCacheValue $cache "CMAKE_COMMAND"
+    if ($ArtifactPlatform -eq "win-x64") {
+        $linker = Get-CMakeCacheValue $cache "CMAKE_LINKER"
+        $exportTool = Join-Path (Split-Path -Parent $linker) "dumpbin.exe"
+        $exportToolKind = "MSVC"
+    }
+    else {
+        $exportTool = Get-CMakeCacheValue $cache "CMAKE_NM"
+        $exportToolKind = "NM"
+    }
+
+    foreach ($tool in @($cmakeCommand, $exportTool)) {
+        if (!(Test-Path -LiteralPath $tool -PathType Leaf)) {
+            throw "Required binary-audit tool does not exist: $tool"
+        }
+    }
+
+    & $cmakeCommand `
+        "-DBINARY=$ArtifactPath" `
+        "-DALLOWLIST=$exportsPath" `
+        "-DEXPORT_TOOL=$exportTool" `
+        "-DEXPORT_TOOL_KIND=$exportToolKind" `
+        -P $exportAuditPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "The binary export audit failed for $ArtifactPath."
     }
 }
 
@@ -258,39 +443,39 @@ $nativeTypeBody = Get-RequiredMatchValue `
     -Description "upstream Luau value-tag enum"
 $managedTypeBody = Get-RequiredMatchValue `
     -Text $managedTypes `
-    -Pattern "(?s)internal enum lua_Type\s*\{(.*?)\}" `
+    -Pattern "(?s)internal enum LuauHostType\s*\{(.*?)\}" `
     -Description "managed Luau value-tag enum"
 $nativeTypeValues = Get-EnumValues $nativeTypeBody
-$managedTypeValues = Get-EnumValues $managedTypeBody
+$managedTypeValues = Get-ManagedEnumValues $managedTypeBody
 $requiredTypes = [ordered]@{
-    nil = "LUA_TNIL"
-    boolean = "LUA_TBOOLEAN"
-    lightuserdata = "LUA_TLIGHTUSERDATA"
-    number = "LUA_TNUMBER"
-    integer = "LUA_TINTEGER"
-    vector = "LUA_TVECTOR"
-    string = "LUA_TSTRING"
-    table = "LUA_TTABLE"
-    function = "LUA_TFUNCTION"
-    userdata = "LUA_TUSERDATA"
-    thread = "LUA_TTHREAD"
-    buffer = "LUA_TBUFFER"
-    class = "LUA_TCLASS"
-    object = "LUA_TOBJECT"
+    nil = [ordered]@{ native = "LUA_TNIL"; managed = "Nil" }
+    boolean = [ordered]@{ native = "LUA_TBOOLEAN"; managed = "Boolean" }
+    lightuserdata = [ordered]@{ native = "LUA_TLIGHTUSERDATA"; managed = "LightUserdata" }
+    number = [ordered]@{ native = "LUA_TNUMBER"; managed = "Number" }
+    integer = [ordered]@{ native = "LUA_TINTEGER"; managed = "Integer" }
+    vector = [ordered]@{ native = "LUA_TVECTOR"; managed = "Vector" }
+    string = [ordered]@{ native = "LUA_TSTRING"; managed = "String" }
+    table = [ordered]@{ native = "LUA_TTABLE"; managed = "Table" }
+    function = [ordered]@{ native = "LUA_TFUNCTION"; managed = "Function" }
+    userdata = [ordered]@{ native = "LUA_TUSERDATA"; managed = "Userdata" }
+    thread = [ordered]@{ native = "LUA_TTHREAD"; managed = "Thread" }
+    buffer = [ordered]@{ native = "LUA_TBUFFER"; managed = "Buffer" }
+    class = [ordered]@{ native = "LUA_TCLASS"; managed = "Class" }
+    object = [ordered]@{ native = "LUA_TOBJECT"; managed = "Object" }
 }
 $typeTags = [ordered]@{}
 foreach ($entry in $requiredTypes.GetEnumerator()) {
-    if (!$nativeTypeValues.ContainsKey($entry.Value)) {
-        throw "Upstream Luau value-tag enum is missing $($entry.Value)."
+    if (!$nativeTypeValues.ContainsKey($entry.Value.native)) {
+        throw "Upstream Luau value-tag enum is missing $($entry.Value.native)."
     }
-    if (!$managedTypeValues.ContainsKey($entry.Value)) {
-        throw "Managed Luau value-tag enum is missing $($entry.Value)."
+    if (!$managedTypeValues.ContainsKey($entry.Value.managed)) {
+        throw "Managed Luau value-tag enum is missing $($entry.Value.managed)."
     }
     Assert-Equal `
-        -Description "Managed/native value tag $($entry.Value)" `
-        -Actual ([int]$managedTypeValues[$entry.Value]) `
-        -Expected ([int]$nativeTypeValues[$entry.Value])
-    $typeTags[$entry.Key] = [int]$nativeTypeValues[$entry.Value]
+        -Description "Managed/native value tag $($entry.Value.native)" `
+        -Actual ([int]$managedTypeValues[$entry.Value.managed]) `
+        -Expected ([int]$nativeTypeValues[$entry.Value.native])
+    $typeTags[$entry.Key] = [int]$nativeTypeValues[$entry.Value.native]
 }
 
 function Get-NativeRecordSize {
@@ -332,12 +517,29 @@ Assert-Equal "Checked-out Luau revision" $actualUpstreamRevision $upstreamRevisi
 
 $headerSha256 = Get-LowerFileSha256 $headerPath
 $sourceSha256 = Get-LowerFileSha256 $sourcePath
+$allocatorSha256 = Get-LowerFileSha256 $allocatorPath
 $exportsSha256 = Get-LowerFileSha256 $exportsPath
 $buildInputDescriptor =
-    "abi=$abiMajor.$abiMinor;upstream=$upstreamRevision;header=$headerSha256;source=$sourceSha256;exports=$exportsSha256"
+    "abi=$abiMajor.$abiMinor;upstream=$upstreamRevision;header=$headerSha256;source=$sourceSha256;allocator=$allocatorSha256;exports=$exportsSha256"
 $buildInputSha256 = Get-TextSha256 $buildInputDescriptor
 $upstreamRevisionHash = Get-Fnv1a64 $upstreamRevision
 $hostBuildFingerprint = Get-Fnv1a64 "luau-host-inputs;$buildInputSha256;$Configuration"
+
+$binaryBytes = [IO.File]::ReadAllBytes($resolvedBinary)
+$binaryArchitecture = Get-BinaryArchitecture $binaryBytes $Platform
+$binaryIdentity = Get-BinaryIdentity $binaryBytes
+Assert-Equal "Binary/source ABI magic" $binaryIdentity.abi_magic $abiMagic
+Assert-Equal "Binary/source ABI major" $binaryIdentity.abi_major $abiMajor
+Assert-Equal "Binary/source ABI minor" $binaryIdentity.abi_minor $abiMinor
+Assert-Equal "Binary/source feature flags" $binaryIdentity.feature_flags $featureFlags
+Assert-Equal "Binary pointer size" $binaryIdentity.pointer_size ([byte]8)
+Assert-Equal "Binary size_t size" $binaryIdentity.size_t_size ([byte]8)
+Assert-Equal "Binary byte order" $binaryIdentity.little_endian ([byte]1)
+Assert-Equal "Binary identity reserved byte" $binaryIdentity.reserved ([byte]0)
+Assert-Equal "Binary/source upstream revision hash" $binaryIdentity.upstream_revision_hash $upstreamRevisionHash
+Assert-Equal "Binary/source host fingerprint" $binaryIdentity.host_build_fingerprint $hostBuildFingerprint
+Assert-Equal "Binary/source build-input SHA256" $binaryIdentity.build_input_sha256 $buildInputSha256
+Assert-Equal "Binary/source build configuration" $binaryIdentity.build_configuration $Configuration
 
 Assert-Equal "Approved build-input SHA256" $buildInputSha256 $ApprovedBuildInputSha256
 Assert-Equal "Approved upstream revision hash" $upstreamRevisionHash $ApprovedUpstreamRevisionHash
@@ -373,6 +575,7 @@ foreach ($export in $approvedExports) {
         throw "The export allowlist contains a non-host symbol: $export"
     }
 }
+Invoke-BinaryExportAudit $resolvedBinary $Platform
 
 $platformMetadata = switch ($Platform) {
     "win-x64" { [ordered]@{ os = "windows"; architecture = "x64" } }
@@ -416,6 +619,20 @@ $manifest = [ordered]@{
     artifact = $binary.Name
     platform = $Platform
     platform_metadata = $platformMetadata
+    binary_architecture = $binaryArchitecture
+    binary_identity = [ordered]@{
+        record_size = $binaryIdentity.record_size
+        abi_magic = Format-Hex32 $binaryIdentity.abi_magic
+        abi_version = "$($binaryIdentity.abi_major).$($binaryIdentity.abi_minor)"
+        feature_flags = Format-Hex32 $binaryIdentity.feature_flags
+        pointer_size = $binaryIdentity.pointer_size
+        size_t_size = $binaryIdentity.size_t_size
+        little_endian = ($binaryIdentity.little_endian -eq 1)
+        upstream_revision_hash = Format-Hex64 $binaryIdentity.upstream_revision_hash
+        host_build_fingerprint = Format-Hex64 $binaryIdentity.host_build_fingerprint
+        build_input_sha256 = $binaryIdentity.build_input_sha256
+        build_configuration = $binaryIdentity.build_configuration
+    }
     sha256 = Get-LowerFileSha256 $resolvedBinary
     bytes = $binary.Length
     upstream_revision = $upstreamRevision
@@ -426,6 +643,7 @@ $manifest = [ordered]@{
     build_inputs = [ordered]@{
         header_sha256 = $headerSha256
         source_sha256 = $sourceSha256
+        allocator_sha256 = $allocatorSha256
         exports_sha256 = $exportsSha256
         aggregate_sha256 = $buildInputSha256
     }

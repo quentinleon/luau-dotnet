@@ -14,11 +14,23 @@ public sealed class LuauStateOptions
     LuauBytecodePolicy bytecodePolicy = LuauBytecodePolicy.Reject;
 
     /// <summary>
-    /// Gets the default options. Ordinary host-supplied bytecode is rejected
-    /// unless the host explicitly selects a different policy. Resource limits
-    /// remain host policy and are unbounded unless configured.
+    /// Gets the finite default policy for ordinary, untrusted script states.
+    /// Hosts that intentionally run trusted content may explicitly construct
+    /// a less restrictive options instance.
     /// </summary>
-    public static LuauStateOptions Default { get; } = new();
+    public static LuauStateOptions Default { get; } = new()
+    {
+        MemoryLimitBytes = 64L * 1024 * 1024,
+        MaxSourceBytes = 1024 * 1024,
+        MaxBytecodeBytes = 4 * 1024 * 1024,
+        DefaultExecutionOptions = new LuauExecutionOptions
+        {
+            WallClockLimit = TimeSpan.FromMilliseconds(250),
+            InterruptCountLimit = 100_000,
+            MaxResultCount = 64,
+        },
+        BytecodePolicy = LuauBytecodePolicy.Reject,
+    };
 
     /// <summary>
     /// Gets the optional native VM allocation limit in bytes. Managed wrapper
@@ -98,11 +110,9 @@ public sealed class LuauStateOptions
     }
 
     /// <summary>
-    /// Gets the policy for host-supplied precompiled bytecode. The default is
-    /// <see cref="LuauBytecodePolicy.Reject"/>. A trusted host must explicitly
-    /// choose <see cref="LuauBytecodePolicy.AllowUnvalidated"/> or configure
-    /// <see cref="LuauBytecodePolicy.RequireValidator"/> with a provenance
-    /// validator.
+    /// Gets the policy for persistent bytecode artifacts. The default is
+    /// <see cref="LuauBytecodePolicy.Reject"/>. A trusted host must configure
+    /// <see cref="LuauBytecodePolicy.RequireValidator"/> with a provenance validator.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The assigned enum value is not defined.
@@ -112,7 +122,7 @@ public sealed class LuauStateOptions
         get => bytecodePolicy;
         init
         {
-            if (value < LuauBytecodePolicy.AllowUnvalidated || value > LuauBytecodePolicy.RequireValidator)
+            if (value < LuauBytecodePolicy.Reject || value > LuauBytecodePolicy.RequireValidator)
             {
                 throw new ArgumentOutOfRangeException(nameof(BytecodePolicy), value, "Unknown bytecode policy.");
             }

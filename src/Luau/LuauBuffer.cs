@@ -63,7 +63,11 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
         return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
-    public Span<byte> AsSpan()
+    /// <summary>
+    /// Copies the entire buffer into a managed array while the native buffer is
+    /// protected by its lifetime and VM serialization gates.
+    /// </summary>
+    public byte[] ToArray()
     {
         using var access = AcquireReference();
         var state = access.State;
@@ -75,7 +79,73 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
             ulong length;
             LuauReferenceHelper.PushReference(state, access.Reference, "read a Luau buffer");
             var buffer = luau_host_to_buffer(pointer, -1, &length);
-            return new Span<byte>(buffer, checked((int)length));
+            return new ReadOnlySpan<byte>(buffer, checked((int)length)).ToArray();
+        }
+        finally
+        {
+            state.SetTop(originalTop);
+        }
+    }
+
+    /// <summary>
+    /// Copies bytes from this buffer into <paramref name="destination"/>.
+    /// </summary>
+    public void Read(int sourceOffset, Span<byte> destination)
+    {
+        if (sourceOffset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceOffset));
+        }
+
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = luau_host_stack_get_top(pointer);
+        try
+        {
+            ulong nativeLength;
+            LuauReferenceHelper.PushReference(state, access.Reference, "read a Luau buffer");
+            var buffer = luau_host_to_buffer(pointer, -1, &nativeLength);
+            var length = checked((int)nativeLength);
+            if (sourceOffset > length || destination.Length > length - sourceOffset)
+            {
+                throw new ArgumentException("The requested range exceeds the Luau buffer.", nameof(destination));
+            }
+
+            new ReadOnlySpan<byte>((byte*)buffer + sourceOffset, destination.Length).CopyTo(destination);
+        }
+        finally
+        {
+            state.SetTop(originalTop);
+        }
+    }
+
+    /// <summary>
+    /// Copies <paramref name="source"/> into this buffer.
+    /// </summary>
+    public void Write(int destinationOffset, ReadOnlySpan<byte> source)
+    {
+        if (destinationOffset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(destinationOffset));
+        }
+
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = luau_host_stack_get_top(pointer);
+        try
+        {
+            ulong nativeLength;
+            LuauReferenceHelper.PushReference(state, access.Reference, "write a Luau buffer");
+            var buffer = luau_host_to_buffer(pointer, -1, &nativeLength);
+            var length = checked((int)nativeLength);
+            if (destinationOffset > length || source.Length > length - destinationOffset)
+            {
+                throw new ArgumentException("The requested range exceeds the Luau buffer.", nameof(source));
+            }
+
+            source.CopyTo(new Span<byte>((byte*)buffer + destinationOffset, source.Length));
         }
         finally
         {
@@ -91,6 +161,8 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
 
     void DisposeCore()
     {
+        LuauState? owningState;
+        int currentReference;
         lock (lifetimeGate)
         {
             if (Interlocked.Exchange(ref disposeState, 1) != 0)
@@ -98,12 +170,13 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
                 return;
             }
 
-            var owningState = Interlocked.Exchange(ref state, null);
-            var currentReference = Interlocked.Exchange(ref reference, -1);
-            if (owningState != null && currentReference >= 0)
-            {
-                owningState.TryReleaseReference(currentReference);
-            }
+            owningState = Interlocked.Exchange(ref state, null);
+            currentReference = Interlocked.Exchange(ref reference, -1);
+        }
+
+        if (owningState != null && currentReference >= 0)
+        {
+            owningState.TryReleaseReference(currentReference);
         }
     }
 
@@ -121,23 +194,32 @@ public unsafe sealed class LuauBuffer : IDisposable, ILuauReference
 
     LuauReferenceAccess AcquireReference()
     {
+        var currentState = Volatile.Read(ref state);
+        if (currentState == null || currentState.IsDisposed)
+        {
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauBuffer));
+        }
+
+        var referenceState = currentState!.GetMainThread();
+        var nativeAccess = currentState.EnterNativeAccess();
         Monitor.Enter(lifetimeGate);
         try
         {
-            var currentState = state;
             var currentReference = reference;
-            if (disposeState != 0 || currentState == null || currentReference < 0 || currentState.IsDisposed)
+            if (disposeState != 0 ||
+                !ReferenceEquals(state, currentState) ||
+                currentReference < 0 ||
+                currentState.IsDisposed)
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauBuffer));
             }
 
-            var referenceState = currentState!.GetMainThread();
-            var nativeAccess = currentState.EnterNativeAccess();
             return new LuauReferenceAccess(referenceState, currentReference, lifetimeGate, nativeAccess);
         }
         catch
         {
             Monitor.Exit(lifetimeGate);
+            nativeAccess.Dispose();
             throw;
         }
     }

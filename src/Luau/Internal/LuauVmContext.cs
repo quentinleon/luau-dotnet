@@ -29,6 +29,7 @@ internal sealed unsafe class LuauVmContext
     readonly Dictionary<int, int> managedCallbackNativeReferences = [];
     readonly HashSet<int> managedCallbackWrapperOwners = [];
     readonly Dictionary<string, LuauValue> moduleCache = new(StringComparer.Ordinal);
+    readonly HashSet<string> loadingModules = new(StringComparer.Ordinal);
     readonly HashSet<IntPtr> sandboxedThreads = [];
     readonly List<int> deferredReferences = [];
     readonly CancellationTokenSource disposalCancellationSource = new();
@@ -209,7 +210,9 @@ internal sealed unsafe class LuauVmContext
         bool isAsync,
         ScriptOperationMode mode)
     {
-        var effectiveOptions = options ?? Options.DefaultExecutionOptions;
+        var effectiveOptions = LuauExecutionOptions.ResolveForOperation(
+            Options.DefaultExecutionOptions,
+            options);
         if (effectiveOptions.ContinuationScheduler is { } scheduler && !scheduler.CheckAccess())
         {
             throw new InvalidOperationException(
@@ -538,6 +541,26 @@ internal sealed unsafe class LuauVmContext
         }
     }
 
+    internal void BeginModuleLoad(string key, string requireArgument)
+    {
+        lock (lifecycleGate)
+        {
+            if (!loadingModules.Add(key))
+            {
+                throw new LuauException(
+                    $"Circular module dependency detected while requiring '{requireArgument}'.");
+            }
+        }
+    }
+
+    internal void EndModuleLoad(string key)
+    {
+        lock (lifecycleGate)
+        {
+            loadingModules.Remove(key);
+        }
+    }
+
     internal void RegisterRoot(LuauState root)
     {
         lock (lifecycleGate)
@@ -757,6 +780,7 @@ internal sealed unsafe class LuauVmContext
                 managedCallbackNativeReferences.Clear();
                 managedCallbackWrapperOwners.Clear();
                 moduleCache.Clear();
+                loadingModules.Clear();
                 sandboxedThreads.Clear();
 
                 if (!liveStates.Contains(root))

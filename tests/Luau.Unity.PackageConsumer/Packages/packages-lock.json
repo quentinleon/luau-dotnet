@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "com.nuskey.luau.unity": {
+      "version": "file:../../../src/Luau.Unity/Assets/Luau.Unity",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    }
+  }
+}

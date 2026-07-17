@@ -16,12 +16,12 @@ public sealed class EngineTests
     }
 
     [Fact]
-    public async Task LoadsAndExecutesTrustedBytecode()
+    public async Task LoadsAndExecutesCompilerOutput()
     {
         using var state = LuauState.Create();
-        var bytecode = LuauCompiler.Compile("return 123"u8);
-        using var function = state.LoadTrustedBytecode(
-            bytecode,
+        var output = LuauCompiler.Compile("return 123"u8);
+        using var function = state.LoadCompilerOutput(
+            output,
             "@engine/trusted-bytecode.luau");
 
         var results = await function.InvokeAsync([]);

@@ -9,6 +9,7 @@ namespace Luau.Unity
     {
         public const int DefaultMaxPrintArguments = 32;
         public const int DefaultMaxPrintUtf8Bytes = 4 * 1024;
+        public const int DefaultMaxPrintMessagesPerSecond = 20;
 
         public bool OpenStandardLibraries { get; set; } = true;
 
@@ -19,18 +20,12 @@ namespace Luau.Unity
         public bool OpenDebugLibrary { get; set; }
 
         /// <summary>
-        /// Gets or sets whether the trusted host installs its configured
-        /// managed module resolver before root sandboxing. Resolver I/O and
-        /// path policy remain host responsibilities.
-        /// </summary>
-        public bool EnableRequire { get; set; }
-
-        /// <summary>
         /// Gets or sets whether the root globals and opened API tables are
         /// frozen after host configuration. Disabling this is a privileged
         /// host opt-out and must not be used for untrusted mods.
         /// </summary>
         public bool SandboxRoot { get; set; } = true;
+
         /// <summary>
         /// Gets or sets whether state creation captures the current Unity
         /// synchronization context when no continuation scheduler is already
@@ -46,8 +41,21 @@ namespace Luau.Unity
         /// </summary>
         public ILuauContinuationScheduler ContinuationScheduler { get; set; }
 
-        public LuauStateOptions StateOptions { get; set; } = new LuauStateOptions();
-        public LuauRequirer Requirer { get; set; }
+        /// <summary>
+        /// Gets or sets the root-state policy. The default is finite and
+        /// suitable as a conservative starting point for untrusted mods.
+        /// Assigning another instance explicitly replaces that complete
+        /// policy, including its limits.
+        /// </summary>
+        public LuauStateOptions StateOptions { get; set; } = LuauStateOptions.Default;
+
+        /// <summary>
+        /// Gets or sets the immutable, source-only module namespace exposed as
+        /// <c>require()</c>. A null map leaves <c>require()</c> unavailable.
+        /// Use a distinct map for each mod namespace.
+        /// </summary>
+        public LuauModuleMap ModuleMap { get; set; }
+
         public Action<LuauState> ConfigureHostApis { get; set; }
         public Action<string> Log { get; set; }
 
@@ -63,6 +71,15 @@ namespace Luau.Unity
         /// call to the default Unity <c>print</c> function.
         /// </summary>
         public int MaxPrintUtf8Bytes { get; set; } = DefaultMaxPrintUtf8Bytes;
+
+        /// <summary>
+        /// Gets or sets the maximum number of messages emitted by the default
+        /// Unity <c>print</c> function in each one-second window. Extra
+        /// calls are discarded before formatting their arguments. Set null
+        /// only for explicitly trusted content.
+        /// </summary>
+        public int? MaxPrintMessagesPerSecond { get; set; } =
+            DefaultMaxPrintMessagesPerSecond;
     }
 
     public static class LuauUnity
@@ -89,11 +106,12 @@ namespace Luau.Unity
                     state,
                     options.Log,
                     options.MaxPrintArguments,
-                    options.MaxPrintUtf8Bytes);
+                    options.MaxPrintUtf8Bytes,
+                    options.MaxPrintMessagesPerSecond);
 
-                if (options.EnableRequire)
+                if (options.ModuleMap != null)
                 {
-                    state.OpenRequireLibrary(options.Requirer ?? ResourcesLuauRequirer.Default);
+                    state.OpenRequireLibrary(options.ModuleMap);
                 }
 
                 options.ConfigureHostApis?.Invoke(state);
@@ -163,7 +181,8 @@ namespace Luau.Unity
                 state,
                 log,
                 LuauUnityOptions.DefaultMaxPrintArguments,
-                LuauUnityOptions.DefaultMaxPrintUtf8Bytes);
+                LuauUnityOptions.DefaultMaxPrintUtf8Bytes,
+                LuauUnityOptions.DefaultMaxPrintMessagesPerSecond);
         }
 
         /// <summary>
@@ -175,6 +194,25 @@ namespace Luau.Unity
             Action<string> log,
             int maxArguments,
             int maxUtf8Bytes)
+        {
+            RegisterPrint(
+                state,
+                log,
+                maxArguments,
+                maxUtf8Bytes,
+                LuauUnityOptions.DefaultMaxPrintMessagesPerSecond);
+        }
+
+        /// <summary>
+        /// Registers a size- and rate-bounded Unity logging implementation of
+        /// Luau's <c>print</c> function.
+        /// </summary>
+        public static void RegisterPrint(
+            LuauState state,
+            Action<string> log,
+            int maxArguments,
+            int maxUtf8Bytes,
+            int? maxMessagesPerSecond)
         {
             if (state == null)
             {
@@ -197,10 +235,26 @@ namespace Luau.Unity
                     "The print output limit must be positive.");
             }
 
+            if (maxMessagesPerSecond.HasValue && maxMessagesPerSecond.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxMessagesPerSecond),
+                    maxMessagesPerSecond,
+                    "The print message rate limit must be positive when configured.");
+            }
+
             log = log ?? Debug.Log;
+            var rateLimiter = maxMessagesPerSecond.HasValue
+                ? new PrintRateLimiter(maxMessagesPerSecond.Value)
+                : null;
 
             state["print"] = state.CreateFunction("print", context =>
             {
+                if (rateLimiter != null && !rateLimiter.TryAcquire())
+                {
+                    return;
+                }
+
                 if (context.ArgumentCount == 0)
                 {
                     log(string.Empty);
@@ -305,6 +359,40 @@ namespace Luau.Unity
             }
 
             return character <= '\u07ff' ? 2 : 3;
+        }
+
+        sealed class PrintRateLimiter
+        {
+            readonly object gate = new();
+            readonly int maxMessagesPerSecond;
+            long windowStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            int messageCount;
+
+            public PrintRateLimiter(int maxMessagesPerSecond)
+            {
+                this.maxMessagesPerSecond = maxMessagesPerSecond;
+            }
+
+            public bool TryAcquire()
+            {
+                lock (gate)
+                {
+                    var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                    if (now - windowStarted >= System.Diagnostics.Stopwatch.Frequency)
+                    {
+                        windowStarted = now;
+                        messageCount = 0;
+                    }
+
+                    if (messageCount >= maxMessagesPerSecond)
+                    {
+                        return false;
+                    }
+
+                    messageCount++;
+                    return true;
+                }
+            }
         }
 
         static void OpenUnityStandardLibraries(LuauState state)

@@ -9,36 +9,43 @@ namespace Luau.Unity
     {
         public static int Execute(this LuauState state, LuauAsset asset, Span<LuauValue> destination)
         {
-            if (asset.IsPrecompiled)
+            return asset.contentKind switch
             {
-                return state.Execute(asset.AsSpan(), destination, asset.name);
-            }
-
-            var chunkName = Encoding.UTF8.GetBytes(asset.name);
-            return state.DoString(asset.AsSpan(), destination, chunkName);
+                LuauAssetContentKind.Source =>
+                    state.DoString(asset.AsSpan(), destination, Encoding.UTF8.GetBytes(asset.name)),
+                LuauAssetContentKind.VerifiedBytecode =>
+                    ExecuteVerified(state, asset, destination),
+                _ => throw InvalidContentKind(asset),
+            };
         }
 
         public static LuauValue[] Execute(this LuauState state, LuauAsset asset)
         {
-            if (asset.IsPrecompiled)
+            return asset.contentKind switch
             {
-                return state.Execute(asset.AsSpan(), asset.name);
-            }
-
-            var chunkName = Encoding.UTF8.GetBytes(asset.name);
-            return state.DoString(asset.AsSpan(), chunkName);
+                LuauAssetContentKind.Source =>
+                    state.DoString(asset.AsSpan(), Encoding.UTF8.GetBytes(asset.name)),
+                LuauAssetContentKind.VerifiedBytecode =>
+                    ExecuteVerified(state, asset),
+                _ => throw InvalidContentKind(asset),
+            };
         }
 
         public static async ValueTask<int> ExecuteAsync(this LuauState state, LuauAsset asset, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
         {
-            if (asset.IsPrecompiled)
+            if (asset.contentKind == LuauAssetContentKind.VerifiedBytecode)
             {
-                return await state.ExecuteAsync(
-                    asset.AsMemory(),
+                if (cancellationToken.IsCancellationRequested)
+                    throw new LuauExecutionCanceledException(asset.name, cancellationToken);
+                ValidateVerifiedPayloadBeforeConstruction(state, asset);
+                return await state.ExecuteVerifiedBytecodeAsync(
+                    asset.GetVerifiedBytecode(),
                     destination,
                     asset.name.AsMemory(),
                     cancellationToken);
             }
+            if (!asset.IsSource)
+                throw InvalidContentKind(asset);
 
             var chunkName = Encoding.UTF8.GetBytes(asset.name);
             return await state.DoStringAsync(
@@ -50,13 +57,18 @@ namespace Luau.Unity
 
         public static async ValueTask<LuauValue[]> ExecuteAsync(this LuauState state, LuauAsset asset, CancellationToken cancellationToken = default)
         {
-            if (asset.IsPrecompiled)
+            if (asset.contentKind == LuauAssetContentKind.VerifiedBytecode)
             {
-                return await state.ExecuteAsync(
-                    asset.AsMemory(),
+                if (cancellationToken.IsCancellationRequested)
+                    throw new LuauExecutionCanceledException(asset.name, cancellationToken);
+                ValidateVerifiedPayloadBeforeConstruction(state, asset);
+                return await state.ExecuteVerifiedBytecodeAsync(
+                    asset.GetVerifiedBytecode(),
                     asset.name.AsMemory(),
                     cancellationToken);
             }
+            if (!asset.IsSource)
+                throw InvalidContentKind(asset);
 
             var chunkName = Encoding.UTF8.GetBytes(asset.name);
             return await state.DoStringAsync(
@@ -65,72 +77,56 @@ namespace Luau.Unity
                 cancellationToken: cancellationToken);
         }
 
-        /// <summary>
-        /// Executes a bundled asset whose bytecode provenance has been
-        /// established by the host. For precompiled assets this bypasses the
-        /// state's normal bytecode policy while preserving byte-size and
-        /// execution limits. A size limit is not provenance validation. Never
-        /// use this for mod-authored assets.
-        /// </summary>
-        public static int ExecuteTrusted(
-            this LuauState state,
+        static InvalidOperationException InvalidContentKind(LuauAsset asset)
+        {
+            return new InvalidOperationException(
+                $"Luau asset '{asset.name}' has unknown serialized content kind " +
+                $"{(int)asset.contentKind}.");
+        }
+
+        static int ExecuteVerified(
+            LuauState state,
             LuauAsset asset,
             Span<LuauValue> destination)
         {
-            return asset.IsPrecompiled
-                ? state.ExecuteTrustedBytecode(asset.AsSpan(), destination, asset.name)
-                : state.DoString(asset.AsSpan(), destination, Encoding.UTF8.GetBytes(asset.name));
-        }
-
-        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
-        public static LuauValue[] ExecuteTrusted(this LuauState state, LuauAsset asset)
-        {
-            return asset.IsPrecompiled
-                ? state.ExecuteTrustedBytecode(asset.AsSpan(), asset.name)
-                : state.DoString(asset.AsSpan(), Encoding.UTF8.GetBytes(asset.name));
-        }
-
-        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
-        public static async ValueTask<int> ExecuteTrustedAsync(
-            this LuauState state,
-            LuauAsset asset,
-            Memory<LuauValue> destination,
-            CancellationToken cancellationToken = default)
-        {
-            if (asset.IsPrecompiled)
-            {
-                return await state.ExecuteTrustedBytecodeAsync(
-                    asset.AsMemory(),
-                    destination,
-                    asset.name.AsMemory(),
-                    cancellationToken);
-            }
-
-            return await state.DoStringAsync(
-                asset.AsMemory(),
+            ValidateVerifiedPayloadBeforeConstruction(state, asset);
+            return state.ExecuteVerifiedBytecode(
+                asset.GetVerifiedBytecode(),
                 destination,
-                Encoding.UTF8.GetBytes(asset.name),
-                cancellationToken: cancellationToken);
+                asset.name);
         }
 
-        /// <inheritdoc cref="ExecuteTrusted(LuauState, LuauAsset, Span{LuauValue})"/>
-        public static async ValueTask<LuauValue[]> ExecuteTrustedAsync(
-            this LuauState state,
-            LuauAsset asset,
-            CancellationToken cancellationToken = default)
+        static LuauValue[] ExecuteVerified(LuauState state, LuauAsset asset)
         {
-            if (asset.IsPrecompiled)
+            ValidateVerifiedPayloadBeforeConstruction(state, asset);
+            return state.ExecuteVerifiedBytecode(asset.GetVerifiedBytecode(), asset.name);
+        }
+
+        static void ValidateVerifiedPayloadBeforeConstruction(
+            LuauState state,
+            LuauAsset asset)
+        {
+            if (state.Options.BytecodePolicy == LuauBytecodePolicy.Reject)
             {
-                return await state.ExecuteTrustedBytecodeAsync(
-                    asset.AsMemory(),
-                    asset.name.AsMemory(),
-                    cancellationToken);
+                var prefix = string.IsNullOrEmpty(asset.name) ? string.Empty : asset.name + ": ";
+                throw new LuauException(
+                    prefix + "Persistent bytecode artifacts are disabled for this state.",
+                    asset.name);
             }
 
-            return await state.DoStringAsync(
-                asset.AsMemory(),
-                Encoding.UTF8.GetBytes(asset.name),
-                cancellationToken: cancellationToken);
+            if (state.Options.BytecodePolicy != LuauBytecodePolicy.RequireValidator)
+                throw new InvalidOperationException("Unknown bytecode policy.");
+
+            var limit = state.Options.MaxBytecodeBytes;
+            if (limit is { } maxBytecodeBytes && asset.PayloadLength > maxBytecodeBytes)
+            {
+                throw new LuauLoadLimitException(
+                    asset.name,
+                    LuauLoadInputKind.Bytecode,
+                    asset.PayloadLength,
+                    maxBytecodeBytes);
+            }
         }
+
     }
 }

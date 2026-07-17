@@ -19,5 +19,13 @@ src/Luau.Unity/Assets/**/obj.meta
 src/Luau.Unity/Assets/**/bin/
 src/Luau.Unity/Assets/**/bin.meta
 
+# Clean path-only Unity package consumer generated state
+tests/Luau.Unity.PackageConsumer/Library/
+tests/Luau.Unity.PackageConsumer/Temp/
+tests/Luau.Unity.PackageConsumer/Logs/
+tests/Luau.Unity.PackageConsumer/UserSettings/
+tests/Luau.Unity.PackageConsumer/ProjectSettings/*
+!tests/Luau.Unity.PackageConsumer/ProjectSettings/ProjectVersion.txt
+
 # Native luau_host CMake output
 native/luau-host/out/

@@ -50,9 +50,7 @@ another Unity platform is not a support claim.
 Before its first compile or state creation, the managed runtime verifies the
 host's self-description, ABI layout, required features, pinned Luau revision,
 and build fingerprint. The native binary exports only the approved
-`luau_host_*` surface. See the
-[Stage 3 implementation notes](docs/stage-3-implementation-notes.md) for the
-native cutover record.
+`luau_host_*` surface.
 
 ## Installation
 
@@ -191,7 +189,8 @@ bool ready = results[2].Read<bool>();
 | buffer | `LuauBuffer` |
 
 VM-backed objects are root-owned references and must be disposed. Primitive
-values are copied. `LuauBuffer.AsSpan()` is a borrowed view: do not retain it
+values are copied. `LuauBuffer.ToArray()`, `Read(...)`, and `Write(...)` copy
+through bounded operations; no borrowed view of native buffer memory is exposed
 across VM actions, collection, wrapper disposal, or root disposal.
 
 Invoke a script function with managed values rather than manipulating its stack:
@@ -221,6 +220,9 @@ The Luau sandbox is one part of host policy. For untrusted content:
 using Luau;
 using Luau.Unity;
 
+// LuauUnityOptions already supplies finite memory, source, compiled-output,
+// wall-clock, interrupt, result, and print-rate limits. Override the complete
+// state policy only after measuring representative mods.
 using var state = LuauUnity.CreateState(new LuauUnityOptions
 {
     StateOptions = new LuauStateOptions
@@ -236,6 +238,7 @@ using var state = LuauUnity.CreateState(new LuauUnityOptions
             MaxResultCount = 64,
         },
     },
+    MaxPrintMessagesPerSecond = 20,
 });
 
 var results = await state.DoStringAsync(
@@ -244,7 +247,11 @@ var results = await state.DoStringAsync(
     cancellationToken: cancellationToken);
 ```
 
-The limits above are examples; tune them against representative workloads.
+The Unity defaults are conservative starting points; the tighter limits above
+are examples. Tune them against representative workloads. Assigning a custom
+`StateOptions` instance replaces the complete finite default policy, so keep
+every required limit in that replacement.
+
 Native VM memory accounting does not include arbitrary allocations performed by
 managed callbacks.
 
@@ -256,40 +263,138 @@ stop, then managed callback failure, then allocator or native failure.
 ## Managed `require()`
 
 `require()` is an opt-in managed host capability. It does not link Luau's native
-Require implementation. The resolver controls aliases, paths, I/O, byte limits,
-and trust. Module execution uses a fresh sandboxed child under a sandboxed root,
-requires exactly one result, and caches results VM-wide without capturing a
-sibling's private globals.
-
-Unity includes resolvers for `Resources` and, when installed, Addressables:
+Require implementation. Load and validate each mod package asynchronously
+before creating its VM, then give that VM one copied, source-only module map.
+Runtime module execution performs no filesystem, Resources, or Addressables I/O.
+Module execution uses a fresh sandboxed child under a sandboxed root, requires
+exactly one result, and caches one result per canonical module ID without
+capturing a sibling's private globals.
 
 ```csharp
+var moduleMap = new LuauModuleMap(
+    new Dictionary<string, byte[]>
+    {
+        ["shared/math"] = sharedMathSourceUtf8,
+        ["features/inventory"] = inventorySourceUtf8,
+    },
+    new Dictionary<string, string>
+    {
+        ["mod"] = "features",
+    });
+
 using var state = LuauUnity.CreateState(new LuauUnityOptions
 {
-    EnableRequire = true,
-    Requirer = ResourcesLuauRequirer.Default,
+    ModuleMap = moduleMap,
 });
 ```
 
-There is no product filesystem resolver. A host needing filesystem I/O must own
-and review that policy outside this package.
+The map copies its source and aliases, canonicalizes equivalent IDs such as
+`foo`, `./foo`, `/foo`, and `foo.luau`, and rejects parent traversal. There is no
+product filesystem or global asset resolver. The host owns package I/O and
+namespace policy outside the VM.
 
-## Bytecode
+## Bytecode Trust Lanes
 
-Ordinary host-supplied bytecode is rejected by default. Untrusted content should
-enter as source. Use explicitly trusted APIs only for bundled content whose
-provenance the host has already established:
+Raw host-supplied bytecode is not a public loading surface. Untrusted mods enter
+as source, and `LuauBytecodePolicy.Reject` is both the default and the zero enum
+value. Development output and persistent first-party artifacts use separate,
+explicit APIs.
+
+### Same-process compiler output
+
+`LuauCompiler.Compile` returns a compiler-issued `LuauCompilerOutput`. It
+cannot be reconstructed from bytes, so it can be loaded on a bytecode-rejecting
+state for SDK tests, editor previews, and other same-process workflows.
+Compilation diagnostics throw `LuauCompilationException`.
 
 ```csharp
-var bytecode = LuauCompiler.Compile("return 42"u8);
-using var function = state.LoadTrustedBytecode(
-    bytecode,
+var output = LuauCompiler.Compile("return 42"u8);
+using var function = state.LoadCompilerOutput(
+    output,
+    "@development/example.luau");
+```
+
+Copying the output bytes does not create another load capability. Once output
+crosses a process, build, cache, file, or asset-bundle boundary, it must use the
+persistent artifact path below.
+
+### Persistent first-party artifacts
+
+Build tooling wraps compiler output in `LuauBytecodeArtifact`, including the
+source and bytecode hashes, compile options, artifact schema, exact Luau/runtime
+identity, and host-defined provenance metadata:
+
+```csharp
+var output = LuauCompiler.Compile(firstPartySource);
+var artifact = LuauBytecodeArtifact.Create(
+    output,
+    "nervbox:first-party/v1",
+    Encoding.UTF8.GetBytes(assetGuid));
+```
+
+Those fields are claims, not proof. Runtime loading requires a state configured
+with `RequireValidator`; the validator must authenticate the artifact against
+data owned by the game build, such as a signed manifest or a compiled hash
+allowlist. It must not trust a provenance label, asset GUID, or hash merely
+because the artifact contains it.
+
+```csharp
+var stateOptions = new LuauStateOptions
+{
+    MemoryLimitBytes = LuauStateOptions.Default.MemoryLimitBytes,
+    MaxSourceBytes = LuauStateOptions.Default.MaxSourceBytes,
+    MaxBytecodeBytes = LuauStateOptions.Default.MaxBytecodeBytes,
+    DefaultExecutionOptions = LuauStateOptions.Default.DefaultExecutionOptions,
+    BytecodePolicy = LuauBytecodePolicy.RequireValidator,
+    BytecodeValidator = firstPartyManifestValidator,
+};
+
+using var firstPartyState = LuauUnity.CreateState(new LuauUnityOptions
+{
+    StateOptions = stateOptions,
+});
+using var function = firstPartyState.LoadVerifiedBytecode(
+    artifact,
     "@bundled/example.luau");
 ```
 
-Unity's `LuauAsset` importer can precompile bundled `.luau` assets. Execute a
-possibly precompiled bundled asset with `ExecuteTrusted`; use ordinary `Execute`
-for source/untrusted assets. Byte-size limits still apply to trusted bytecode.
+The artifact constructor defensively copies serialized buffers and checks its
+schema and bytecode hash. The state also checks the exact compiler/runtime
+identity before invoking the host validator. Caller-provided chunk names are
+diagnostic labels and never participate in provenance.
+
+### Unity importer and mod packaging
+
+The project setting under **Project Settings > Luau.Unity** has two modes:
+
+- `SourceOnly` is the default for SDK and mod projects. The importer still
+  compiles transiently to report authoring errors, but stores UTF-8 source and
+  hides the precompile option.
+- `AllowFirstPartyPrecompile` exposes a per-asset precompile option after a
+  public first-party provenance ID is configured. The importer stores a
+  persistent artifact containing that ID and the asset GUID; execution still
+  requires the state's host validator.
+
+Hiding a checkbox is not the security boundary. Source-only player builds
+inspect imported content and fail if any `LuauAsset` contains bytecode. A custom
+mod exporter should apply the same check to its exact asset set before writing:
+
+```csharp
+LuauSourceOnlyAssetValidator.ValidateSourceOnly(modAssetPaths);
+```
+
+Public `LuauAsset.AsSpan()` and `AsMemory()` remain source-only and throw for
+precompiled or unknown content, so an existing source exporter cannot silently
+package bytecode. The built-in `LuauModuleMap` also remains deliberately
+source-only; a future first-party artifact module graph should use a separately
+named trust path.
+
+Future caches should key artifacts by source hash, compile options, artifact
+schema, upstream revision, and host fingerprint, then re-enter through
+`LoadVerifiedBytecode`. They must never recreate a `LuauCompilerOutput` from
+cached raw bytes. See the
+[background compilation plan](docs/plans/cross-platform-background-compilation.md)
+for the cross-platform worker design.
 
 ## Repository Validation
 
@@ -302,6 +407,18 @@ dotnet test Luau.slnx --no-restore
 
 # Explicit deterministic Release artifact build/check/refresh.
 powershell -ExecutionPolicy Bypass -File tools/Copy-DotNetArtifactsToUnity.ps1 -Configuration Release
+powershell -ExecutionPolicy Bypass -File tools/Copy-DotNetArtifactsToUnity.ps1 -Configuration Release -Check
+
+# Static package, assembly-reference, and source-only policy checks used by CI.
+powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageStatic.ps1
+
+# After building/installing every maintained native preset, refresh/check the
+# three Unity plugins without replacing their importer metadata.
+powershell -ExecutionPolicy Bypass -File tools/Copy-NativeArtifactsToUnity.ps1
+powershell -ExecutionPolicy Bypass -File tools/Copy-NativeArtifactsToUnity.ps1 -Check
+
+# Compile the product from a clean path-only UPM consumer project.
+powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageConsumer.ps1
 
 # Unity compile and EditMode tests.
 Push-Location src/Luau.Unity

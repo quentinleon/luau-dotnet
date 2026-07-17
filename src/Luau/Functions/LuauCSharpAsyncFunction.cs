@@ -23,12 +23,6 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
     int ILuauManagedCallbackFunction.RegistrationId => Volatile.Read(ref registrationId);
     LuauHostManagedFunction ILuauManagedCallbackFunction.Callback => callback;
 
-    internal override ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default)
-    {
-        using var access = AcquireFunctionAccess();
-        return csharpDelegate(access.State, cancellationToken);
-    }
-
     [AOT.MonoPInvokeCallback(typeof(LuauHostManagedFunction))]
     static unsafe int Call(LuauHostState* l)
     {
@@ -49,7 +43,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                 operation.RecordCallbackFailure(
                     null,
                     new InvalidOperationException("The managed callback registration token is missing."));
-                return YieldFailureIfPossible(l);
+                return YieldFailureIfPossible(l, operation);
             }
 
             var id = *idPointer;
@@ -58,7 +52,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                 operation.RecordCallbackFailure(
                     registration?.Name,
                     new ObjectDisposedException(nameof(LuauFunction), "The managed callback is no longer registered."));
-                return YieldFailureIfPossible(l);
+                return YieldFailureIfPossible(l, operation);
             }
 
             if (!operation.IsAsync)
@@ -67,7 +61,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                     registration.Name,
                     new InvalidOperationException(
                         "An asynchronous managed callback cannot run inside a synchronous Luau execution."));
-                return YieldFailureIfPossible(l);
+                return YieldFailureIfPossible(l, operation);
             }
 
             if (luau_host_is_yieldable(l) == 0)
@@ -76,7 +70,7 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
                     registration.Name,
                     new InvalidOperationException(
                         "An asynchronous managed callback requires yieldable Luau execution."));
-                return 0;
+                return YieldFailureIfPossible(l, operation);
             }
 
             // Do not invoke managed user code while luau_host_resume is still on the
@@ -93,13 +87,37 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
         catch (Exception ex)
         {
             operation?.RecordCallbackFailure(registration?.Name, ex);
-            return YieldFailureIfPossible(l);
+            return YieldFailureIfPossible(l, operation);
         }
     }
 
-    static unsafe int YieldFailureIfPossible(LuauHostState* state)
+    static unsafe int YieldFailureIfPossible(LuauHostState* state, ScriptOperation? operation)
     {
-        return luau_host_is_yieldable(state) != 0 ? luau_host_yield(state, 0) : 0;
+        if (luau_host_is_yieldable(state) != 0)
+        {
+            return luau_host_yield(state, 0);
+        }
+
+        if (operation == null)
+        {
+            return 0;
+        }
+
+        var status = luau_host_push_light_userdata(
+            state,
+            (void*)operation.CallbackFailureToken,
+            0);
+        if (status != LuauHostStatus.Ok)
+        {
+            // The token push itself can fail under stack or memory pressure.
+            // Return an invalid negative result so the native trampoline
+            // unwinds immediately; keep the raw managed cause recorded so the
+            // runner can apply managed failure precedence after native return.
+            return -3;
+        }
+
+        operation.PrepareCallbackFailureInjection();
+        return -2;
     }
 
     public override string ToString()

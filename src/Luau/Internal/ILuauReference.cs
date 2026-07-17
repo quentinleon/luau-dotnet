@@ -28,10 +28,10 @@ internal readonly ref struct LuauReferenceAccess
 
     public void Dispose()
     {
-        nativeAccess.Dispose();
         if (lifetimeGate != null)
         {
             Monitor.Exit(lifetimeGate);
         }
+        nativeAccess.Dispose();
     }
 }

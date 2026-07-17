@@ -144,51 +144,36 @@ public readonly struct LuauValue : IEquatable<LuauValue>
     {
         if (typeof(T) == typeof(LuauValue))
         {
-            var r = this;
-            result = Unsafe.As<LuauValue, T>(ref r);
-            return true;
+            return Assign(this, out result);
         }
 
         switch (Type)
         {
             case LuauType.Nil:
-                if (typeof(T) == typeof(object))
+                if (default(T) is null)
                 {
-                    result = Unsafe.NullRef<T>();
+                    result = default!;
                     return true;
                 }
                 break;
             case LuauType.Boolean:
                 if (typeof(T) == typeof(bool))
                 {
-                    var r = value.BooleanValue;
-                    result = Unsafe.As<bool, T>(ref r);
-                    return true;
+                    return Assign(value.BooleanValue, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)value.BooleanValue;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)value.BooleanValue, out result);
                 }
                 break;
             case LuauType.UserData:
                 if (typeof(T) == typeof(LuauUserData))
                 {
-                    var r = (LuauUserData)reference!;
-                    result = Unsafe.As<LuauUserData, T>(ref r);
-                    return true;
+                    return Assign((LuauUserData)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(LuauUserData)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
-                }
-                if (reference is LuauUserData userData && userData.TryRead<T>(out var userDataResult))
-                {
-                    result = userDataResult;
-                    return true;
+                    return Assign((object)(LuauUserData)reference!, out result);
                 }
                 break;
             case LuauType.LightUserData:
@@ -197,226 +182,166 @@ public readonly struct LuauValue : IEquatable<LuauValue>
                 var number = value.NumberValue;
                 if (typeof(T) == typeof(double))
                 {
-                    var r = number;
-                    result = Unsafe.As<double, T>(ref r);
-                    return true;
+                    return Assign(number, out result);
                 }
                 if (typeof(T) == typeof(float))
                 {
-                    var r = (float)number;
-                    result = Unsafe.As<float, T>(ref r);
-                    return true;
+                    return Assign((float)number, out result);
                 }
                 if (typeof(T) == typeof(byte) && MathEx.IsInteger(number) && number >= byte.MinValue && number <= byte.MaxValue)
                 {
-                    var r = (byte)number;
-                    result = Unsafe.As<byte, T>(ref r);
-                    return true;
+                    return Assign((byte)number, out result);
                 }
                 if (typeof(T) == typeof(sbyte) && MathEx.IsInteger(number) && number >= sbyte.MinValue && number <= sbyte.MaxValue)
                 {
-                    var r = (sbyte)number;
-                    result = Unsafe.As<sbyte, T>(ref r);
-                    return true;
+                    return Assign((sbyte)number, out result);
                 }
                 if (typeof(T) == typeof(short) && MathEx.IsInteger(number) && number >= short.MinValue && number <= short.MaxValue)
                 {
-                    var r = (short)number;
-                    result = Unsafe.As<short, T>(ref r);
-                    return true;
+                    return Assign((short)number, out result);
                 }
                 if (typeof(T) == typeof(ushort) && MathEx.IsInteger(number) && number >= ushort.MinValue && number <= ushort.MaxValue)
                 {
-                    var r = (ushort)number;
-                    result = Unsafe.As<ushort, T>(ref r);
-                    return true;
+                    return Assign((ushort)number, out result);
                 }
                 if (typeof(T) == typeof(int) && MathEx.IsInteger(number) && number >= int.MinValue && number <= int.MaxValue)
                 {
-                    var r = (int)number;
-                    result = Unsafe.As<int, T>(ref r);
-                    return true;
+                    return Assign((int)number, out result);
                 }
                 if (typeof(T) == typeof(long) && MathEx.IsInt64(number))
                 {
-                    var r = (long)number;
-                    result = Unsafe.As<long, T>(ref r);
-                    return true;
+                    return Assign((long)number, out result);
                 }
                 if (typeof(T) == typeof(uint) && MathEx.IsInteger(number) && number >= uint.MinValue && number <= uint.MaxValue)
                 {
-                    var r = (uint)number;
-                    result = Unsafe.As<uint, T>(ref r);
-                    return true;
+                    return Assign((uint)number, out result);
                 }
                 if (typeof(T) == typeof(ulong) && MathEx.IsUInt64(number))
                 {
-                    var r = (ulong)number;
-                    result = Unsafe.As<ulong, T>(ref r);
-                    return true;
+                    return Assign((ulong)number, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)number;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)number, out result);
                 }
                 break;
             case LuauType.Integer:
                 var integer = value.IntegerValue;
                 if (typeof(T) == typeof(long))
                 {
-                    var r = integer;
-                    result = Unsafe.As<long, T>(ref r);
-                    return true;
+                    return Assign(integer, out result);
                 }
                 if (typeof(T) == typeof(byte) && integer >= byte.MinValue && integer <= byte.MaxValue)
                 {
-                    var r = (byte)integer;
-                    result = Unsafe.As<byte, T>(ref r);
-                    return true;
+                    return Assign((byte)integer, out result);
                 }
                 if (typeof(T) == typeof(sbyte) && integer >= sbyte.MinValue && integer <= sbyte.MaxValue)
                 {
-                    var r = (sbyte)integer;
-                    result = Unsafe.As<sbyte, T>(ref r);
-                    return true;
+                    return Assign((sbyte)integer, out result);
                 }
                 if (typeof(T) == typeof(short) && integer >= short.MinValue && integer <= short.MaxValue)
                 {
-                    var r = (short)integer;
-                    result = Unsafe.As<short, T>(ref r);
-                    return true;
+                    return Assign((short)integer, out result);
                 }
                 if (typeof(T) == typeof(ushort) && integer >= ushort.MinValue && integer <= ushort.MaxValue)
                 {
-                    var r = (ushort)integer;
-                    result = Unsafe.As<ushort, T>(ref r);
-                    return true;
+                    return Assign((ushort)integer, out result);
                 }
                 if (typeof(T) == typeof(int) && integer >= int.MinValue && integer <= int.MaxValue)
                 {
-                    var r = (int)integer;
-                    result = Unsafe.As<int, T>(ref r);
-                    return true;
+                    return Assign((int)integer, out result);
                 }
                 if (typeof(T) == typeof(uint) && integer >= uint.MinValue && integer <= uint.MaxValue)
                 {
-                    var r = (uint)integer;
-                    result = Unsafe.As<uint, T>(ref r);
-                    return true;
+                    return Assign((uint)integer, out result);
                 }
                 if (typeof(T) == typeof(ulong) && integer >= 0)
                 {
-                    var r = (ulong)integer;
-                    result = Unsafe.As<ulong, T>(ref r);
-                    return true;
+                    return Assign((ulong)integer, out result);
                 }
                 if (typeof(T) == typeof(double) && MathEx.TryConvertToDoubleExact(integer, out var exactDouble))
                 {
-                    result = Unsafe.As<double, T>(ref exactDouble);
-                    return true;
+                    return Assign(exactDouble, out result);
                 }
                 if (typeof(T) == typeof(float) && MathEx.TryConvertToSingleExact(integer, out var exactSingle))
                 {
-                    result = Unsafe.As<float, T>(ref exactSingle);
-                    return true;
+                    return Assign(exactSingle, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)integer;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)integer, out result);
                 }
                 break;
             case LuauType.Vector:
                 if (typeof(T) == typeof(Vector3))
                 {
-                    var r = value.VectorValue;
-                    result = Unsafe.As<Vector3, T>(ref r);
-                    return true;
+                    return Assign(value.VectorValue, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)value.VectorValue;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)value.VectorValue, out result);
                 }
                 break;
             case LuauType.String:
                 if (typeof(T) == typeof(string))
                 {
-                    var r = (string)reference!;
-                    result = Unsafe.As<string, T>(ref r);
-                    return true;
+                    return Assign((string)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(string)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)(string)reference!, out result);
                 }
                 break;
             case LuauType.Table:
                 if (typeof(T) == typeof(LuauTable))
                 {
-                    var r = (LuauTable)reference!;
-                    result = Unsafe.As<LuauTable, T>(ref r);
-                    return true;
+                    return Assign((LuauTable)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(LuauTable)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)(LuauTable)reference!, out result);
                 }
                 break;
             case LuauType.Function:
                 if (typeof(T) == typeof(LuauFunction))
                 {
-                    var r = (LuauFunction)reference!;
-                    result = Unsafe.As<LuauFunction, T>(ref r);
-                    return true;
+                    return Assign((LuauFunction)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(LuauFunction)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)(LuauFunction)reference!, out result);
                 }
                 break;
             case LuauType.Thread:
                 if (typeof(T) == typeof(LuauState))
                 {
-                    var r = (LuauState)reference!;
-                    result = Unsafe.As<LuauState, T>(ref r);
-                    return true;
+                    return Assign((LuauState)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(LuauState)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)(LuauState)reference!, out result);
                 }
                 break;
             case LuauType.Buffer:
                 if (typeof(T) == typeof(LuauBuffer))
                 {
-                    var r = (LuauBuffer)reference!;
-                    result = Unsafe.As<LuauBuffer, T>(ref r);
-                    return true;
+                    return Assign((LuauBuffer)reference!, out result);
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    var r = (object)(LuauBuffer)reference!;
-                    result = Unsafe.As<object, T>(ref r);
-                    return true;
+                    return Assign((object)(LuauBuffer)reference!, out result);
                 }
                 break;
         }
 
-        Unsafe.SkipInit(out result);
+        result = default!;
         return false;
+    }
+
+    static bool Assign<T>(object value, out T result)
+    {
+        result = (T)value;
+        return true;
     }
 
     public bool Equals(LuauValue other)
@@ -427,7 +352,8 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         {
             LuauType.Nil => true,
             LuauType.Boolean => value.BooleanValue == other.value.BooleanValue,
-            LuauType.LightUserData or LuauType.UserData => value.PointerValue == other.value.PointerValue,
+            LuauType.LightUserData => value.PointerValue == other.value.PointerValue,
+            LuauType.UserData => ReferenceEquals(reference, other.reference),
             LuauType.Number => value.NumberValue == other.value.NumberValue,
             LuauType.Integer => value.IntegerValue == other.value.IntegerValue,
             LuauType.Vector => value.VectorValue == other.value.VectorValue,
@@ -443,12 +369,17 @@ public readonly struct LuauValue : IEquatable<LuauValue>
 
     public override int GetHashCode()
     {
-        if (type == LuauType.Integer)
+        return type switch
         {
-            return HashCode.Combine(type, value.IntegerValue);
-        }
-
-        return HashCode.Combine(type, value, reference);
+            LuauType.Nil => HashCode.Combine(type),
+            LuauType.Boolean => HashCode.Combine(type, value.BooleanValue),
+            LuauType.LightUserData => HashCode.Combine(type, value.PointerValue),
+            LuauType.Number => HashCode.Combine(type, value.NumberValue),
+            LuauType.Integer => HashCode.Combine(type, value.IntegerValue),
+            LuauType.Vector => HashCode.Combine(type, value.VectorValue),
+            LuauType.String => HashCode.Combine(type, (string)reference!),
+            _ => HashCode.Combine(type, RuntimeHelpers.GetHashCode(reference!)),
+        };
     }
 
     public static bool operator ==(LuauValue left, LuauValue right)

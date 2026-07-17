@@ -24,12 +24,11 @@ namespace Luau.Unity.Tests
 
             Assert.That(actual, Is.EqualTo(new[]
             {
-                "Luau.Unity.AddressablesLuauRequirer",
                 "Luau.Unity.LuauAsset",
+                "Luau.Unity.LuauModuleMap",
                 "Luau.Unity.LuauStateExtensions",
                 "Luau.Unity.LuauUnity",
                 "Luau.Unity.LuauUnityOptions",
-                "Luau.Unity.ResourcesLuauRequirer",
                 "Luau.Unity.Verification.LuauPlayerSmoke",
             }));
         }
@@ -41,7 +40,7 @@ namespace Luau.Unity.Tests
 
             Assert.That(options.OpenStandardLibraries, Is.True);
             Assert.That(options.OpenDebugLibrary, Is.False);
-            Assert.That(options.EnableRequire, Is.False);
+            Assert.That(options.ModuleMap, Is.Null);
             Assert.That(options.SandboxRoot, Is.True);
             Assert.That(options.CaptureUnitySynchronizationContext, Is.True);
             Assert.That(
@@ -50,8 +49,17 @@ namespace Luau.Unity.Tests
             Assert.That(
                 options.MaxPrintUtf8Bytes,
                 Is.EqualTo(LuauUnityOptions.DefaultMaxPrintUtf8Bytes));
-            Assert.That(options.StateOptions, Is.Not.Null);
+            Assert.That(
+                options.MaxPrintMessagesPerSecond,
+                Is.EqualTo(LuauUnityOptions.DefaultMaxPrintMessagesPerSecond));
+            Assert.That(options.StateOptions, Is.SameAs(LuauStateOptions.Default));
             Assert.That(options.StateOptions.BytecodePolicy, Is.EqualTo(LuauBytecodePolicy.Reject));
+            Assert.That(options.StateOptions.MemoryLimitBytes, Is.Not.Null);
+            Assert.That(options.StateOptions.MaxSourceBytes, Is.Not.Null);
+            Assert.That(options.StateOptions.MaxBytecodeBytes, Is.Not.Null);
+            Assert.That(options.StateOptions.DefaultExecutionOptions.WallClockLimit, Is.Not.Null);
+            Assert.That(options.StateOptions.DefaultExecutionOptions.InterruptCountLimit, Is.Not.Null);
+            Assert.That(options.StateOptions.DefaultExecutionOptions.MaxResultCount, Is.Not.Null);
         }
 
         [Test]
@@ -102,6 +110,41 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
+        public void RegisterPrintRejectsNonPositiveRateLimit()
+        {
+            using var root = LuauState.Create();
+
+            var exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
+                LuauUnity.RegisterPrint(root, _ => { }, 4, 128, 0));
+
+            Assert.That(exception, Is.Not.Null);
+            Assert.That(exception.ParamName, Is.EqualTo("maxMessagesPerSecond"));
+        }
+
+        [Test]
+        public void ConfiguredPrintRateLimitDropsCallsBeforeFormattingArguments()
+        {
+            var messages = new List<string>();
+            using var root = LuauUnity.CreateState(new LuauUnityOptions
+            {
+                MaxPrintMessagesPerSecond = 2,
+                Log = messages.Add,
+            });
+            using var script = root.CreateSandboxedThread();
+
+            var results = script.DoString(
+                "local calls = 0; " +
+                "local value = setmetatable({}, { " +
+                "__tostring = function() calls += 1; return 'formatted' end }); " +
+                "print('one'); print('two'); print(value); return calls",
+                "@unity/rate-limited-print.luau");
+
+            Assert.That(messages, Is.EqualTo(new[] { "one", "two" }));
+            Assert.That(results[0].Read<int>(), Is.Zero,
+                "Suppressed print calls must not invoke argument metamethods.");
+        }
+
+        [Test]
         public void DefaultStateCapturesUnitySynchronizationContextAndPreservesBudgets()
         {
             var currentContext = SynchronizationContext.Current;
@@ -145,6 +188,24 @@ namespace Luau.Unity.Tests
             using var script = root.CreateSandboxedThread();
 
             Assert.That(root.IsRootSandboxed, Is.True);
+            Assert.That(
+                root.Options.MemoryLimitBytes,
+                Is.EqualTo(LuauStateOptions.Default.MemoryLimitBytes));
+            Assert.That(
+                root.Options.MaxSourceBytes,
+                Is.EqualTo(LuauStateOptions.Default.MaxSourceBytes));
+            Assert.That(
+                root.Options.MaxBytecodeBytes,
+                Is.EqualTo(LuauStateOptions.Default.MaxBytecodeBytes));
+            Assert.That(
+                root.Options.DefaultExecutionOptions.WallClockLimit,
+                Is.EqualTo(LuauStateOptions.Default.DefaultExecutionOptions.WallClockLimit));
+            Assert.That(
+                root.Options.DefaultExecutionOptions.InterruptCountLimit,
+                Is.EqualTo(LuauStateOptions.Default.DefaultExecutionOptions.InterruptCountLimit));
+            Assert.That(
+                root.Options.DefaultExecutionOptions.MaxResultCount,
+                Is.EqualTo(LuauStateOptions.Default.DefaultExecutionOptions.MaxResultCount));
 
             var results = script.DoString(
                 "return " +
@@ -197,15 +258,18 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
-        public void DefaultStateRejectsHostSuppliedBytecodeBeforeNativeLoading()
+        public void DefaultStateRejectsPersistentArtifactWithoutValidator()
         {
             using var root = LuauUnity.CreateState(new LuauUnityOptions
             {
                 Log = _ => { },
             });
 
-            var exception = Assert.Throws<LuauException>(() => root.Execute(
-                new byte[] { 0xff, 0x00, 0x80, 0x01 },
+            var output = LuauCompiler.Compile(Encoding.UTF8.GetBytes("return 42"));
+            var artifact = LuauBytecodeArtifact.Create(output, "tests:first-party");
+
+            var exception = Assert.Throws<LuauException>(() => root.ExecuteVerifiedBytecode(
+                artifact,
                 "@unity/untrusted-bytecode.luau"));
 
             Assert.That(exception, Is.Not.Null);
@@ -214,53 +278,19 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
-        public void SerializedPrecompiledFlagCannotBypassStateBytecodePolicy()
+        public void LuauAssetExecutionAlwaysCompilesStoredUtf8Source()
         {
             var asset = ScriptableObject.CreateInstance<LuauAsset>();
             try
             {
-                asset.name = "untrusted-addressable";
+                asset.name = "source-only-asset";
+                var source = Encoding.UTF8.GetBytes("return 42");
                 var serialized = new SerializedObject(asset);
-                serialized.FindProperty("isPrecompiled").boolValue = true;
-                serialized.FindProperty("bytes").arraySize = 4;
-                serialized.FindProperty("bytes").GetArrayElementAtIndex(0).intValue = 0xff;
-                serialized.FindProperty("bytes").GetArrayElementAtIndex(1).intValue = 0x00;
-                serialized.FindProperty("bytes").GetArrayElementAtIndex(2).intValue = 0x80;
-                serialized.FindProperty("bytes").GetArrayElementAtIndex(3).intValue = 0x01;
-                serialized.ApplyModifiedPropertiesWithoutUndo();
-
-                using var root = LuauUnity.CreateState(new LuauUnityOptions
+                var bytes = serialized.FindProperty("bytes");
+                bytes.arraySize = source.Length;
+                for (var index = 0; index < source.Length; index++)
                 {
-                    Log = _ => { },
-                });
-                using var script = root.CreateSandboxedThread();
-
-                var exception = Assert.Throws<LuauException>(() => script.Execute(asset));
-                Assert.That(exception, Is.Not.Null);
-                Assert.That(exception.Message, Does.Contain("disabled").IgnoreCase);
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(asset);
-            }
-        }
-
-        [Test]
-        public void TrustedAndUntrustedPrecompiledAssetExecutionRemainDistinct()
-        {
-            var asset = ScriptableObject.CreateInstance<LuauAsset>();
-            try
-            {
-                asset.name = "bundled-host-script";
-                var bytecode = LuauCompiler.Compile(Encoding.UTF8.GetBytes("return 42"));
-                var serialized = new SerializedObject(asset);
-                serialized.FindProperty("isPrecompiled").boolValue = true;
-                serialized.FindProperty("bytes").arraySize = bytecode.Length;
-                for (var index = 0; index < bytecode.Length; index++)
-                {
-                    serialized.FindProperty("bytes")
-                        .GetArrayElementAtIndex(index)
-                        .intValue = bytecode[index];
+                    bytes.GetArrayElementAtIndex(index).intValue = source[index];
                 }
 
                 serialized.ApplyModifiedPropertiesWithoutUndo();
@@ -271,16 +301,145 @@ namespace Luau.Unity.Tests
                 });
                 using var script = root.CreateSandboxedThread();
 
-                Assert.Throws<LuauException>(() => script.Execute(asset));
-
-                var results = script.ExecuteTrusted(asset);
+                var results = script.Execute(asset);
                 Assert.That(results, Has.Length.EqualTo(1));
                 Assert.That(results[0].Read<int>(), Is.EqualTo(42));
+                Assert.That(serialized.FindProperty("isPrecompiled"), Is.Null);
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(asset);
             }
+        }
+
+        [Test]
+        public void PersistentAssetPolicyAndSizeChecksPrecedeArtifactReconstruction()
+        {
+            var asset = ScriptableObject.CreateInstance<LuauAsset>();
+            try
+            {
+                asset.name = "fabricated-bytecode";
+                var serialized = new SerializedObject(asset);
+                serialized.FindProperty("contentKind").intValue = 1;
+                var bytes = serialized.FindProperty("bytes");
+                bytes.arraySize = 2;
+                bytes.GetArrayElementAtIndex(0).intValue = 1;
+                bytes.GetArrayElementAtIndex(1).intValue = 2;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+
+                using (var rejecting = LuauState.Create())
+                {
+                    var exception = Assert.Throws<LuauException>(() => rejecting.Execute(asset));
+                    Assert.That(exception.Message, Does.Contain("disabled").IgnoreCase);
+                }
+
+                using (var bounded = LuauState.Create(new LuauStateOptions
+                {
+                    BytecodePolicy = LuauBytecodePolicy.RequireValidator,
+                    BytecodeValidator = AcceptArtifactValidator.Instance,
+                    MaxBytecodeBytes = 1,
+                }))
+                {
+                    var exception = Assert.Throws<LuauLoadLimitException>(() => bounded.Execute(asset));
+                    Assert.That(exception.ActualBytes, Is.EqualTo(2));
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void ModuleMapCopiesInputsAndCanonicalizesRequireIdentity()
+        {
+            var moduleSource = Encoding.UTF8.GetBytes("mark(); return {}");
+            var modules = new Dictionary<string, byte[]>
+            {
+                ["folder/module.luau"] = moduleSource,
+            };
+            var aliases = new Dictionary<string, string>
+            {
+                ["mod"] = "folder",
+            };
+            var moduleMap = new LuauModuleMap(modules, aliases);
+
+            moduleSource[0] = (byte)'x';
+            modules.Clear();
+            aliases["mod"] = "other";
+
+            var executions = 0;
+            using var root = LuauUnity.CreateState(new LuauUnityOptions
+            {
+                ModuleMap = moduleMap,
+                ConfigureHostApis = state =>
+                {
+                    state["mark"] = state.CreateFunction("mark", _ => executions++);
+                },
+                Log = _ => { },
+            });
+            using var script = root.CreateSandboxedThread();
+
+            var results = script.DoString(
+                "local a = require('folder/module'); " +
+                "local b = require('./folder/module.luau'); " +
+                "local c = require('/folder/module'); " +
+                "local d = require('@mod/module'); " +
+                "return a == b and b == c and c == d",
+                "@unity/module-map.luau");
+
+            Assert.That(results[0].Read<bool>(), Is.True);
+            Assert.That(executions, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ModuleMapRejectsNamespaceTraversalAndCanonicalDuplicates()
+        {
+            var traversal = Assert.Throws<ArgumentException>(() =>
+                LuauModuleMap.CanonicalizeModuleId("../other-mod/secret"));
+            Assert.That(traversal, Is.Not.Null);
+
+            var undeclaredAlias = Assert.Throws<ArgumentException>(() =>
+                LuauModuleMap.CanonicalizeModuleId("@other-mod/secret"));
+            Assert.That(undeclaredAlias, Is.Not.Null);
+
+            var duplicate = Assert.Throws<ArgumentException>(() =>
+                new LuauModuleMap(new Dictionary<string, byte[]>
+                {
+                    ["module"] = Encoding.UTF8.GetBytes("return 1"),
+                    ["./module.luau"] = Encoding.UTF8.GetBytes("return 2"),
+                }));
+            Assert.That(duplicate, Is.Not.Null);
+        }
+
+        [Test]
+        public void ModuleMapCannotResolveOutsideItsExplicitNamespace()
+        {
+            var moduleMap = new LuauModuleMap(new Dictionary<string, byte[]>
+            {
+                ["allowed/module"] = Encoding.UTF8.GetBytes("return 1"),
+            });
+            using var root = LuauUnity.CreateState(new LuauUnityOptions
+            {
+                ModuleMap = moduleMap,
+                Log = _ => { },
+            });
+            using var script = root.CreateSandboxedThread();
+
+            var exception = Assert.Throws<LuauManagedCallbackException>(() =>
+                script.DoString("return require('not-in-map')"));
+
+            Assert.That(exception, Is.Not.Null);
+            Assert.That(exception.Message, Does.Contain("not found").IgnoreCase);
+        }
+
+        sealed class AcceptArtifactValidator : ILuauBytecodeValidator
+        {
+            public static AcceptArtifactValidator Instance { get; } = new();
+
+            public bool IsValid(
+                LuauBytecodeArtifact artifact,
+                ReadOnlySpan<byte> bytecode) => true;
         }
     }
 }

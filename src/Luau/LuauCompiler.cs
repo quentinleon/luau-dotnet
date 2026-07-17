@@ -1,5 +1,6 @@
 using System.Buffers;
-using System.Runtime.InteropServices;
+using System.Text;
+using Luau.Internal;
 using Luau.Internal.Interop;
 using static Luau.Internal.Interop.NativeMethods;
 
@@ -9,16 +10,22 @@ public unsafe static class LuauCompiler
 {
     const ulong MaximumManagedBytecodeLength = 0X7FFFFFC7; // Array.MaxLength
 
-    public static void Compile(IBufferWriter<byte> writer, ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
+    internal static void Compile(
+        IBufferWriter<byte> writer,
+        ReadOnlySpan<byte> source,
+        LuauCompileOptions? options,
+        LuauNativeAbiVerifier abiVerifier)
     {
-        Compile(writer, source, options, LuauNativeProtection.AbiVerifier);
+        Compile(writer, source, options, abiVerifier, null, null);
     }
 
     internal static void Compile(
         IBufferWriter<byte> writer,
         ReadOnlySpan<byte> source,
         LuauCompileOptions? options,
-        LuauNativeAbiVerifier abiVerifier)
+        LuauNativeAbiVerifier abiVerifier,
+        int? maximumOutputBytes,
+        string? chunkName)
     {
         if (writer == null)
         {
@@ -45,6 +52,15 @@ public unsafe static class LuauCompiler
             }
 
             var length = GetManagedBytecodeLength(output.data, output.size);
+            if (maximumOutputBytes is { } limit && length > limit)
+            {
+                throw new LuauLoadLimitException(
+                    chunkName,
+                    LuauLoadInputKind.Bytecode,
+                    length,
+                    limit);
+            }
+
             var destination = writer.GetSpan(length);
             if (destination.Length < length)
             {
@@ -60,14 +76,48 @@ public unsafe static class LuauCompiler
         }
     }
 
-    public static byte[] Compile(ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
+    /// <summary>
+    /// Compiles an owned snapshot of UTF-8 source into opaque, loadable output.
+    /// </summary>
+    /// <exception cref="LuauCompilationException">
+    /// The compiler reports a source diagnostic or no loadable output.
+    /// </exception>
+    public static LuauCompilerOutput Compile(ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
     {
         return Compile(source, options, LuauNativeProtection.AbiVerifier);
     }
 
-    internal static byte[] Compile(
+    internal static LuauCompilerOutput Compile(
         ReadOnlySpan<byte> source,
         LuauCompileOptions? options,
+        LuauNativeAbiVerifier abiVerifier)
+    {
+        var compileOptions = (options ?? LuauCompileOptions.Default) with { };
+        var sourceSnapshot = source.ToArray();
+        var bytecode = CompileBytecode(sourceSnapshot, compileOptions, abiVerifier);
+        if (bytecode.Length == 0)
+        {
+            throw new LuauCompilationException("The Luau compiler returned an empty result.");
+        }
+        if (bytecode[0] == 0)
+        {
+            var message = bytecode.Length == 1
+                ? "The Luau compiler failed without a diagnostic."
+                : Encoding.UTF8.GetString(bytecode, 1, bytecode.Length - 1);
+            throw new LuauCompilationException(message);
+        }
+
+        return new LuauCompilerOutput(
+            bytecode,
+            compileOptions,
+            LuauBytecodeHash.Sha256(sourceSnapshot),
+            LuauNativeProtection.ExpectedUpstreamRevisionHash,
+            LuauNativeProtection.ExpectedHostBuildFingerprint);
+    }
+
+    static byte[] CompileBytecode(
+        ReadOnlySpan<byte> source,
+        LuauCompileOptions options,
         LuauNativeAbiVerifier abiVerifier)
     {
         if (abiVerifier == null)
@@ -81,7 +131,7 @@ public unsafe static class LuauCompiler
         {
             fixed (byte* ptr = source)
             {
-                var nativeOptions = CreateHostCompileOptions(options ?? LuauCompileOptions.Default);
+                var nativeOptions = CreateHostCompileOptions(options);
                 var status = luau_host_compile(
                     ptr,
                     checked((ulong)source.Length),

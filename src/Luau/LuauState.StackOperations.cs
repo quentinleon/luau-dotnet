@@ -524,15 +524,6 @@ public unsafe partial class LuauState
             LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"));
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal T ToUserData<T>(int index)
-        where T : unmanaged
-    {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        return *(T*)luau_host_to_userdata(l, index);
-    }
-
     internal void Push(LuauValue value)
     {
         switch (value.Type)
@@ -708,30 +699,11 @@ public unsafe partial class LuauState
         PushReference(value);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void PushUserData<T>(T value)
-        where T : unmanaged
-    {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        void* rawPointer = null;
-        LuauNativeProtection.Prepare(context);
-        var status = luau_host_userdata_create(
-            l,
-            (ulong)sizeof(T),
-            0,
-            &rawPointer);
-        LuauNativeProtection.ThrowIfFailed(this, l, status, "create Luau userdata");
-
-        var ptr = (T*)rawPointer;
-        *ptr = value;
-    }
-
     internal void PushFunction(LuauFunction value)
     {
         ThrowIfDisposed();
-        using var functionAccess = value.AcquireForPush();
         using var access = EnterNativeAccess();
+        using var functionAccess = value.AcquireForPush();
         if (value is LuauScriptFunction scriptFunc)
         {
             PushReference(scriptFunc);

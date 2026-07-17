@@ -8,4 +8,3 @@ ScriptedImporter:
   assetBundleName: 
   assetBundleVariant: 
   script: {fileID: 11500000, guid: bd144ed2fa3524aa6970eba00c7d950b, type: 3}
-  precompile: 1

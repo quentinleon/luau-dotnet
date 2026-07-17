@@ -1,0 +1,45 @@
+name: Validate Managed Unity Package
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Test managed source and shipped artifacts
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.306
+
+      - name: Restore managed solution
+        run: dotnet restore Luau.slnx
+
+      - name: Run managed tests
+        run: dotnet test Luau.slnx --no-restore --configuration Release
+
+      - name: Require current Unity managed artifacts
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Copy-DotNetArtifactsToUnity.ps1
+          -Configuration Release
+          -Check
+
+      - name: Validate Unity package static boundaries
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Test-UnityPackageStatic.ps1

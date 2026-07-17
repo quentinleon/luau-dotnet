@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using Luau.Internal.Interop;
 using static Luau.Internal.Interop.NativeMethods;
 
@@ -177,10 +176,7 @@ unsafe partial class LuauState
 
         try
         {
-            fixed (byte* val = str)
-            {
-                Unsafe.CopyBlock(data, val, (uint)str.Length);
-            }
+            str.CopyTo(new Span<byte>(data, str.Length));
 
             return new LuauBuffer(this, ReferenceTopValue("retain a buffer"));
         }
@@ -190,84 +186,32 @@ unsafe partial class LuauState
         }
     }
 
-    public unsafe LuauUserData CreateUserData<T>(T value)
-        where T : unmanaged
+    public LuauValue CreateFrom<T>(T? value)
     {
         ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-
-        var size = sizeof(T);
-        void* ptr = null;
-        LuauNativeProtection.Prepare(context);
-        var status = luau_host_userdata_create(l, (ulong)size, 0, &ptr);
-        LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
-
-        try
-        {
-            Unsafe.CopyBlock(ptr, &value, (uint)size);
-
-            return new LuauUserData(this, ReferenceTopValue("retain userdata"));
-        }
-        finally
-        {
-            SetTop(-2);
-        }
-    }
-
-    public unsafe LuauValue CreateFrom<T>(T? value)
-    {
-        ThrowIfDisposed();
-        using var access = EnterNativeAccess();
 
         if (value == null) return LuauValue.Nil;
 
-        if (typeof(T) == typeof(LuauValue)) return Unsafe.As<T, LuauValue>(ref value);
+        if (value is LuauValue luauValue) return luauValue;
+        if (value is bool boolean) return LuauValue.FromBoolean(boolean);
+        if (value is string text) return LuauValue.FromString(text);
+        if (value is Vector3 vector) return LuauValue.FromVector(vector);
+        if (value is LuauFunction function) return LuauValue.FromFunction(function);
+        if (value is LuauTable table) return LuauValue.FromTable(table);
+        if (value is LuauBuffer buffer) return LuauValue.FromBuffer(buffer);
+        if (value is LuauState state) return LuauValue.FromThread(state);
+        if (value is LuauUserData userData) return LuauValue.FromUserData(userData);
 
-        if (typeof(T) == typeof(bool)) return LuauValue.FromBoolean(Unsafe.As<T, bool>(ref value));
-        if (typeof(T) == typeof(string)) return LuauValue.FromString(Unsafe.As<T, string>(ref value));
-        if (typeof(T) == typeof(Vector3)) return LuauValue.FromVector(Unsafe.As<T, Vector3>(ref value));
-        if (typeof(T) == typeof(LuauFunction)) return LuauValue.FromFunction(Unsafe.As<T, LuauFunction>(ref value));
-        if (typeof(T) == typeof(LuauTable)) return LuauValue.FromTable(Unsafe.As<T, LuauTable>(ref value));
-        if (typeof(T) == typeof(LuauBuffer)) return LuauValue.FromBuffer(Unsafe.As<T, LuauBuffer>(ref value));
-        if (typeof(T) == typeof(LuauState)) return LuauValue.FromThread(Unsafe.As<T, LuauState>(ref value));
-        if (typeof(T) == typeof(LuauUserData)) return LuauValue.FromUserData(Unsafe.As<T, LuauUserData>(ref value));
-
-        if (typeof(T) == typeof(byte)) return LuauValue.FromInteger(Unsafe.As<T, byte>(ref value));
-        if (typeof(T) == typeof(sbyte)) return LuauValue.FromInteger(Unsafe.As<T, sbyte>(ref value));
-        if (typeof(T) == typeof(short)) return LuauValue.FromInteger(Unsafe.As<T, short>(ref value));
-        if (typeof(T) == typeof(ushort)) return LuauValue.FromInteger(Unsafe.As<T, ushort>(ref value));
-        if (typeof(T) == typeof(int)) return LuauValue.FromInteger(Unsafe.As<T, int>(ref value));
-        if (typeof(T) == typeof(uint)) return LuauValue.FromInteger(Unsafe.As<T, uint>(ref value));
-        if (typeof(T) == typeof(long)) return LuauValue.FromInteger(Unsafe.As<T, long>(ref value));
-        if (typeof(T) == typeof(ulong))
-        {
-            return LuauValue.FromInteger(checked((long)Unsafe.As<T, ulong>(ref value)));
-        }
-        if (typeof(T) == typeof(float)) return LuauValue.FromNumber(Unsafe.As<T, float>(ref value));
-        if (typeof(T) == typeof(double)) return LuauValue.FromNumber(Unsafe.As<T, double>(ref value));
-
-        if (!RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-        {
-#pragma warning disable CS8500
-            var size = sizeof(T);
-            void* ptr = null;
-            LuauNativeProtection.Prepare(context);
-            var status = luau_host_userdata_create(l, (ulong)size, 0, &ptr);
-            LuauNativeProtection.ThrowIfFailed(this, l, status, "create userdata");
-
-            try
-            {
-                Unsafe.CopyBlock(ptr, &value, (uint)size);
-
-                var reference = ReferenceTopValue("retain userdata");
-                return LuauValue.FromUserData(new LuauUserData(this, reference));
-            }
-            finally
-            {
-                SetTop(-2);
-            }
-#pragma warning restore CS8500
-        }
+        if (value is byte unsignedByte) return LuauValue.FromInteger(unsignedByte);
+        if (value is sbyte signedByte) return LuauValue.FromInteger(signedByte);
+        if (value is short signedShort) return LuauValue.FromInteger(signedShort);
+        if (value is ushort unsignedShort) return LuauValue.FromInteger(unsignedShort);
+        if (value is int signedInteger) return LuauValue.FromInteger(signedInteger);
+        if (value is uint unsignedInteger) return LuauValue.FromInteger(unsignedInteger);
+        if (value is long signedLong) return LuauValue.FromInteger(signedLong);
+        if (value is ulong unsignedLong) return LuauValue.FromInteger(checked((long)unsignedLong));
+        if (value is float single) return LuauValue.FromNumber(single);
+        if (value is double number) return LuauValue.FromNumber(number);
 
         ThrowHelper.ThrowArgumentException(nameof(value), $"Cannot convert {typeof(T).Name} to LuauValue");
         return default; // dummy

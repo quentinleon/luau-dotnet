@@ -7,184 +7,169 @@ namespace Luau;
 
 partial class LuauState
 {
-    public int Execute(
-        ReadOnlySpan<byte> bytecode,
+    /// <summary>
+    /// Executes opaque output produced by this process's compiler and returns
+    /// all results under the state's normal execution limits.
+    /// </summary>
+    public LuauValue[] ExecuteCompilerOutput(
+        LuauCompilerOutput output,
+        ReadOnlySpan<char> chunkName = default,
+        LuauExecutionOptions? executionOptions = null) =>
+        ExecuteCompilerOutputCore(output, default, chunkName, executionOptions, hasDestination: false).Results!;
+
+    /// <summary>Executes compiler output into a caller-owned result span.</summary>
+    public int ExecuteCompilerOutput(
+        LuauCompilerOutput output,
         Span<LuauValue> destination,
-        ReadOnlySpan<char> chunkName,
+        ReadOnlySpan<char> chunkName = default,
+        LuauExecutionOptions? executionOptions = null) =>
+        ExecuteCompilerOutputCore(output, destination, chunkName, executionOptions, hasDestination: true).Count;
+
+    /// <summary>Asynchronously executes compiler output and returns all results.</summary>
+    public async ValueTask<LuauValue[]> ExecuteCompilerOutputAsync(
+        LuauCompilerOutput output,
+        ReadOnlyMemory<char> chunkName = default,
+        CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
-        using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
+        ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
+        ValidateCompilerOutputArgument(output, chunkName.Span);
+        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, chunkName);
-        return runner.Run(operation, this, 0, destination);
+        LoadAcceptedBytecodeInternal(output.Bytecode, chunkName.Span);
+        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
-    public int Execute(
-        ReadOnlySpan<byte> bytecode,
-        Span<LuauValue> destination,
-        ReadOnlySpan<byte> utf8ChunkName = default,
+    /// <summary>Asynchronously executes compiler output into caller-owned memory.</summary>
+    public async ValueTask<int> ExecuteCompilerOutputAsync(
+        LuauCompilerOutput output,
+        Memory<LuauValue> destination,
+        ReadOnlyMemory<char> chunkName = default,
+        CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
-        using var operation = BeginOperation(utf8ChunkName, executionOptions, default, isAsync: false);
+        ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
+        ValidateCompilerOutputArgument(output, chunkName.Span);
+        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, utf8ChunkName);
-        return runner.Run(operation, this, 0, destination);
-    }
-
-    public LuauValue[] Execute(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<char> chunkName,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, chunkName);
-        return runner.Run(operation, this, 0);
-    }
-
-    public LuauValue[] Execute(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<byte> utf8ChunkName = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        using var operation = BeginOperation(utf8ChunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, utf8ChunkName);
-        return runner.Run(operation, this, 0);
+        LoadAcceptedBytecodeInternal(output.Bytecode, chunkName.Span);
+        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Executes bytecode whose provenance has already been established by the
-    /// host, bypassing <see cref="LuauStateOptions.BytecodePolicy"/> while still
-    /// enforcing the configured bytecode-size and execution limits.
-    /// A size limit is not provenance validation. Never use this API for bytes
-    /// supplied directly by an untrusted mod.
+    /// Validates and executes a persistent artifact, returning all results.
+    /// The chunk name is diagnostic and is never part of provenance validation.
     /// </summary>
-    public LuauValue[] ExecuteTrustedBytecode(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<char> chunkName,
+    public LuauValue[] ExecuteVerifiedBytecode(
+        LuauBytecodeArtifact artifact,
+        ReadOnlySpan<char> chunkName = default,
+        LuauExecutionOptions? executionOptions = null) =>
+        ExecuteVerifiedBytecodeCore(artifact, default, chunkName, executionOptions, hasDestination: false).Results!;
+
+    /// <summary>Validates and executes an artifact into a caller-owned span.</summary>
+    public int ExecuteVerifiedBytecode(
+        LuauBytecodeArtifact artifact,
+        Span<LuauValue> destination,
+        ReadOnlySpan<char> chunkName = default,
+        LuauExecutionOptions? executionOptions = null) =>
+        ExecuteVerifiedBytecodeCore(artifact, destination, chunkName, executionOptions, hasDestination: true).Count;
+
+    /// <summary>Asynchronously validates and executes a persistent artifact.</summary>
+    public async ValueTask<LuauValue[]> ExecuteVerifiedBytecodeAsync(
+        LuauBytecodeArtifact artifact,
+        ReadOnlyMemory<char> chunkName = default,
+        CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
-        using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
+        ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
+        ValidateArtifactArgument(artifact, chunkName.Span);
+        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, chunkName, trustedCompilerOutput: true);
-        return runner.Run(operation, this, 0);
+        LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName.Span);
+        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
-    /// <inheritdoc cref="ExecuteTrustedBytecode(ReadOnlySpan{byte}, ReadOnlySpan{char}, LuauExecutionOptions?)"/>
-    public int ExecuteTrustedBytecode(
-        ReadOnlySpan<byte> bytecode,
+    /// <summary>
+    /// Asynchronously validates and executes an artifact into caller-owned memory.
+    /// </summary>
+    public async ValueTask<int> ExecuteVerifiedBytecodeAsync(
+        LuauBytecodeArtifact artifact,
+        Memory<LuauValue> destination,
+        ReadOnlyMemory<char> chunkName = default,
+        CancellationToken cancellationToken = default,
+        LuauExecutionOptions? executionOptions = null)
+    {
+        ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
+        ValidateArtifactArgument(artifact, chunkName.Span);
+        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
+        using var runner = ScriptRunner.Rent();
+        LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName.Span);
+        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+    }
+
+    (LuauValue[]? Results, int Count) ExecuteCompilerOutputCore(
+        LuauCompilerOutput output,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName,
-        LuauExecutionOptions? executionOptions = null)
+        LuauExecutionOptions? executionOptions,
+        bool hasDestination)
     {
+        ValidateCompilerOutputArgument(output, chunkName);
         using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode, chunkName, trustedCompilerOutput: true);
-        return runner.Run(operation, this, 0, destination);
+        LoadAcceptedBytecodeInternal(output.Bytecode, chunkName);
+        return hasDestination
+            ? (null, runner.Run(operation, this, 0, destination))
+            : (runner.Run(operation, this, 0), 0);
     }
 
-    /// <inheritdoc cref="ExecuteTrustedBytecode(ReadOnlySpan{byte}, ReadOnlySpan{char}, LuauExecutionOptions?)"/>
-    public async ValueTask<LuauValue[]> ExecuteTrustedBytecodeAsync(
-        ReadOnlyMemory<byte> bytecode,
-        ReadOnlyMemory<char> chunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
+    (LuauValue[]? Results, int Count) ExecuteVerifiedBytecodeCore(
+        LuauBytecodeArtifact artifact,
+        Span<LuauValue> destination,
+        ReadOnlySpan<char> chunkName,
+        LuauExecutionOptions? executionOptions,
+        bool hasDestination)
     {
-        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
+        ValidateArtifactArgument(artifact, chunkName);
+        using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
         using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, chunkName.Span, trustedCompilerOutput: true);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName);
+        return hasDestination
+            ? (null, runner.Run(operation, this, 0, destination))
+            : (runner.Run(operation, this, 0), 0);
     }
 
-    /// <inheritdoc cref="ExecuteTrustedBytecode(ReadOnlySpan{byte}, ReadOnlySpan{char}, LuauExecutionOptions?)"/>
-    public async ValueTask<int> ExecuteTrustedBytecodeAsync(
-        ReadOnlyMemory<byte> bytecode,
-        Memory<LuauValue> destination,
-        ReadOnlyMemory<char> chunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
+    void ValidateCompilerOutputArgument(LuauCompilerOutput output, ReadOnlySpan<char> chunkName)
     {
-        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, chunkName.Span, trustedCompilerOutput: true);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+        if (output == null)
+        {
+            throw new ArgumentNullException(nameof(output));
+        }
+
+        ThrowIfDisposed();
+        ValidateCompilerOutput(output, DecodeChunkName(chunkName));
     }
 
-    public ValueTask<int> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        Memory<LuauValue> destination,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
+    void ValidateArtifactArgument(LuauBytecodeArtifact artifact, ReadOnlySpan<char> chunkName)
     {
-        return ExecuteAsync(
-            bytecode,
-            destination,
-            ReadOnlyMemory<byte>.Empty,
-            cancellationToken,
-            executionOptions);
+        if (artifact == null)
+        {
+            throw new ArgumentNullException(nameof(artifact));
+        }
+
+        ThrowIfDisposed();
+        ValidateArtifact(artifact, DecodeChunkName(chunkName));
     }
 
-    public async ValueTask<int> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        Memory<LuauValue> destination,
-        ReadOnlyMemory<char> chunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
+    void ThrowIfAsyncExecutionCannotStart(
+        ReadOnlySpan<char> chunkName,
+        CancellationToken cancellationToken)
     {
-        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
-    }
-
-    public async ValueTask<int> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        Memory<LuauValue> destination,
-        ReadOnlyMemory<byte> utf8ChunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        using var operation = BeginOperation(utf8ChunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, utf8ChunkName.Span);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
-    }
-
-    public ValueTask<LuauValue[]> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        return ExecuteAsync(
-            bytecode,
-            ReadOnlyMemory<byte>.Empty,
-            cancellationToken,
-            executionOptions);
-    }
-
-    public async ValueTask<LuauValue[]> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        ReadOnlyMemory<char> chunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
-    }
-
-    public async ValueTask<LuauValue[]> ExecuteAsync(
-        ReadOnlyMemory<byte> bytecode,
-        ReadOnlyMemory<byte> utf8ChunkName,
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        using var operation = BeginOperation(utf8ChunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        LoadInternal(bytecode.Span, utf8ChunkName.Span);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        ThrowIfDisposed();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw new LuauExecutionCanceledException(DecodeChunkName(chunkName), cancellationToken);
+        }
     }
 
     public LuauValue[] DoString(
@@ -335,15 +320,37 @@ partial class LuauState
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
-    internal unsafe LuauValue[] DoBytecodeForRequire(
-        ReadOnlySpan<byte> bytecode,
-        ReadOnlySpan<byte> utf8ChunkName,
-        bool trustedCompilerOutput)
+    internal unsafe LuauValue[] DoCompilerOutputForRequire(
+        LuauCompilerOutput output,
+        ReadOnlySpan<byte> utf8ChunkName)
     {
+        if (output == null)
+        {
+            throw new ArgumentNullException(nameof(output));
+        }
+
         ThrowIfDisposed();
+        ValidateCompilerOutput(output, DecodeChunkName(utf8ChunkName));
         using var access = EnterNativeAccess();
         var baseTop = luau_host_stack_get_top(l);
-        LoadInternal(bytecode, utf8ChunkName, trustedCompilerOutput);
+        LoadAcceptedBytecodeInternal(output.Bytecode, utf8ChunkName);
+        return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
+    }
+
+    internal unsafe LuauValue[] DoVerifiedBytecodeForRequire(
+        LuauBytecodeArtifact artifact,
+        ReadOnlySpan<byte> utf8ChunkName)
+    {
+        if (artifact == null)
+        {
+            throw new ArgumentNullException(nameof(artifact));
+        }
+
+        ThrowIfDisposed();
+        ValidateArtifact(artifact, DecodeChunkName(utf8ChunkName));
+        using var access = EnterNativeAccess();
+        var baseTop = luau_host_stack_get_top(l);
+        LoadAcceptedBytecodeInternal(artifact.Bytecode, utf8ChunkName);
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
@@ -384,10 +391,19 @@ partial class LuauState
         ReadOnlySpan<byte> utf8ChunkName,
         LuauCompileOptions? options)
     {
-        state.ValidateSourceSize(utf8Source.Length, DecodeChunkName(utf8ChunkName));
+        var chunkName = DecodeChunkName(utf8ChunkName);
+        state.ValidateSourceSize(utf8Source.Length, chunkName);
+        ThrowIfCompilationStopped(state);
         using var writer = new ArrayPoolBufferWriter(512);
-        LuauCompiler.Compile(writer, utf8Source, options);
-        state.LoadInternal(writer.WrittenSpan, utf8ChunkName, trustedCompilerOutput: true);
+        LuauCompiler.Compile(
+            writer,
+            utf8Source,
+            options,
+            LuauNativeProtection.AbiVerifier,
+            state.Options.MaxBytecodeBytes,
+            chunkName);
+        ThrowIfCompilationStopped(state);
+        state.LoadAcceptedBytecodeInternal(writer.WrittenSpan, utf8ChunkName);
     }
 
     static void CompileAndLoadString(
@@ -416,6 +432,15 @@ partial class LuauState
         {
             ArrayPool<byte>.Shared.Return(sourceBuffer);
             ArrayPool<byte>.Shared.Return(chunkBuffer);
+        }
+    }
+
+    static void ThrowIfCompilationStopped(LuauState state)
+    {
+        var operation = state.Context.GetActiveOperation();
+        if (operation?.GetHardStopException() is { } exception)
+        {
+            throw exception;
         }
     }
 

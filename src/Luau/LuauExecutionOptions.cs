@@ -1,8 +1,9 @@
 namespace Luau;
 
 /// <summary>
-/// Configures optional budgets for one Luau execution or resume operation.
-/// A <see langword="null"/> budget is unlimited.
+/// Configures optional budgets for Luau execution or resume operations.
+/// State defaults are authoritative. Per-operation values may add or tighten
+/// limits but cannot remove state limits or replace its continuation scheduler.
 /// </summary>
 public sealed class LuauExecutionOptions
 {
@@ -98,4 +99,50 @@ public sealed class LuauExecutionOptions
     /// Gets whether at least one execution budget is configured.
     /// </summary>
     public bool HasBudget => wallClockLimit.HasValue || interruptCountLimit.HasValue || maxResultCount.HasValue;
+
+    internal static LuauExecutionOptions ResolveForOperation(
+        LuauExecutionOptions stateDefaults,
+        LuauExecutionOptions? operationOptions)
+    {
+        if (operationOptions == null)
+        {
+            return stateDefaults;
+        }
+
+        if (operationOptions.ContinuationScheduler != null &&
+            !ReferenceEquals(operationOptions.ContinuationScheduler, stateDefaults.ContinuationScheduler))
+        {
+            throw new InvalidOperationException(
+                "A per-operation continuation scheduler cannot replace the Luau state's scheduler.");
+        }
+
+        return new LuauExecutionOptions
+        {
+            WallClockLimit = Tighter(stateDefaults.WallClockLimit, operationOptions.WallClockLimit),
+            InterruptCountLimit = Tighter(stateDefaults.InterruptCountLimit, operationOptions.InterruptCountLimit),
+            MaxResultCount = Tighter(stateDefaults.MaxResultCount, operationOptions.MaxResultCount),
+            ContinuationScheduler = stateDefaults.ContinuationScheduler,
+        };
+    }
+
+    static TimeSpan? Tighter(TimeSpan? stateLimit, TimeSpan? operationLimit)
+    {
+        if (!stateLimit.HasValue) return operationLimit;
+        if (!operationLimit.HasValue) return stateLimit;
+        return stateLimit.Value <= operationLimit.Value ? stateLimit : operationLimit;
+    }
+
+    static long? Tighter(long? stateLimit, long? operationLimit)
+    {
+        if (!stateLimit.HasValue) return operationLimit;
+        if (!operationLimit.HasValue) return stateLimit;
+        return Math.Min(stateLimit.Value, operationLimit.Value);
+    }
+
+    static int? Tighter(int? stateLimit, int? operationLimit)
+    {
+        if (!stateLimit.HasValue) return operationLimit;
+        if (!operationLimit.HasValue) return stateLimit;
+        return Math.Min(stateLimit.Value, operationLimit.Value);
+    }
 }

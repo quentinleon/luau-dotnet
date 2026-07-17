@@ -45,7 +45,8 @@ internal sealed class ScriptOperation : IDisposable
     string? pendingCallbackName;
     Exception? callbackFailure;
     string? callbackFailureName;
-    LuauManagedCallbackException? injectedCallbackFailure;
+    Exception? injectedCallbackFailure;
+    string? injectedCallbackFailureName;
     Exception? hardStopException;
     int yieldReason;
     int asyncCallbackPhase;
@@ -161,18 +162,35 @@ internal sealed class ScriptOperation : IDisposable
         Volatile.Write(ref yieldReason, (int)ScriptYieldReason.CallbackFailure);
     }
 
-    internal LuauManagedCallbackException TakeCallbackFailureForInjection()
+    internal void PrepareCallbackFailureInjection()
     {
-        var failure = CreateControlledCallbackFailure(
-            Interlocked.Exchange(ref callbackFailure, null),
-            TakeCallbackFailureName());
-        injectedCallbackFailure = failure;
-        return failure;
+        // This method also runs from the non-yieldable reverse P/Invoke path.
+        // Move only references here; construct the managed wrapper after the
+        // native operation has returned to managed code.
+        var failure = Interlocked.Exchange(ref callbackFailure, null);
+        if (failure != null)
+        {
+            injectedCallbackFailureName = TakeCallbackFailureName();
+            Interlocked.Exchange(ref injectedCallbackFailure, failure);
+        }
+
+        // A non-yieldable callback injects its error immediately. Luau can
+        // still report the enclosing resumable frame as yielded while a pcall
+        // handles that error, so do not schedule a second error injection.
+        Volatile.Write(ref yieldReason, (int)ScriptYieldReason.None);
     }
 
     internal LuauManagedCallbackException? TakeInjectedCallbackFailure()
     {
-        return Interlocked.Exchange(ref injectedCallbackFailure, null);
+        var failure = Interlocked.Exchange(ref injectedCallbackFailure, null);
+        if (failure == null)
+        {
+            return null;
+        }
+
+        var callbackName = injectedCallbackFailureName;
+        injectedCallbackFailureName = null;
+        return CreateControlledCallbackFailure(failure, callbackName);
     }
 
     internal LuauManagedCallbackException? TakeUninjectedCallbackFailure()
@@ -186,6 +204,7 @@ internal sealed class ScriptOperation : IDisposable
     internal void ClearInjectedCallbackFailure()
     {
         Interlocked.Exchange(ref injectedCallbackFailure, null);
+        injectedCallbackFailureName = null;
     }
 
     internal void PollInterrupt()

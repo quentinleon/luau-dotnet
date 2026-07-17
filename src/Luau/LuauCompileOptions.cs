@@ -1,8 +1,8 @@
 namespace Luau;
 
-public record LuauCompileOptions
+public sealed record LuauCompileOptions
 {
-    public static readonly LuauCompileOptions Default = new();
+    public static LuauCompileOptions Default { get; } = new();
 
     public int OptimizationLevel { get; init; } = 1;
 

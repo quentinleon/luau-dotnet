@@ -2,6 +2,8 @@
 
 _Static_assert(sizeof(luau_host_buffer) == 16, "luau_host_buffer must be stable in C");
 _Static_assert(sizeof(luau_host_state_options) == 16, "luau_host_state_options must be stable in C");
+_Static_assert(LUAU_HOST_CALLBACK_YIELD == -1, "callback yield sentinel must be stable in C");
+_Static_assert(LUAU_HOST_CALLBACK_ERROR == -2, "callback error sentinel must be stable in C");
 
 int luau_host_c_header_compile_probe(void)
 {

@@ -103,6 +103,7 @@ set_property(
     PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${LUAU_HOST_ROOT}/include/luau_host.h"
         "${LUAU_HOST_ROOT}/src/luau_host.cpp"
+        "${LUAU_HOST_ROOT}/src/tracked_allocation.h"
         "${LUAU_HOST_ROOT}/exports/luau_host.exports"
         "${_luau_host_git_head_path}"
         ${_luau_host_upstream_provenance_inputs}
@@ -113,11 +114,12 @@ set_property(
 # produce the same compatibility fingerprint on every machine.
 file(SHA256 "${LUAU_HOST_ROOT}/include/luau_host.h" _luau_host_header_hash)
 file(SHA256 "${LUAU_HOST_ROOT}/src/luau_host.cpp" _luau_host_source_hash)
+file(SHA256 "${LUAU_HOST_ROOT}/src/tracked_allocation.h" _luau_host_allocator_hash)
 file(SHA256 "${LUAU_HOST_ROOT}/exports/luau_host.exports" _luau_host_exports_hash)
 string(
     SHA256
     LUAU_HOST_BUILD_INPUT_FINGERPRINT
-    "abi=1.0;upstream=${_luau_host_actual_upstream_revision};header=${_luau_host_header_hash};source=${_luau_host_source_hash};exports=${_luau_host_exports_hash}"
+    "abi=1.0;upstream=${_luau_host_actual_upstream_revision};header=${_luau_host_header_hash};source=${_luau_host_source_hash};allocator=${_luau_host_allocator_hash};exports=${_luau_host_exports_hash}"
 )
 
 # These values must be established before upstream creates its static targets.
@@ -141,7 +143,12 @@ add_subdirectory(
     EXCLUDE_FROM_ALL
 )
 
-add_library(luau_host SHARED src/luau_host.cpp)
+add_library(
+    luau_host
+    SHARED
+    src/luau_host.cpp
+    src/tracked_allocation.h
+)
 
 target_compile_features(luau_host PRIVATE cxx_std_17)
 if(LUAU_HOST_BUILD_CONFIGURATION STREQUAL "")
@@ -282,6 +289,7 @@ if(LUAU_HOST_BUILD_TESTS)
     )
     target_compile_features(luau_host_conformance PRIVATE cxx_std_17)
     target_link_libraries(luau_host_conformance PRIVATE luau_host)
+    target_include_directories(luau_host_conformance PRIVATE "${LUAU_HOST_ROOT}/src")
 
     if(ANDROID)
         # The executable is only cross-compiled in Android CI, but it still

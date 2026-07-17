@@ -105,6 +105,37 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
+    public async Task ManagedCallbackFunctionsCannotBeInvokedDirectly()
+    {
+        using var root = LuauState.Create();
+        using var callback = root.CreateFunction(context => context.Return(42));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await callback.InvokeAsync([]));
+
+        Assert.Contains("only be invoked by Luau", exception.Message);
+        root["callback"] = callback;
+        Assert.Equal(42, Assert.Single(root.DoString("return callback()")).Read<int>());
+    }
+
+    [Fact]
+    public void NonYieldableManagedCallbackFailureStopsTheCurrentLuaCallImmediately()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        root.OpenTableLibrary();
+        root["marker"] = 0;
+        root["fail"] = root.CreateFunction(
+            "fail",
+            _ => throw new InvalidOperationException("expected callback failure"));
+
+        Assert.Throws<LuauManagedCallbackException>(() => root.DoString(
+            "local values = { 2, 1 }; table.sort(values, fail); marker = 1"));
+
+        Assert.Equal(0, root["marker"].Read<int>());
+    }
+
+    [Fact]
     public async Task AsyncCallbackCanReadReferenceArgumentWhileOwnerCoroutineIsSuspended()
     {
         using var root = LuauState.Create();
@@ -320,14 +351,19 @@ public sealed class RuntimeHardeningBehaviorTests
     [Fact]
     public void WallClockBudgetStopsSynchronousInfiniteLoop()
     {
-        using var state = LuauState.Create();
         var limit = TimeSpan.FromMilliseconds(20);
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            DefaultExecutionOptions = new LuauExecutionOptions
+            {
+                WallClockLimit = limit,
+            },
+        });
         var stopwatch = Stopwatch.StartNew();
 
         var exception = Assert.Throws<LuauExecutionBudgetException>(() => state.DoString(
             "while true do end",
-            "@budgets/wall-clock.luau",
-            executionOptions: new LuauExecutionOptions { WallClockLimit = limit }));
+            "@budgets/wall-clock.luau"));
 
         Assert.Equal(LuauExecutionBudgetKind.WallClock, exception.BudgetKind);
         Assert.Equal("@budgets/wall-clock.luau", exception.ChunkName);

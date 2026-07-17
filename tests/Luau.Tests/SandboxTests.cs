@@ -254,6 +254,27 @@ public sealed class SandboxTests
     }
 
     [Fact]
+    public void RequireRejectsCircularDependenciesAndCleansTheInProgressEntry()
+    {
+        using var root = LuauState.Create();
+        root.OpenBaseLibrary();
+        var requirer = new CircularRequirer();
+        root.OpenRequireLibrary(requirer);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var exception = Assert.Throws<LuauManagedCallbackException>(
+                () => root.DoString("return require('cycle')"));
+
+            var cycleFailure = Assert.IsType<LuauException>(exception.InnerException);
+            Assert.Contains("Circular module dependency", cycleFailure.Message);
+            Assert.Equal(42, Assert.Single(root.DoString("return 42")).Read<int>());
+        }
+
+        Assert.Equal(2, requirer.LoadCount);
+    }
+
+    [Fact]
     public void SandboxedContextRejectsLibraryRegistrationFromChild()
     {
         using var root = CreateSandboxedRoot();
@@ -363,6 +384,36 @@ public sealed class SandboxTests
                 requireArgument,
                 source,
                 "@invalid-result-module"u8);
+            return true;
+        }
+
+        protected override bool TryGetAliasPath(
+            string alias,
+            [NotNullWhen(true)] out string? path)
+        {
+            path = null;
+            return false;
+        }
+    }
+
+    sealed class CircularRequirer : LuauRequirer
+    {
+        int loadCount;
+
+        public int LoadCount => Volatile.Read(ref loadCount);
+
+        protected override bool TryLoadModule(
+            LuauState state,
+            string fullPath,
+            string requireArgument,
+            out LuauValue result)
+        {
+            Interlocked.Increment(ref loadCount);
+            result = ExecuteModuleSource(
+                state,
+                requireArgument,
+                "return require('cycle')"u8,
+                "@cycle"u8);
             return true;
         }
 

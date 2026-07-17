@@ -1,7 +1,0 @@
-{
-    "languageMode": "nonstrict",
-	"lint": { "*": true, "FunctionUnused": false },
-	"aliases": {
-        "Resources": "."
-    }
-}

@@ -14,34 +14,42 @@ public abstract class LuauRequirer
             return true;
         }
 
-        var root = state.GetMainThread();
-        // Module closures are cached for the entire VM. Never compile them in
-        // the first requesting sandbox's global proxy, or cached closures can
-        // retain that caller's private globals and leak them to siblings.
-        using var thread = root.IsRootSandboxed
-            ? root.CreateSandboxedThread()
-            : root.CreateThread();
-        if (!TryLoadModule(thread, fullPath, argument, out var moduleResult))
-        {
-            result = default;
-            return false;
-        }
-
-        var rootTop = root.GetTop();
+        state.Context.BeginModuleLoad(cacheKey, argument);
         try
         {
-            // Normalize registry-backed values onto the VM root before the
-            // short-lived module thread is disposed. Primitive values take
-            // the same path so resolvers never manage stack ownership.
-            thread.Push(moduleResult);
-            thread.XMove(root, 1);
-            result = root.Pop();
-            state.Context.CacheModule(cacheKey, result);
-            return true;
+            var root = state.GetMainThread();
+            // Module closures are cached for the entire VM. Never compile them in
+            // the first requesting sandbox's global proxy, or cached closures can
+            // retain that caller's private globals and leak them to siblings.
+            using var thread = root.IsRootSandboxed
+                ? root.CreateSandboxedThread()
+                : root.CreateThread();
+            if (!TryLoadModule(thread, fullPath, argument, out var moduleResult))
+            {
+                result = default;
+                return false;
+            }
+
+            var rootTop = root.GetTop();
+            try
+            {
+                // Normalize registry-backed values onto the VM root before the
+                // short-lived module thread is disposed. Primitive values take
+                // the same path so resolvers never manage stack ownership.
+                thread.Push(moduleResult);
+                thread.XMove(root, 1);
+                result = root.Pop();
+                state.Context.CacheModule(cacheKey, result);
+                return true;
+            }
+            finally
+            {
+                root.SetTop(rootTop);
+            }
         }
         finally
         {
-            root.SetTop(rootTop);
+            state.Context.EndModuleLoad(cacheKey);
         }
     }
 
@@ -65,26 +73,26 @@ public abstract class LuauRequirer
             state.DoStringForRequire(utf8Source, utf8ChunkName, options));
     }
 
-    protected static LuauValue ExecuteTrustedModuleBytecode(
+    protected static LuauValue ExecuteModuleCompilerOutput(
         LuauState state,
         string requireArgument,
-        ReadOnlySpan<byte> bytecode,
+        LuauCompilerOutput output,
         ReadOnlySpan<byte> utf8ChunkName = default)
     {
         return GetModuleResult(
             requireArgument,
-            state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: true));
+            state.DoCompilerOutputForRequire(output, utf8ChunkName));
     }
 
-    protected static LuauValue ExecuteModuleBytecode(
+    protected static LuauValue ExecuteVerifiedModuleBytecode(
         LuauState state,
         string requireArgument,
-        ReadOnlySpan<byte> bytecode,
+        LuauBytecodeArtifact artifact,
         ReadOnlySpan<byte> utf8ChunkName = default)
     {
         return GetModuleResult(
             requireArgument,
-            state.DoBytecodeForRequire(bytecode, utf8ChunkName, trustedCompilerOutput: false));
+            state.DoVerifiedBytecodeForRequire(artifact, utf8ChunkName));
     }
 
     protected virtual string GetCacheKey(string path) => path;

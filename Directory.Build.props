@@ -6,4 +6,13 @@
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' and ('$(MSBuildProjectName)' == 'Luau' or '$(MSBuildProjectName)' == 'Luau.SourceGenerator' or '$(MSBuildProjectName)' == 'Luau.Interop')">
+    <!-- Shipped Unity DLLs must reproduce independently of checkout path and HEAD. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
 </Project>

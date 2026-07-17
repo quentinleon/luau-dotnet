@@ -284,6 +284,8 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     void DisposeCore()
     {
+        LuauState? owningState;
+        int currentReference;
         lock (lifetimeGate)
         {
             if (Interlocked.Exchange(ref disposeState, 1) != 0)
@@ -291,12 +293,13 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
                 return;
             }
 
-            var owningState = Interlocked.Exchange(ref state, null);
-            var currentReference = Interlocked.Exchange(ref reference, -1);
-            if (owningState != null && currentReference >= 0)
-            {
-                owningState.TryReleaseReference(currentReference);
-            }
+            owningState = Interlocked.Exchange(ref state, null);
+            currentReference = Interlocked.Exchange(ref reference, -1);
+        }
+
+        if (owningState != null && currentReference >= 0)
+        {
+            owningState.TryReleaseReference(currentReference);
         }
     }
 
@@ -314,23 +317,32 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
     LuauReferenceAccess AcquireReference()
     {
+        var currentState = Volatile.Read(ref state);
+        if (currentState == null || currentState.IsDisposed)
+        {
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauTable));
+        }
+
+        var referenceState = currentState!.GetMainThread();
+        var nativeAccess = currentState.EnterNativeAccess();
         Monitor.Enter(lifetimeGate);
         try
         {
-            var currentState = state;
             var currentReference = reference;
-            if (disposeState != 0 || currentState == null || currentReference < 0 || currentState.IsDisposed)
+            if (disposeState != 0 ||
+                !ReferenceEquals(state, currentState) ||
+                currentReference < 0 ||
+                currentState.IsDisposed)
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauTable));
             }
 
-            var referenceState = currentState!.GetMainThread();
-            var nativeAccess = currentState.EnterNativeAccess();
             return new LuauReferenceAccess(referenceState, currentReference, lifetimeGate, nativeAccess);
         }
         catch
         {
             Monitor.Exit(lifetimeGate);
+            nativeAccess.Dispose();
             throw;
         }
     }

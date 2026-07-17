@@ -13,21 +13,6 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
     protected override LuauState ResolvePublicState(LuauState owningState) =>
         owningState.GetMainThread();
 
-    internal override async ValueTask<int> InvokeAsync(
-        int argumentCount,
-        CancellationToken cancellationToken = default)
-    {
-        ThrowIfDiposed();
-        var state = State;
-        using var operation = state.BeginOperation(
-            chunkName: null,
-            options: null,
-            cancellationToken,
-            isAsync: true);
-        using var runner = ScriptRunner.Rent();
-        return await runner.RunCountAsync(operation, argumentCount).ConfigureAwait(false);
-    }
-
     internal async ValueTask<LuauValue[]> InvokeWithArgumentsAsync(
         ReadOnlyMemory<LuauValue> arguments,
         CancellationToken cancellationToken)
@@ -41,10 +26,19 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
             isAsync: true);
         using var runner = ScriptRunner.Rent();
 
-        state.Push(this);
-        for (var i = 0; i < arguments.Length; i++)
+        var baseTop = state.GetTop();
+        try
         {
-            state.Push(arguments.Span[i]);
+            state.Push(this);
+            for (var i = 0; i < arguments.Length; i++)
+            {
+                state.Push(arguments.Span[i]);
+            }
+        }
+        catch
+        {
+            state.SetTop(baseTop);
+            throw;
         }
 
         return await runner.RunAsync(operation, state, arguments.Length).ConfigureAwait(false);

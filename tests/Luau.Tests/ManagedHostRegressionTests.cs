@@ -32,16 +32,16 @@ public sealed class ManagedHostRegressionTests
     [Fact]
     public void StandaloneCompilerOwnedBuffersRemainValidAcrossRepeatedCompileAndLoad()
     {
-        byte[] bytecode = [];
+        LuauCompilerOutput? output = null;
         for (var iteration = 0; iteration < 64; iteration++)
         {
-            bytecode = LuauCompiler.Compile(Encoding.UTF8.GetBytes($"return {iteration}"));
-            Assert.NotEmpty(bytecode);
+            output = LuauCompiler.Compile(Encoding.UTF8.GetBytes($"return {iteration}"));
+            Assert.True(output.BytecodeLength > 0);
         }
 
         using var state = LuauState.Create();
-        var results = state.ExecuteTrustedBytecode(
-            bytecode,
+        var results = state.ExecuteCompilerOutput(
+            output!,
             "@luau-host/compiler-buffer.luau");
 
         Assert.Equal(63, Assert.Single(results).Read<int>());

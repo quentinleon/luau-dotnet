@@ -1,4 +1,5 @@
 #include "luau_host.h"
+#include "tracked_allocation.h"
 
 #include <algorithm>
 #include <array>
@@ -530,6 +531,31 @@ void test_invalid_table_reference_and_load_boundaries()
 {
     Root root = create_root();
 
+    // Empty bytecode used to be replaced with a one-byte sentinel before
+    // entering upstream's unchecked loader. Reject both null and non-null
+    // empty spans without touching the stack or load-status output.
+    luau_host_status emptyLoadStatus = LUAU_HOST_STATUS_CANCELED;
+    const int32_t emptyLoadTop = luau_host_stack_get_top(root.state);
+    REQUIRE(
+        luau_host_load(
+            root.state,
+            bytes("@empty-bytecode"),
+            nullptr,
+            0,
+            0,
+            &emptyLoadStatus) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
+    const uint8_t emptyBytecodeMarker = 0;
+    REQUIRE(
+        luau_host_load(
+            root.state,
+            bytes("@empty-bytecode"),
+            &emptyBytecodeMarker,
+            0,
+            0,
+            &emptyLoadStatus) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
+    REQUIRE(emptyLoadStatus == LUAU_HOST_STATUS_CANCELED);
+    REQUIRE(luau_host_stack_get_top(root.state) == emptyLoadTop);
+
     // The raw table APIs are assertion-prone upstream and therefore reject an
     // ordinary non-table target before consuming keys or values.
     REQUIRE(luau_host_push_integer(root.state, 7) == LUAU_HOST_STATUS_OK);
@@ -877,6 +903,44 @@ void test_allocator_quota_and_recovery()
     REQUIRE(createFailure.last_attempted_bytes > createFailure.limit_bytes);
 }
 
+void* fail_reallocate(void*, size_t)
+{
+    return nullptr;
+}
+
+void test_failed_shrink_retains_allocator_charge()
+{
+    using luau_host_internal::freetrackedallocation;
+    using luau_host_internal::resizetrackedallocation;
+    using luau_host_internal::trackedallocationsize;
+
+    constexpr size_t originalSize = 4096;
+    const luau_host_internal::TrackedAllocationResizeResult allocated =
+        resizetrackedallocation(nullptr, originalSize);
+    REQUIRE(!allocated.failed);
+    REQUIRE(allocated.block != nullptr);
+    REQUIRE(allocated.retainedSize == originalSize);
+    REQUIRE(trackedallocationsize(allocated.block) == originalSize);
+    REQUIRE(reinterpret_cast<uintptr_t>(allocated.block) % alignof(std::max_align_t) == 0);
+
+    std::memset(allocated.block, 0x5a, originalSize);
+    const luau_host_internal::TrackedAllocationResizeResult retained =
+        resizetrackedallocation(allocated.block, 64, fail_reallocate);
+    REQUIRE(!retained.failed);
+    REQUIRE(retained.block == allocated.block);
+    REQUIRE(retained.retainedSize == originalSize);
+    REQUIRE(trackedallocationsize(retained.block) == originalSize);
+
+    const luau_host_internal::TrackedAllocationResizeResult failedGrowth =
+        resizetrackedallocation(retained.block, originalSize + 1, fail_reallocate);
+    REQUIRE(failedGrowth.failed);
+    REQUIRE(failedGrowth.block == nullptr);
+    REQUIRE(failedGrowth.retainedSize == originalSize);
+    REQUIRE(trackedallocationsize(retained.block) == originalSize);
+
+    freetrackedallocation(retained.block);
+}
+
 int callbackInvocations = 0;
 luau_host_status callbackPushStatus = LUAU_HOST_STATUS_INVALID_ARGUMENT;
 int destructorInvocations = 0;
@@ -888,6 +952,7 @@ int userdataDestructorPhase = 0;
 std::array<int, 4> userdataDestructorPhaseCounts = {};
 int userdataDestructorPointerMismatches = 0;
 int interruptPolls = 0;
+int alternateInterruptPolls = 0;
 int nonYieldableInterruptPolls = 0;
 int executionInterruptKinds = 0;
 int gcInterruptKinds = 0;
@@ -950,6 +1015,13 @@ int32_t LUAU_HOST_CALL interrupt_poll(luau_host_state*, luau_host_interrupt_kind
     return 1;
 }
 
+int32_t LUAU_HOST_CALL alternate_interrupt_poll(luau_host_state*, luau_host_interrupt_kind kind)
+{
+    record_interrupt_kind(kind);
+    ++alternateInterruptPolls;
+    return 1;
+}
+
 int32_t LUAU_HOST_CALL continue_interrupt_poll(luau_host_state*, luau_host_interrupt_kind kind)
 {
     record_interrupt_kind(kind);
@@ -973,6 +1045,16 @@ int32_t LUAU_HOST_CALL invalid_return_callback(luau_host_state* state)
     return invalidCallbackReturnsTopPlusOne
         ? luau_host_stack_get_top(state) + 1
         : invalidCallbackReturn;
+}
+
+int32_t LUAU_HOST_CALL failure_return_callback(luau_host_state* state)
+{
+    constexpr char failure[] = "managed callback failure token";
+    callbackPushStatus = luau_host_push_string(
+        state,
+        bytes(failure),
+        static_cast<uint64_t>(sizeof(failure) - 1));
+    return callbackPushStatus == LUAU_HOST_STATUS_OK ? LUAU_HOST_CALLBACK_ERROR : 0;
 }
 
 luau_host_callback_table callback_table()
@@ -1172,11 +1254,38 @@ void test_callback_return_validation_and_recovery()
     REQUIRE(!string_at(root.state, -1).empty());
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
 
+    // -2 is the explicit immediate-failure sentinel. The callback must append
+    // a value above its entry arguments; that exact top value becomes the Luau
+    // error rather than the host's generic invalid-return token.
+    callbackPushStatus = LUAU_HOST_STATUS_INVALID_ARGUMENT;
+    {
+        luau_host_callback_table callbacks = callback_table();
+        callbacks.managed_function = failure_return_callback;
+        int32_t ownerTransferred = 123;
+        int32_t errorObject = 123;
+        REQUIRE(
+            luau_host_push_callback(
+                root.state,
+                &callbacks,
+                nullptr,
+                0,
+                0,
+                &ownerTransferred,
+                &errorObject) == LUAU_HOST_STATUS_OK);
+        REQUIRE(ownerTransferred == 0);
+        REQUIRE(errorObject == 0);
+    }
+    REQUIRE(luau_host_pcall(root.state, 0, 0, 0) == LUAU_HOST_STATUS_LUA_ERROR);
+    REQUIRE(callbackPushStatus == LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_stack_get_top(root.state) == 1);
+    REQUIRE(string_at(root.state, -1) == "managed callback failure token");
+    REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
+
     luau_host_state* child = nullptr;
     REQUIRE(luau_host_thread_create(root.state, &child) == LUAU_HOST_STATUS_OK);
     REQUIRE(child != nullptr);
 
-    for (const int32_t invalidResult : {-2, -1})
+    for (const int32_t invalidResult : {-3, -2, -1})
     {
         invalidCallbackReturn = invalidResult;
         pushInvalidCallback(child);
@@ -1368,6 +1477,7 @@ void test_nonyieldable_interrupt_hard_unwind_and_recovery()
 void test_multi_root_interrupt_uninstall_preserves_other_root()
 {
     interruptPolls = 0;
+    alternateInterruptPolls = 0;
     reset_interrupt_kind_counts();
     Root firstRoot = create_root();
     Root secondRoot = create_root();
@@ -1378,22 +1488,25 @@ void test_multi_root_interrupt_uninstall_preserves_other_root()
     REQUIRE(compile_and_load(firstChild, "while true do end", "@first-root-interrupt") == LUAU_HOST_STATUS_OK);
     REQUIRE(compile_and_load(secondChild, "while true do end", "@second-root-interrupt") == LUAU_HOST_STATUS_OK);
 
-    luau_host_callback_table callbacks = callback_table();
-    callbacks.interrupt_poll = interrupt_poll;
-    REQUIRE(luau_host_interrupt_install(firstChild, &callbacks) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_interrupt_install(secondChild, &callbacks) == LUAU_HOST_STATUS_OK);
+    luau_host_callback_table firstCallbacks = callback_table();
+    firstCallbacks.interrupt_poll = interrupt_poll;
+    luau_host_callback_table secondCallbacks = callback_table();
+    secondCallbacks.interrupt_poll = alternate_interrupt_poll;
+    REQUIRE(luau_host_interrupt_install(firstChild, &firstCallbacks) == LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_interrupt_install(secondChild, &secondCallbacks) == LUAU_HOST_STATUS_OK);
 
-    // Removing one root must not clear the process-wide poll while another
-    // independent root still owns an installation.
+    // Independent roots own independent poll pointers. Removing one must not
+    // disturb the other's installation.
     luau_host_interrupt_uninstall(firstChild);
     REQUIRE(luau_host_resume(secondChild, secondRoot.state, 0) == LUAU_HOST_STATUS_YIELDED);
-    REQUIRE(interruptPolls > 0);
+    REQUIRE(interruptPolls == 0);
+    REQUIRE(alternateInterruptPolls > 0);
     REQUIRE(invalidInterruptKinds == 0);
-    REQUIRE(executionInterruptKinds + gcInterruptKinds == interruptPolls);
+    REQUIRE(executionInterruptKinds + gcInterruptKinds == alternateInterruptPolls);
     REQUIRE(luau_host_thread_reset(secondChild) == LUAU_HOST_STATUS_OK);
     luau_host_interrupt_uninstall(secondChild);
 
-    // Once the last owner uninstalls, a different poll pointer is legal.
+    // Reinstalling a different poll on either root remains legal.
     luau_host_callback_table continueCallbacks = callback_table();
     continueCallbacks.interrupt_poll = continue_interrupt_poll;
     REQUIRE(luau_host_interrupt_install(firstChild, &continueCallbacks) == LUAU_HOST_STATUS_OK);
@@ -1436,6 +1549,7 @@ int main()
     failures += run_test("invalid table, reference, and load boundaries", test_invalid_table_reference_and_load_boundaries);
     failures += run_test("invalid execution and yield boundaries", test_invalid_execution_boundaries);
     failures += run_test("tracked allocator quota telemetry and recovery", test_allocator_quota_and_recovery);
+    failures += run_test("failed allocator shrink retains its full charge", test_failed_shrink_retains_allocator_charge);
     failures += run_test("managed callback and userdata-destructor lifetime", test_callback_and_destructor_lifetime);
     failures += run_test("managed callback return validation and recovery", test_callback_return_validation_and_recovery);
     failures += run_test("userdata wrapper visibility and destructor lifetime", test_userdata_wrapper_visibility_and_destructor_lifetime);

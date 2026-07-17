@@ -47,11 +47,11 @@ public abstract class LuauFunction(LuauState state) : IDisposable
     /// </summary>
     protected virtual LuauState ResolvePublicState(LuauState owningState) => owningState;
 
-    internal abstract ValueTask<int> InvokeAsync(int argumentCount, CancellationToken cancellationToken = default);
     protected virtual void DisposeCore() { }
 
     public void Dispose()
     {
+        LuauState? owningState;
         lock (lifetimeGate)
         {
             if (Interlocked.Exchange(ref disposeState, 1) != 0)
@@ -59,17 +59,21 @@ public abstract class LuauFunction(LuauState state) : IDisposable
                 return;
             }
 
-            var owningState = state;
-            try
+            owningState = state;
+        }
+
+        try
+        {
+            DisposeCore();
+        }
+        finally
+        {
+            owningState?.UnregisterDisposable(this);
+            lock (lifetimeGate)
             {
-                DisposeCore();
-            }
-            finally
-            {
-                owningState?.UnregisterDisposable(this);
                 state = null;
-                GC.SuppressFinalize(this);
             }
+            GC.SuppressFinalize(this);
         }
     }
 
@@ -92,22 +96,31 @@ public abstract class LuauFunction(LuauState state) : IDisposable
 
     private protected LuauReferenceAccess AcquireReference(int reference)
     {
+        var currentState = Volatile.Read(ref state);
+        if (currentState == null || currentState.IsDisposed)
+        {
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
+        }
+
+        var referenceState = currentState!.GetMainThread();
+        var nativeAccess = currentState.EnterNativeAccess();
         Monitor.Enter(lifetimeGate);
         try
         {
-            var currentState = state;
-            if (disposeState != 0 || currentState == null || reference < 0 || currentState.IsDisposed)
+            if (disposeState != 0 ||
+                !ReferenceEquals(state, currentState) ||
+                reference < 0 ||
+                currentState.IsDisposed)
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
             }
 
-            var referenceState = currentState!.GetMainThread();
-            var nativeAccess = currentState.EnterNativeAccess();
             return new LuauReferenceAccess(referenceState, reference, lifetimeGate, nativeAccess);
         }
         catch
         {
             Monitor.Exit(lifetimeGate);
+            nativeAccess.Dispose();
             throw;
         }
     }

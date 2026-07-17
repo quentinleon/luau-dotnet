@@ -10,6 +10,19 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $runtimeDir = Join-Path $root "src/Luau.Unity/Assets/Luau.Unity/Runtime"
 
+$projects = @(
+    "src/Luau/Luau.csproj",
+    "src/Luau.SourceGenerator/Luau.SourceGenerator.csproj"
+)
+
+foreach ($project in $projects) {
+    $projectPath = Join-Path $root $project
+    & dotnet build $projectPath --configuration $Configuration --nologo --no-restore
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to build managed Unity artifact project: $project"
+    }
+}
+
 $artifacts = @(
     @{
         Source = "src/Luau/bin/$Configuration/netstandard2.1/Luau.dll"

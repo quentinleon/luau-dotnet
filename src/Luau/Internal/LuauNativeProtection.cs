@@ -17,7 +17,7 @@ internal static unsafe class LuauNativeProtection
     internal const uint ExpectedAbiRecordSize = 112;
     internal const uint ExpectedFeatureFlags = 0x1ffU;
     internal const ulong ExpectedUpstreamRevisionHash = 0xc45f010aabf167acUL;
-    internal const ulong ExpectedHostBuildFingerprint = 0x105716f226c3f69fUL;
+    internal const ulong ExpectedHostBuildFingerprint = 0xa1b9012b8b6e7d0fUL;
     internal const int AbiQueryOk = (int)LuauHostStatus.Ok;
     internal const int AbiQueryInvalidArgument = (int)LuauHostStatus.InvalidArgument;
 
@@ -50,6 +50,11 @@ internal static unsafe class LuauNativeProtection
         string? chunkName = null)
     {
         var context = state.Context;
+        var activeOperation = context.GetActiveOperation();
+        var isInjectedCallbackFailure =
+            status == LuauHostStatus.LuaError &&
+            activeOperation != null &&
+            IsCallbackFailureToken(pointer, activeOperation.CallbackFailureToken);
         string? nativeMessage = null;
         if (status is LuauHostStatus.LuaError
             or LuauHostStatus.MemoryQuota
@@ -59,14 +64,15 @@ internal static unsafe class LuauNativeProtection
             nativeMessage = ReadProtectedError(pointer, operation);
         }
 
-        var activeOperation = context.GetActiveOperation();
         var hardStop = activeOperation?.GetHardStopException();
         if (hardStop != null)
         {
             throw hardStop;
         }
 
-        var callbackFailure = activeOperation?.TakeUninjectedCallbackFailure();
+        var callbackFailure = isInjectedCallbackFailure
+            ? activeOperation!.TakeInjectedCallbackFailure()
+            : activeOperation?.TakeUninjectedCallbackFailure();
         if (callbackFailure != null)
         {
             throw callbackFailure;
@@ -113,6 +119,13 @@ internal static unsafe class LuauNativeProtection
         throw new LuauException(
             LuauDiagnosticMessages.WithChunk(nativeMessage!, chunkName),
             chunkName);
+    }
+
+    static bool IsCallbackFailureToken(LuauHostState* pointer, IntPtr token)
+    {
+        return luau_host_stack_get_top(pointer) > 0 &&
+            (LuauHostType)luau_host_type(pointer, -1) == LuauHostType.LightUserdata &&
+            (IntPtr)luau_host_to_light_userdata(pointer, -1) == token;
     }
 
     static string ReadProtectedError(LuauHostState* pointer, string operation)

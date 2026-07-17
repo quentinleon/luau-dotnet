@@ -42,7 +42,7 @@ jobs:
       - name: Install .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 9.0.306
 
       - name: Restore .NET test harness
         run: dotnet restore Luau.slnx
@@ -75,6 +75,14 @@ jobs:
             -Platform win-x64 `
             -Configuration Release `
             -OutputPath native/luau-host/out/install/windows-x64/luau_host.manifest.json
+
+      - name: Require current shipped Windows plugin
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Copy-NativeArtifactsToUnity.ps1
+          -Platform win-x64
+          -Check
 
       - name: Upload host
         uses: actions/upload-artifact@v4

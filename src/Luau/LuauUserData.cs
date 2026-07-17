@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
@@ -53,50 +51,6 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
         this.reference = reference;
     }
 
-    public bool TryRead<T>([NotNullWhen(true)] out T? result)
-    {
-        using var access = AcquireReference();
-        var state = access.State;
-
-        if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-        {
-            result = default;
-            return false;
-        }
-
-#pragma warning disable CS8500
-        var pointer = state.PointerUnsafe;
-        var originalTop = luau_host_stack_get_top(pointer);
-
-        try
-        {
-            LuauReferenceHelper.PushReference(state, access.Reference, "read Luau userdata");
-            var size = luau_host_object_length(pointer, -1);
-
-            if (size != sizeof(T))
-            {
-                result = default;
-                return false;
-            }
-
-            var ptr = (T*)luau_host_to_userdata(pointer, -1);
-            result = *ptr;
-            return true;
-        }
-        finally
-        {
-            state.SetTop(originalTop);
-        }
-#pragma warning restore CS8500
-
-    }
-
-    public T Read<T>()
-    {
-        if (TryRead<T>(out var result)) return result;
-        throw new InvalidOperationException($"Cannot convert {typeof(T)} to {typeof(T).Name}");
-    }
-
     public override string ToString()
     {
         using var access = AcquireReference();
@@ -111,6 +65,8 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     void DisposeCore()
     {
+        LuauState? owningState;
+        int currentReference;
         lock (lifetimeGate)
         {
             if (Interlocked.Exchange(ref disposeState, 1) != 0)
@@ -118,12 +74,13 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
                 return;
             }
 
-            var owningState = Interlocked.Exchange(ref state, null);
-            var currentReference = Interlocked.Exchange(ref reference, -1);
-            if (owningState != null && currentReference >= 0)
-            {
-                owningState.TryReleaseReference(currentReference);
-            }
+            owningState = Interlocked.Exchange(ref state, null);
+            currentReference = Interlocked.Exchange(ref reference, -1);
+        }
+
+        if (owningState != null && currentReference >= 0)
+        {
+            owningState.TryReleaseReference(currentReference);
         }
     }
 
@@ -141,23 +98,32 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     LuauReferenceAccess AcquireReference()
     {
+        var currentState = Volatile.Read(ref state);
+        if (currentState == null || currentState.IsDisposed)
+        {
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauUserData));
+        }
+
+        var referenceState = currentState!.GetMainThread();
+        var nativeAccess = currentState.EnterNativeAccess();
         Monitor.Enter(lifetimeGate);
         try
         {
-            var currentState = state;
             var currentReference = reference;
-            if (disposeState != 0 || currentState == null || currentReference < 0 || currentState.IsDisposed)
+            if (disposeState != 0 ||
+                !ReferenceEquals(state, currentState) ||
+                currentReference < 0 ||
+                currentState.IsDisposed)
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauUserData));
             }
 
-            var referenceState = currentState!.GetMainThread();
-            var nativeAccess = currentState.EnterNativeAccess();
             return new LuauReferenceAccess(referenceState, currentReference, lifetimeGate, nativeAccess);
         }
         catch
         {
             Monitor.Exit(lifetimeGate);
+            nativeAccess.Dispose();
             throw;
         }
     }

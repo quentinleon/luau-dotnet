@@ -233,9 +233,13 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         switch (symbol)
         {
             case IFieldSymbol field:
-                if (field.IsFixedSizeBuffer || IsUnsupportedType(field.Type))
+                if (field.IsFixedSizeBuffer || !IsSupportedValueType(field.Type))
                 {
-                    ReportUnsupported(diagnostics, location, field.Name, "the field type is not callback-safe.");
+                    ReportUnsupported(
+                        diagnostics,
+                        location,
+                        field.Name,
+                        "the field type is not supported by Luau value conversion.");
                     return null;
                 }
 
@@ -253,7 +257,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                 };
 
             case IPropertySymbol property:
-                if (property.IsIndexer || IsUnsupportedType(property.Type))
+                if (property.IsIndexer || !IsSupportedValueType(property.Type))
                 {
                     ReportUnsupported(
                         diagnostics,
@@ -261,7 +265,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                         property.Name,
                         property.IsIndexer
                             ? "indexers are not supported."
-                            : "the property type is not callback-safe.");
+                            : "the property type is not supported by Luau value conversion.");
                     return null;
                 }
 
@@ -272,8 +276,12 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                     ManagedName = EscapeIdentifier(property.Name),
                     TypeName = property.Type.ToDisplayString(FullyQualifiedTypeFormat),
                     IsStatic = property.IsStatic,
-                    CanRead = property.GetMethod != null,
-                    CanWrite = property.SetMethod is { IsInitOnly: false },
+                    CanRead = property.GetMethod?.DeclaredAccessibility == Accessibility.Public,
+                    CanWrite = property.SetMethod is
+                    {
+                        DeclaredAccessibility: Accessibility.Public,
+                        IsInitOnly: false,
+                    },
                     ReturnKind = LuauLibraryReturnKind.None,
                     Parameters = [],
                 };
@@ -360,16 +368,20 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         }
 
         if (returnKind is LuauLibraryReturnKind.Value or LuauLibraryReturnKind.AsyncValue &&
-            IsUnsupportedType(returnType))
+            !IsSupportedValueType(returnType))
         {
-            ReportUnsupported(diagnostics, location, method.Name, "the return type is not callback-safe.");
+            ReportUnsupported(
+                diagnostics,
+                location,
+                method.Name,
+                "the return type is not supported by Luau value conversion.");
             return null;
         }
 
         var parameters = new List<LuauLibraryParameter>(method.Parameters.Length);
         foreach (var parameter in method.Parameters)
         {
-            if (parameter.RefKind != RefKind.None || IsUnsupportedType(parameter.Type))
+            if (parameter.RefKind != RefKind.None || IsUnsafeSignatureType(parameter.Type))
             {
                 ReportUnsupported(
                     diagnostics,
@@ -406,6 +418,17 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             else
             {
                 kind = LuauLibraryParameterKind.Argument;
+            }
+
+            if (kind == LuauLibraryParameterKind.Argument &&
+                !IsSupportedValueType(parameter.Type))
+            {
+                ReportUnsupported(
+                    diagnostics,
+                    parameter.Locations.FirstOrDefault() ?? location,
+                    method.Name,
+                    "the script argument type is not supported by Luau value conversion.");
+                return null;
             }
 
             if (kind == LuauLibraryParameterKind.Argument && (parameter.IsParams || parameter.IsOptional))
@@ -483,6 +506,8 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                     builder.AppendLine();
                     EmitNewIndexCallback(builder, library);
                     builder.AppendLine();
+                    builder.AppendLine(
+                        "metatable[\"__metatable\"] = \"protected Luau host library\";");
                     builder.AppendLine("state.SetMetatable(table, metatable);");
                 }
 
@@ -655,9 +680,41 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
     static string MemberTarget(LuauLibraryContext library, LuauLibraryMember member) =>
         member.IsStatic ? library.FullTypeName : "this";
 
-    static bool IsUnsupportedType(ITypeSymbol type) =>
+    static bool IsUnsafeSignatureType(ITypeSymbol type) =>
         type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer or TypeKind.Error or TypeKind.TypeParameter ||
         type.IsRefLikeType;
+
+    static bool IsSupportedValueType(ITypeSymbol type)
+    {
+        // Generated host APIs use one value-type surface for arguments and
+        // results, so this is the explicit overlap of LuauValue.TryRead<T> and
+        // LuauState.CreateFrom<T>. Keep it synchronized with those branches.
+        if (type.SpecialType is
+            SpecialType.System_Boolean or
+            SpecialType.System_Byte or
+            SpecialType.System_SByte or
+            SpecialType.System_Int16 or
+            SpecialType.System_UInt16 or
+            SpecialType.System_Int32 or
+            SpecialType.System_UInt32 or
+            SpecialType.System_Int64 or
+            SpecialType.System_UInt64 or
+            SpecialType.System_Single or
+            SpecialType.System_Double or
+            SpecialType.System_String)
+        {
+            return true;
+        }
+
+        return type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) is
+            "global::System.Numerics.Vector3" or
+            "global::Luau.LuauValue" or
+            "global::Luau.LuauFunction" or
+            "global::Luau.LuauTable" or
+            "global::Luau.LuauBuffer" or
+            "global::Luau.LuauState" or
+            "global::Luau.LuauUserData";
+    }
 
     static bool IsValidLuauName(string? name) => name != null && name.IndexOf('\0') < 0;
 

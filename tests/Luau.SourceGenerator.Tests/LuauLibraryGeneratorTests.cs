@@ -43,6 +43,8 @@ namespace Luau
     }
 
     public sealed class LuauFunction { }
+    public sealed class LuauBuffer { }
+    public sealed class LuauUserData { }
     public readonly struct LuauValue { }
 
     public sealed class LuauTable : IDisposable
@@ -158,6 +160,7 @@ namespace Demo
                 }
             });
 
+            metatable["__metatable"] = "protected Luau host library";
             state.SetMetatable(table, metatable);
             state["ship\"yard"] = table;
         }
@@ -192,6 +195,143 @@ namespace Demo
         Assert.DoesNotContain("Native", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("CallerFilePath", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("PushTable", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PropertyAccessRequiresPublicAccessors()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("properties")]
+public partial class PropertyApi
+{
+    [LuauMember("read-only")] public int ReadOnly { get; private set; }
+    [LuauMember("write-only")] public int WriteOnly { private get; set; }
+    [LuauMember("read-write")] public int ReadWrite { get; set; }
+    [LuauMember("init-only")] public int InitOnly { get; init; }
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(outputCompilation);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+
+        Assert.Contains("context.Return(this.ReadOnly);", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("this.ReadOnly =", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("context.Return(this.WriteOnly);", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "this.WriteOnly = context.Read<global::System.Int32>(2);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("context.Return(this.ReadWrite);", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "this.ReadWrite = context.Read<global::System.Int32>(2);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("context.Return(this.InitOnly);", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("this.InitOnly =", generated, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("bool")]
+    [InlineData("byte")]
+    [InlineData("sbyte")]
+    [InlineData("short")]
+    [InlineData("ushort")]
+    [InlineData("int")]
+    [InlineData("uint")]
+    [InlineData("long")]
+    [InlineData("ulong")]
+    [InlineData("float")]
+    [InlineData("double")]
+    [InlineData("string")]
+    [InlineData("System.Numerics.Vector3")]
+    [InlineData("LuauValue")]
+    [InlineData("LuauFunction")]
+    [InlineData("LuauTable")]
+    [InlineData("LuauBuffer")]
+    [InlineData("LuauState")]
+    [InlineData("LuauUserData")]
+    public void ExplicitLuauValueConversionTypesAreSupported(string typeName)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("supported")]
+public partial class SupportedApi
+{
+    [LuauMember] public {{typeName}} Echo({{typeName}} value) => value;
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(outputCompilation);
+        Assert.Single(result.GeneratedSources);
+    }
+
+    [Theory]
+    [InlineData("char")]
+    [InlineData("decimal")]
+    [InlineData("object")]
+    [InlineData("System.DateTime")]
+    [InlineData("System.Guid")]
+    [InlineData("CapabilityToken")]
+    public void OtherManagedValueTypesAreRejectedAtGenerationTime(string typeName)
+    {
+        var source = $$"""
+using Luau;
+
+public readonly struct CapabilityToken { }
+
+[LuauLibrary("unsupported-value")]
+public partial class UnsupportedValueApi
+{
+    [LuauMember] public {{typeName}} Echo({{typeName}} value) => value;
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out _);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("Luau value conversion", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedSources);
+    }
+
+    [Theory]
+    [InlineData("[LuauMember] public CapabilityToken Value;", "field type")]
+    [InlineData("[LuauMember] public CapabilityToken Value { get; set; }", "property type")]
+    [InlineData(
+        "[LuauMember] public int Consume(CapabilityToken value) => 1;",
+        "script argument type")]
+    public void UnsupportedValueTypesAreRejectedAcrossMemberShapes(
+        string member,
+        string expectedMessage)
+    {
+        var source = $$"""
+using Luau;
+
+public readonly struct CapabilityToken { }
+
+[LuauLibrary("unsupported-shape")]
+public partial class UnsupportedShapeApi
+{
+    {{member}}
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out _);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains(
+            expectedMessage,
+            diagnostic.GetMessage(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.GeneratedSources);
     }
 
     [Fact]

@@ -216,7 +216,7 @@ internal sealed class ScriptRunner : IDisposable
 
             if (resumeWithError)
             {
-                operation.TakeCallbackFailureForInjection();
+                operation.PrepareCallbackFailureInjection();
                 status = ResumeErrorWithCallbackFailure(operation, state, from);
                 resumeWithError = false;
             }
@@ -287,7 +287,7 @@ internal sealed class ScriptRunner : IDisposable
 
             if (resumeWithError)
             {
-                operation.TakeCallbackFailureForInjection();
+                operation.PrepareCallbackFailureInjection();
                 status = await LuauContinuationDispatcher.InvokeAsync(
                     scheduler,
                     () => ResumeErrorWithCallbackFailure(operation, state, from)).ConfigureAwait(false);

@@ -3,21 +3,24 @@ namespace Luau.Tests;
 public sealed class HardeningConfigurationTests
 {
     [Fact]
-    public void StateDefaultsRejectHostBytecode()
+    public void StateDefaultsAreFiniteAndRejectHostBytecode()
     {
         var options = LuauStateOptions.Default;
 
-        Assert.Null(options.MemoryLimitBytes);
-        Assert.Null(options.MaxSourceBytes);
-        Assert.Null(options.MaxBytecodeBytes);
-        Assert.Same(LuauExecutionOptions.Default, options.DefaultExecutionOptions);
+        Assert.Equal(64L * 1024 * 1024, options.MemoryLimitBytes);
+        Assert.Equal(1024 * 1024, options.MaxSourceBytes);
+        Assert.Equal(4 * 1024 * 1024, options.MaxBytecodeBytes);
+        Assert.Equal(TimeSpan.FromMilliseconds(250), options.DefaultExecutionOptions.WallClockLimit);
+        Assert.Equal(100_000, options.DefaultExecutionOptions.InterruptCountLimit);
+        Assert.Equal(64, options.DefaultExecutionOptions.MaxResultCount);
         Assert.Equal(LuauBytecodePolicy.Reject, options.BytecodePolicy);
         Assert.Null(options.BytecodeValidator);
         Assert.Null(options.DefaultExecutionOptions.ContinuationScheduler);
         options.Validate();
 
         using var state = LuauState.Create(options);
-        Assert.False(state.MemoryUsage.IsTracked);
+        Assert.True(state.MemoryUsage.IsTracked);
+        Assert.Equal(options.MemoryLimitBytes, state.MemoryUsage.LimitBytes);
     }
 
     [Fact]
@@ -31,6 +34,50 @@ public sealed class HardeningConfigurationTests
 
         Assert.Same(scheduler, options.ContinuationScheduler);
         Assert.False(options.HasBudget);
+    }
+
+    [Fact]
+    public void PerOperationOptionsOnlyTightenStatePolicy()
+    {
+        var scheduler = new InlineScheduler();
+        var defaults = new LuauExecutionOptions
+        {
+            WallClockLimit = TimeSpan.FromSeconds(2),
+            InterruptCountLimit = 100,
+            MaxResultCount = 8,
+            ContinuationScheduler = scheduler,
+        };
+
+        var effective = LuauExecutionOptions.ResolveForOperation(
+            defaults,
+            new LuauExecutionOptions
+            {
+                WallClockLimit = TimeSpan.FromSeconds(5),
+                InterruptCountLimit = 50,
+                MaxResultCount = 2,
+            });
+
+        Assert.Equal(TimeSpan.FromSeconds(2), effective.WallClockLimit);
+        Assert.Equal(50, effective.InterruptCountLimit);
+        Assert.Equal(2, effective.MaxResultCount);
+        Assert.Same(scheduler, effective.ContinuationScheduler);
+    }
+
+    [Fact]
+    public void PerOperationOptionsCannotReplaceStateScheduler()
+    {
+        var defaults = new LuauExecutionOptions
+        {
+            ContinuationScheduler = new InlineScheduler(),
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            LuauExecutionOptions.ResolveForOperation(
+                defaults,
+                new LuauExecutionOptions
+                {
+                    ContinuationScheduler = new InlineScheduler(),
+                }));
     }
 
     [Fact]
@@ -159,7 +206,7 @@ public sealed class HardeningConfigurationTests
 
     sealed class AcceptingValidator : ILuauBytecodeValidator
     {
-        public bool IsValid(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName) => true;
+        public bool IsValid(LuauBytecodeArtifact artifact, ReadOnlySpan<byte> bytecode) => true;
     }
 
     sealed class InlineScheduler : ILuauContinuationScheduler

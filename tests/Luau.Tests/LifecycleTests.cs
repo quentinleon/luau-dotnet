@@ -105,24 +105,20 @@ public sealed class LifecycleTests
     {
         using var root = LuauState.Create();
         var table = root.CreateTable();
-        var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => { });
 
         Parallel.For(0, 8, _ => table.Dispose());
-        Parallel.For(0, 8, _ => userData.Dispose());
         Parallel.For(0, 8, _ => buffer.Dispose());
         Parallel.For(0, 8, _ => function.Dispose());
         Parallel.For(0, 8, _ => callback.Dispose());
 
         Assert.True(table.IsDisposed);
-        Assert.True(userData.IsDisposed);
         Assert.True(buffer.IsDisposed);
         Assert.True(function.IsDisposed);
         Assert.True(callback.IsDisposed);
         Assert.Throws<ObjectDisposedException>(() => _ = table.Count);
-        Assert.Throws<ObjectDisposedException>(() => _ = userData.Size);
         Assert.Throws<ObjectDisposedException>(() => _ = buffer.Length);
         Assert.Throws<ObjectDisposedException>(() => _ = function.State);
         Assert.Throws<ObjectDisposedException>(() => _ = callback.State);
@@ -133,23 +129,19 @@ public sealed class LifecycleTests
     {
         var root = LuauState.Create();
         var table = root.CreateTable();
-        var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => { });
 
         root.Dispose();
 
         Assert.True(table.IsDisposed);
-        Assert.True(userData.IsDisposed);
         Assert.True(buffer.IsDisposed);
         Assert.True(function.IsDisposed);
         Assert.True(callback.IsDisposed);
 
         table.Dispose();
         table.Dispose();
-        userData.Dispose();
-        userData.Dispose();
         buffer.Dispose();
         buffer.Dispose();
         function.Dispose();
@@ -161,7 +153,7 @@ public sealed class LifecycleTests
     [Fact]
     public void RootDisposalMakesPublicStateOperationsFailSafely()
     {
-        var bytecode = LuauCompiler.Compile("return 1"u8);
+        var output = LuauCompiler.Compile("return 1"u8);
         var root = LuauState.Create();
         var child = root.CreateThread();
 
@@ -171,7 +163,7 @@ public sealed class LifecycleTests
         Assert.Throws<ObjectDisposedException>(() => root.CreateTable());
         Assert.Throws<ObjectDisposedException>(() => root.GetMainThread());
         Assert.Throws<ObjectDisposedException>(() => root.CreateThread());
-        Assert.Throws<ObjectDisposedException>(() => root.Execute(bytecode));
+        Assert.Throws<ObjectDisposedException>(() => root.ExecuteCompilerOutput(output));
         Assert.Throws<ObjectDisposedException>(() => root.DoString("return 1"));
         Assert.Throws<ObjectDisposedException>(() => child.Resume());
     }
@@ -270,15 +262,13 @@ public sealed class LifecycleTests
     }
 
     [Fact]
-    public void TableClearAndFailedUserDataReadKeepStackBalanced()
+    public void TableClearKeepsStackBalanced()
     {
         using var root = LuauState.Create();
         using var table = root.CreateTable();
-        using var userData = root.CreateUserData((byte)7);
         for (var i = 0; i < 250; i++)
         {
             table.Clear();
-            Assert.False(userData.TryRead<long>(out _));
         }
 
         Assert.Equal(9, root.DoString("return 9").Single().Read<int>());
@@ -325,13 +315,11 @@ public sealed class LifecycleTests
             using var root = LuauState.Create();
             var table = root.CreateTable();
             table[1d] = 11;
-            var userData = root.CreateUserData(123);
             var buffer = root.CreateBuffer(16);
-            var script = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
+            var script = root.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
             var callback = root.CreateFunction(_ => { });
 
             await RaceUseAndDisposeAsync(() => Assert.Equal(1, table.Count), table.Dispose);
-            await RaceUseAndDisposeAsync(() => Assert.Equal(sizeof(int), userData.Size), userData.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.Equal(16, buffer.Length), buffer.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.StartsWith("function:", script.ToString()), script.Dispose);
             await RaceUseAndDisposeAsync(
@@ -353,14 +341,12 @@ public sealed class LifecycleTests
     static WeakReference[] CreateAbandonedReferences(LuauState state)
     {
         var table = state.CreateTable();
-        var userData = state.CreateUserData(123);
         var buffer = state.CreateBuffer(8);
-        var function = state.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
+        var function = state.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
 
         return
         [
             new WeakReference(table),
-            new WeakReference(userData),
             new WeakReference(buffer),
             new WeakReference(function),
         ];
@@ -387,9 +373,8 @@ public sealed class LifecycleTests
     {
         var root = LuauState.Create();
         var table = root.CreateTable();
-        var userData = root.CreateUserData(123);
         var buffer = root.CreateBuffer(8);
-        var function = root.LoadTrustedBytecode(LuauCompiler.Compile("return 1"u8));
+        var function = root.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
         var callback = root.CreateFunction(_ => { });
 
         root.Dispose();
@@ -397,7 +382,6 @@ public sealed class LifecycleTests
         return
         [
             new WeakReference(table),
-            new WeakReference(userData),
             new WeakReference(buffer),
             new WeakReference(function),
             new WeakReference(callback),

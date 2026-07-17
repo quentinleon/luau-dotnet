@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Luau.Tests;
 
 public sealed class HardeningRuntimeTests
@@ -148,61 +146,99 @@ public sealed class HardeningRuntimeTests
             BytecodeValidator = validator,
         });
         var stackTop = state.GetTop();
+        var output = LuauCompiler.Compile("return 1"u8);
+        var artifact = LuauBytecodeArtifact.Create(output, "tests/oversized");
 
-        var exception = Assert.Throws<LuauLoadLimitException>(() => state.Load(
-            [0xff, 0x00, 0x80, 0x01, 0x02],
-            chunkName));
+        var exception = Assert.Throws<LuauLoadLimitException>(() =>
+            state.LoadVerifiedBytecode(artifact, chunkName));
 
         Assert.Equal(chunkName, exception.ChunkName);
         Assert.Equal(LuauLoadInputKind.Bytecode, exception.InputKind);
-        Assert.Equal(5, exception.ActualBytes);
+        Assert.Equal(output.BytecodeLength, exception.ActualBytes);
         Assert.Equal(4, exception.LimitBytes);
         Assert.Equal(0, validator.CallCount);
         Assert.Equal(stackTop, state.GetTop());
     }
 
     [Fact]
-    public void DefaultPolicyBlocksHostBytecodeButAllowsInternallyCompiledSource()
+    public void DefaultPolicyBlocksPersistentArtifactsButAllowsCompilerOutputAndSource()
     {
         const string chunkName = "@mods/rejected-bytecode.luau";
-        var bytecode = LuauCompiler.Compile("return 41"u8);
+        var output = LuauCompiler.Compile("return 41"u8);
+        var artifact = LuauBytecodeArtifact.Create(output, "tests/default-policy");
         using var state = LuauState.Create();
         var stackTop = state.GetTop();
 
-        var exception = Assert.Throws<LuauException>(() => state.Execute(bytecode, chunkName));
+        var exception = Assert.Throws<LuauException>(() =>
+            state.ExecuteVerifiedBytecode(artifact, chunkName));
+        var compilerResults = state.ExecuteCompilerOutput(output, "@dev/compiler-output.luau");
         var sourceResults = state.DoString("return 42", "@mods/trusted-source.luau");
 
         Assert.Equal(chunkName, exception.ChunkName);
         Assert.Contains("disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(stackTop, state.GetTop());
+        Assert.Equal(41, Assert.Single(compilerResults).Read<int>());
         Assert.Single(sourceResults);
         Assert.Equal(42, sourceResults[0].Read<int>());
     }
 
     [Fact]
-    public void TrustedBytecodeStillObservesByteSizeLimit()
+    public void CompilerOutputStillObservesByteSizeLimit()
     {
         const string chunkName = "@host/oversized-bundle.luau";
-        var bytecode = LuauCompiler.Compile("return 1"u8);
+        var output = LuauCompiler.Compile("return 1"u8);
         using var state = LuauState.Create(new LuauStateOptions
         {
-            MaxBytecodeBytes = bytecode.Length - 1,
+            MaxBytecodeBytes = output.BytecodeLength - 1,
         });
 
         var exception = Assert.Throws<LuauLoadLimitException>(() =>
-            state.ExecuteTrustedBytecode(bytecode, chunkName));
+            state.ExecuteCompilerOutput(output, chunkName));
 
         Assert.Equal(LuauLoadInputKind.Bytecode, exception.InputKind);
-        Assert.Equal(bytecode.Length, exception.ActualBytes);
-        Assert.Equal(bytecode.Length - 1, exception.LimitBytes);
+        Assert.Equal(output.BytecodeLength, exception.ActualBytes);
+        Assert.Equal(output.BytecodeLength - 1, exception.LimitBytes);
         Assert.Equal(chunkName, exception.ChunkName);
     }
 
     [Fact]
-    public void TrustedBytecodeStillObservesExecutionLimit()
+    public void InternallyCompiledBytecodeIsBoundedBeforeManagedCopyAndLoad()
+    {
+        const string chunkName = "@mods/compiled-output-too-large.luau";
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            MaxSourceBytes = 1_024,
+            MaxBytecodeBytes = 8,
+        });
+
+        var exception = Assert.Throws<LuauLoadLimitException>(() =>
+            state.DoString("return 42", chunkName));
+
+        Assert.Equal(LuauLoadInputKind.Bytecode, exception.InputKind);
+        Assert.True(exception.ActualBytes > exception.LimitBytes);
+        Assert.Equal(8, exception.LimitBytes);
+        Assert.Equal(chunkName, exception.ChunkName);
+        Assert.Equal(0, state.GetTop());
+    }
+
+    [Fact]
+    public async Task PreCanceledExecutionDoesNotCompileSource()
+    {
+        using var state = LuauState.Create();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<LuauExecutionCanceledException>(async () =>
+            await state.DoStringAsync(
+                "this is intentionally invalid source",
+                cancellationToken: cancellation.Token));
+    }
+
+    [Fact]
+    public void CompilerOutputStillObservesExecutionLimit()
     {
         const string chunkName = "@host/bounded-bundle.luau";
-        var bytecode = LuauCompiler.Compile("while true do end"u8);
+        var output = LuauCompiler.Compile("while true do end"u8);
         using var state = LuauState.Create(new LuauStateOptions
         {
             DefaultExecutionOptions = new LuauExecutionOptions
@@ -212,7 +248,7 @@ public sealed class HardeningRuntimeTests
         });
 
         var exception = Assert.Throws<LuauExecutionBudgetException>(() =>
-            state.ExecuteTrustedBytecode(bytecode, chunkName));
+            state.ExecuteCompilerOutput(output, chunkName));
 
         Assert.Equal(LuauExecutionBudgetKind.InterruptCount, exception.BudgetKind);
         Assert.Equal(chunkName, exception.ChunkName);
@@ -223,7 +259,8 @@ public sealed class HardeningRuntimeTests
     {
         const string chunkName = "@mods/validator-rejected.luau";
         var validator = new RecordingValidator(accept: false);
-        var bytecode = LuauCompiler.Compile("return 1"u8);
+        var output = LuauCompiler.Compile("return 1"u8);
+        var artifact = LuauBytecodeArtifact.Create(output, "tests/rejected", [1, 2, 3]);
         using var state = LuauState.Create(new LuauStateOptions
         {
             BytecodePolicy = LuauBytecodePolicy.RequireValidator,
@@ -231,13 +268,14 @@ public sealed class HardeningRuntimeTests
         });
         var stackTop = state.GetTop();
 
-        var exception = Assert.Throws<LuauException>(() => state.Load(bytecode, chunkName));
+        var exception = Assert.Throws<LuauException>(() =>
+            state.LoadVerifiedBytecode(artifact, chunkName));
 
         Assert.Equal(chunkName, exception.ChunkName);
         Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, validator.CallCount);
-        Assert.Equal(chunkName, validator.LastChunkName);
-        Assert.Equal(bytecode, validator.LastBytecode);
+        Assert.Same(artifact, validator.LastArtifact);
+        Assert.Equal(output.ToBytecodeArray(), validator.LastBytecode);
         Assert.Equal(stackTop, state.GetTop());
     }
 
@@ -246,20 +284,21 @@ public sealed class HardeningRuntimeTests
     {
         const string chunkName = "@mods/validator-accepted.luau";
         var validator = new RecordingValidator(accept: true);
-        var bytecode = LuauCompiler.Compile("return 123"u8);
+        var output = LuauCompiler.Compile("return 123"u8);
+        var artifact = LuauBytecodeArtifact.Create(output, "tests/accepted");
         using var state = LuauState.Create(new LuauStateOptions
         {
             BytecodePolicy = LuauBytecodePolicy.RequireValidator,
             BytecodeValidator = validator,
         });
 
-        var results = state.Execute(bytecode, chunkName);
+        var results = state.ExecuteVerifiedBytecode(artifact, chunkName);
 
         Assert.Single(results);
         Assert.Equal(123, results[0].Read<int>());
         Assert.Equal(1, validator.CallCount);
-        Assert.Equal(chunkName, validator.LastChunkName);
-        Assert.Equal(bytecode, validator.LastBytecode);
+        Assert.Same(artifact, validator.LastArtifact);
+        Assert.Equal(output.ToBytecodeArray(), validator.LastBytecode);
     }
 
     [Fact]
@@ -286,35 +325,34 @@ public sealed class HardeningRuntimeTests
     }
 
     [Fact]
-    public void HardenedRejectPolicyHandlesMalformedInputWithoutEnteringNativeLoader()
+    public void ArtifactConstructorRejectsTamperedBytecodeBeforeStateValidation()
     {
-        const string chunkName = "@mods/malformed-bytecode.luau";
-        using var state = LuauState.Create(new LuauStateOptions
-        {
-            BytecodePolicy = LuauBytecodePolicy.Reject,
-        });
-        var stackTop = state.GetTop();
+        var output = LuauCompiler.Compile("return 1"u8);
+        var bytecode = output.ToBytecodeArray();
+        bytecode[^1] ^= 0xff;
 
-        var exception = Assert.Throws<LuauException>(() => state.Load(
-            [0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x01],
-            chunkName));
-
-        Assert.Equal(chunkName, exception.ChunkName);
-        Assert.Contains("precompiled bytecode is disabled", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(stackTop, state.GetTop());
+        Assert.Throws<ArgumentException>(() => new LuauBytecodeArtifact(
+            LuauBytecodeArtifact.CurrentSchemaVersion,
+            bytecode,
+            output.CompileOptions,
+            output.UpstreamRevisionHash,
+            output.HostBuildFingerprint,
+            output.SourceSha256,
+            output.BytecodeSha256,
+            "tests/tampered"));
     }
 
     sealed class RecordingValidator(bool accept) : ILuauBytecodeValidator
     {
         public int CallCount { get; private set; }
         public byte[]? LastBytecode { get; private set; }
-        public string? LastChunkName { get; private set; }
+        public LuauBytecodeArtifact? LastArtifact { get; private set; }
 
-        public bool IsValid(ReadOnlySpan<byte> bytecode, ReadOnlySpan<byte> utf8ChunkName)
+        public bool IsValid(LuauBytecodeArtifact artifact, ReadOnlySpan<byte> bytecode)
         {
             CallCount++;
+            LastArtifact = artifact;
             LastBytecode = bytecode.ToArray();
-            LastChunkName = Encoding.UTF8.GetString(utf8ChunkName);
             return accept;
         }
     }
