@@ -922,8 +922,14 @@ void leaveinterrupt(AllocatorContext* allocator)
     if (allocator)
     {
         const uint64_t previous = allocator->interruptGate.fetch_sub(1, std::memory_order_acq_rel);
-        if ((previous & kInterruptGateCountMask) == 1)
+        if ((previous & kInterruptGateCountMask) == 1 && (previous & kInterruptGateEnabled) == 0)
+        {
+            // Once uninstall has disabled the gate, synchronize its predicate
+            // check with the final callback exit so the notification cannot be
+            // lost between the waiter evaluating the count and blocking.
+            { std::lock_guard<std::mutex> lifecycle(allocator->interruptLifecycleMutex); }
             allocator->interruptDrained.notify_all();
+        }
     }
 }
 

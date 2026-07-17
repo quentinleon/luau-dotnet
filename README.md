@@ -85,6 +85,78 @@ One root and all of its child threads are serialized. Independent roots may run
 concurrently. The Unity facade captures the current Unity synchronization
 context by default, so async continuations return to the Unity thread.
 
+## Background Compilation
+
+Downloaded source and SDK/editor preview source should normally be compiled
+through Unity's package-owned background lane. It uses one bounded queue and a
+dedicated managed worker, so native compilation does not block the Unity owner
+thread:
+
+```csharp
+using Luau;
+using Luau.Unity;
+
+var compilation = await LuauUnity.CompileAsync(
+    downloadedUtf8Source,
+    cancellationToken: cancellationToken);
+
+switch (compilation.Kind)
+{
+    case LuauCompileResultKind.Success:
+        // Installing compiler output is a separate host decision. This helper
+        // posts the VM operation to the state's configured owner scheduler.
+        var values = await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+            compilation.Output!,
+            "@mods/example/main.luau".AsMemory(),
+            cancellationToken);
+        break;
+
+    case LuauCompileResultKind.Diagnostic:
+        ShowAuthoringDiagnostic(compilation.Diagnostic!.Message);
+        break;
+
+    case LuauCompileResultKind.Canceled:
+        break;
+
+    case LuauCompileResultKind.InfrastructureFailure:
+        throw compilation.InfrastructureException!;
+}
+```
+
+The shared lane checks admission before taking its owned source snapshot. It
+bounds the per-request source, per-result bytecode, incomplete request count,
+aggregate incomplete source bytes, and worker count. Admission-limit failures throw
+`LuauCompilationLimitException`; source diagnostics, cancellation, and backend
+failures are distinct result kinds. Queued cancellation removes the work and
+releases its reservation. A running native compile is never aborted: its output
+is freed and discarded after the call returns.
+
+`LuauUnity.CompileAsync` is available in both the Editor and player builds and
+shares one package-owned lane. It selects one worker and 32 queue slots on
+Windows/Editor, or one worker and 16 slots on Android. The package drains that
+worker before Editor assembly reload and during player exit; callers never
+dispose it.
+
+An advanced host that needs an isolated queue, custom resource policy, or an
+independent lifetime can construct `LuauThreadedCompilationService` directly,
+usually with `LuauUnity.GetRecommendedCompilationOptions()` as its starting
+policy. Such a service is caller-owned, is not tracked by Unity, and must be
+disposed before its owning subsystem or Editor assembly lifetime ends. Windows
+hosts may opt into a second worker only after representative stress testing.
+
+Threads provide responsiveness and bounded admission, not crash, hang, hard
+timeout, or compiler-intermediate-memory isolation. Copied output bytes are not
+load capabilities and must not be placed into source-only mod packages. A
+persistent first-party cache must create and later validate a
+`LuauBytecodeArtifact` through the separate trust lane.
+
+`LuauState.DoStringAsync` and the legacy source-asset `ExecuteAsync` overloads
+still compile synchronously before asynchronous VM execution. Streamed source
+should use `LuauUnity.CompileAsync`. The `LuauAsset` overload accepting an
+`ILuauCompilationService` is available for advanced caller-owned lanes. Unity's
+`ScriptedImporter` callback is synchronous and continues to compile transiently
+for import diagnostics.
+
 ## Safe Host APIs
 
 ### Attribute-generated libraries
@@ -241,10 +313,20 @@ using var state = LuauUnity.CreateState(new LuauUnityOptions
     MaxPrintMessagesPerSecond = 20,
 });
 
-var results = await state.DoStringAsync(
+var compilation = await LuauUnity.CompileAsync(
     untrustedSource,
-    "@mods/example/main.luau".AsMemory(),
     cancellationToken: cancellationToken);
+if (compilation.Kind == LuauCompileResultKind.Diagnostic)
+    throw compilation.Diagnostic!;
+if (compilation.Kind == LuauCompileResultKind.Canceled)
+    throw new OperationCanceledException(cancellationToken);
+if (compilation.Kind == LuauCompileResultKind.InfrastructureFailure)
+    throw compilation.InfrastructureException!;
+
+var results = await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+    compilation.Output!,
+    "@mods/example/main.luau".AsMemory(),
+    cancellationToken);
 ```
 
 The Unity defaults are conservative starting points; the tighter limits above

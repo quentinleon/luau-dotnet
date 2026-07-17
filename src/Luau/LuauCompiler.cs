@@ -36,39 +36,33 @@ public unsafe static class LuauCompiler
             throw new ArgumentNullException(nameof(abiVerifier));
         }
 
-        abiVerifier.EnsureAvailable();
         var output = default(LuauHostBuffer);
         try
         {
-            fixed (byte* ptr = source)
-            {
-                var nativeOptions = CreateHostCompileOptions(options ?? LuauCompileOptions.Default);
-                var status = luau_host_compile(
-                    ptr,
-                    checked((ulong)source.Length),
-                    &nativeOptions,
-                    &output);
-                ThrowIfCompileFailed(status);
-            }
-
-            var length = GetManagedBytecodeLength(output.data, output.size);
-            if (maximumOutputBytes is { } limit && length > limit)
+            var result = CompileNative(
+                source,
+                options ?? LuauCompileOptions.Default,
+                abiVerifier,
+                &output);
+            if (!result.IsDiagnostic &&
+                maximumOutputBytes is { } limit &&
+                result.Length > limit)
             {
                 throw new LuauLoadLimitException(
                     chunkName,
                     LuauLoadInputKind.Bytecode,
-                    length,
+                    result.Length,
                     limit);
             }
 
-            var destination = writer.GetSpan(length);
-            if (destination.Length < length)
+            var destination = writer.GetSpan(result.Length);
+            if (destination.Length < result.Length)
             {
                 throw new InvalidOperationException("The buffer writer returned less space than requested.");
             }
 
-            new ReadOnlySpan<byte>(output.data, length).CopyTo(destination);
-            writer.Advance(length);
+            new ReadOnlySpan<byte>(output.data, result.Length).CopyTo(destination);
+            writer.Advance(result.Length);
         }
         finally
         {
@@ -94,7 +88,62 @@ public unsafe static class LuauCompiler
     {
         var compileOptions = (options ?? LuauCompileOptions.Default) with { };
         var sourceSnapshot = source.ToArray();
-        var bytecode = CompileBytecode(sourceSnapshot, compileOptions, abiVerifier);
+        return CompileOwnedSource(sourceSnapshot, compileOptions, abiVerifier, null, default);
+    }
+
+    internal static LuauCompilerOutput CompileOwnedSource(
+        byte[] sourceSnapshot,
+        LuauCompileOptions options,
+        int maximumOutputBytes)
+    {
+        return CompileOwnedSource(sourceSnapshot, options, maximumOutputBytes, default);
+    }
+
+    internal static LuauCompilerOutput CompileOwnedSource(
+        byte[] sourceSnapshot,
+        LuauCompileOptions options,
+        int maximumOutputBytes,
+        CancellationToken cancellationToken)
+    {
+        return CompileOwnedSource(
+            sourceSnapshot,
+            options,
+            LuauNativeProtection.AbiVerifier,
+            maximumOutputBytes,
+            cancellationToken);
+    }
+
+    internal static LuauCompilerOutput CompileOwnedSource(
+        byte[] sourceSnapshot,
+        LuauCompileOptions options,
+        LuauNativeAbiVerifier abiVerifier,
+        int? maximumOutputBytes,
+        CancellationToken cancellationToken)
+    {
+        if (sourceSnapshot == null)
+        {
+            throw new ArgumentNullException(nameof(sourceSnapshot));
+        }
+        if (options == null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+        if (maximumOutputBytes is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumOutputBytes),
+                maximumOutputBytes,
+                "The maximum compiler output size must be greater than zero.");
+        }
+
+        var compileOptions = options with { };
+        var bytecode = CompileBytecode(
+            sourceSnapshot,
+            compileOptions,
+            abiVerifier,
+            maximumOutputBytes,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (bytecode.Length == 0)
         {
             throw new LuauCompilationException("The Luau compiler returned an empty result.");
@@ -107,10 +156,13 @@ public unsafe static class LuauCompiler
             throw new LuauCompilationException(message);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        var sourceSha256 = LuauBytecodeHash.Sha256(sourceSnapshot);
+        cancellationToken.ThrowIfCancellationRequested();
         return new LuauCompilerOutput(
             bytecode,
             compileOptions,
-            LuauBytecodeHash.Sha256(sourceSnapshot),
+            sourceSha256,
             LuauNativeProtection.ExpectedUpstreamRevisionHash,
             LuauNativeProtection.ExpectedHostBuildFingerprint);
     }
@@ -118,31 +170,39 @@ public unsafe static class LuauCompiler
     static byte[] CompileBytecode(
         ReadOnlySpan<byte> source,
         LuauCompileOptions options,
-        LuauNativeAbiVerifier abiVerifier)
+        LuauNativeAbiVerifier abiVerifier,
+        int? maximumOutputBytes,
+        CancellationToken cancellationToken)
     {
         if (abiVerifier == null)
         {
             throw new ArgumentNullException(nameof(abiVerifier));
         }
 
-        abiVerifier.EnsureAvailable();
         var output = default(LuauHostBuffer);
         try
         {
-            fixed (byte* ptr = source)
+            var nativeResult = CompileNative(
+                source,
+                options,
+                abiVerifier,
+                &output);
+            // Running cancellation never interrupts the native call. Once it
+            // returns, skip the managed copy/hash/capability path and let the
+            // caller publish cancellation while finally frees the host buffer.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!nativeResult.IsDiagnostic &&
+                maximumOutputBytes is { } limit &&
+                nativeResult.Length > limit)
             {
-                var nativeOptions = CreateHostCompileOptions(options);
-                var status = luau_host_compile(
-                    ptr,
-                    checked((ulong)source.Length),
-                    &nativeOptions,
-                    &output);
-                ThrowIfCompileFailed(status);
+                throw new LuauCompilationLimitException(
+                    LuauCompilationLimitKind.BytecodeBytesPerResult,
+                    nativeResult.Length,
+                    limit);
             }
 
-            var length = GetManagedBytecodeLength(output.data, output.size);
-            var result = new byte[length];
-            new ReadOnlySpan<byte>(output.data, length).CopyTo(result);
+            var result = new byte[nativeResult.Length];
+            new ReadOnlySpan<byte>(output.data, nativeResult.Length).CopyTo(result);
 
             return result;
         }
@@ -150,6 +210,32 @@ public unsafe static class LuauCompiler
         {
             luau_host_buffer_free(&output);
         }
+    }
+
+    static (int Length, bool IsDiagnostic) CompileNative(
+        ReadOnlySpan<byte> source,
+        LuauCompileOptions options,
+        LuauNativeAbiVerifier abiVerifier,
+        LuauHostBuffer* output)
+    {
+        abiVerifier.EnsureAvailable();
+        fixed (byte* ptr = source)
+        {
+            var nativeOptions = CreateHostCompileOptions(options);
+            var status = luau_host_compile(
+                ptr,
+                checked((ulong)source.Length),
+                &nativeOptions,
+                output);
+            ThrowIfCompileFailed(status);
+        }
+
+        var length = GetManagedBytecodeLength(output->data, output->size);
+        // A zero-prefixed native payload is a source diagnostic, not
+        // bytecode. Its size is already bounded by the admitted source;
+        // bytecode-result policies must not reclassify it as an
+        // infrastructure quota failure.
+        return (length, length > 0 && output->data[0] == 0);
     }
 
     static LuauHostCompileOptions CreateHostCompileOptions(LuauCompileOptions options)
@@ -197,5 +283,10 @@ public unsafe static class LuauCompiler
             default:
                 throw new LuauException($"The native Luau compiler returned unknown host status {(int)status}.");
         }
+    }
+
+    internal static void EnsureAvailable()
+    {
+        LuauNativeProtection.AbiVerifier.EnsureAvailable();
     }
 }

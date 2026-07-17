@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace Luau.Unity
 {
-    public static class LuauStateExtensions
+    public static partial class LuauStateExtensions
     {
         public static int Execute(this LuauState state, LuauAsset asset, Span<LuauValue> destination)
         {

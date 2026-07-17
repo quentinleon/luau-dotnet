@@ -3,13 +3,18 @@
 
 #include <algorithm>
 #include <array>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -113,6 +118,110 @@ CompiledBuffer compile_source(const std::string& source)
     REQUIRE(buffer.value.data != nullptr);
     REQUIRE(buffer.value.size > 0);
     return buffer;
+}
+
+struct CompileCase
+{
+    std::string source;
+    luau_host_compile_options options = {};
+    bool useOptions = false;
+    bool expectDiagnostic = false;
+};
+
+struct CompileBaseline
+{
+    std::vector<uint8_t> bytes;
+    uint64_t hash = 0;
+};
+
+uint64_t hash_bytes(const uint8_t* data, size_t size)
+{
+    uint64_t value = UINT64_C(14695981039346656037);
+    for (size_t index = 0; index < size; ++index)
+        value = (value ^ data[index]) * UINT64_C(1099511628211);
+    return value;
+}
+
+CompileBaseline compile_baseline(const CompileCase& compileCase)
+{
+    CompiledBuffer buffer;
+    const luau_host_compile_options* options = compileCase.useOptions ? &compileCase.options : nullptr;
+    REQUIRE(
+        luau_host_compile(
+            bytes(compileCase.source.data()),
+            static_cast<uint64_t>(compileCase.source.size()),
+            options,
+            &buffer.value) == LUAU_HOST_STATUS_OK);
+    REQUIRE(buffer.value.data != nullptr);
+    REQUIRE(buffer.value.size > 0);
+    REQUIRE(buffer.value.size <= uint64_t(std::numeric_limits<size_t>::max()));
+
+    const size_t size = static_cast<size_t>(buffer.value.size);
+    REQUIRE((buffer.value.data[0] == 0) == compileCase.expectDiagnostic);
+    return {
+        std::vector<uint8_t>(buffer.value.data, buffer.value.data + size),
+        hash_bytes(buffer.value.data, size),
+    };
+}
+
+class ThreadStartGate
+{
+public:
+    void arrive_and_wait()
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ++ready;
+        changed.notify_all();
+        changed.wait(lock, [this] { return released; });
+    }
+
+    void release_when_ready(size_t expected)
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        changed.wait(lock, [this, expected] { return ready == expected; });
+        released = true;
+        lock.unlock();
+        changed.notify_all();
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    size_t ready = 0;
+    bool released = false;
+};
+
+template<size_t ThreadCount, typename Worker>
+void run_threads_together(Worker&& worker)
+{
+    ThreadStartGate gate;
+    std::array<std::exception_ptr, ThreadCount> failures = {};
+    std::array<std::thread, ThreadCount> threads;
+
+    for (size_t index = 0; index < ThreadCount; ++index)
+    {
+        threads[index] = std::thread([&gate, &failures, &worker, index] {
+            gate.arrive_and_wait();
+            try
+            {
+                worker(index);
+            }
+            catch (...)
+            {
+                failures[index] = std::current_exception();
+            }
+        });
+    }
+
+    gate.release_when_ready(ThreadCount);
+    for (std::thread& thread : threads)
+        thread.join();
+
+    for (const std::exception_ptr& failure : failures)
+    {
+        if (failure)
+            std::rethrow_exception(failure);
+    }
 }
 
 luau_host_status compile_and_load(luau_host_state* state, const std::string& source, const char* chunkName)
@@ -241,6 +350,143 @@ void test_compile_and_buffer_ownership()
     REQUIRE(compilerErrorStatus == LUAU_HOST_STATUS_LUA_ERROR);
     REQUIRE(luau_host_stack_get_top(root.state) == 1);
     REQUIRE(!string_at(root.state, -1).empty());
+}
+
+void test_concurrent_compile_reentrancy_and_determinism()
+{
+    constexpr size_t threadCount = 4;
+    constexpr size_t iterationsPerThread = 500;
+
+    // Make the process's first compiler calls simultaneous. This catches any
+    // unsynchronized lazy initialization that a serial baseline would hide.
+    constexpr std::string_view coldSource = "local value = 21; return value * 2";
+    std::array<CompiledBuffer, threadCount> coldOutputs;
+    run_threads_together<threadCount>([&](size_t index) {
+        REQUIRE(
+            luau_host_compile(
+                bytes(coldSource.data()),
+                static_cast<uint64_t>(coldSource.size()),
+                nullptr,
+                &coldOutputs[index].value) == LUAU_HOST_STATUS_OK);
+    });
+    for (size_t first = 0; first < threadCount; ++first)
+    {
+        REQUIRE(coldOutputs[first].value.data != nullptr);
+        for (size_t second = first + 1; second < threadCount; ++second)
+        {
+            REQUIRE(coldOutputs[first].value.size == coldOutputs[second].value.size);
+            REQUIRE(
+                std::equal(
+                    coldOutputs[first].value.data,
+                    coldOutputs[first].value.data + coldOutputs[first].value.size,
+                    coldOutputs[second].value.data));
+        }
+    }
+
+    luau_host_compile_options optimizedOptions = {};
+    optimizedOptions.struct_size = sizeof(optimizedOptions);
+    optimizedOptions.version = LUAU_HOST_COMPILE_OPTIONS_VERSION;
+    optimizedOptions.optimization_level = 2;
+    optimizedOptions.debug_level = 2;
+    optimizedOptions.type_info_level = 1;
+    optimizedOptions.coverage_level = 2;
+
+    luau_host_compile_options minimalOptions = {};
+    minimalOptions.struct_size = sizeof(minimalOptions);
+    minimalOptions.version = LUAU_HOST_COMPILE_OPTIONS_VERSION;
+
+    std::string largerSource(64 * 1024, ' ');
+    largerSource += "return 73";
+
+    const std::array<CompileCase, 5> compileCases = {{
+        {"return 40 + 2", {}, false, false},
+        {
+            "local function sum(n: number): number\n"
+            "    local value = 0\n"
+            "    for index = 1, n do value += index end\n"
+            "    return value\n"
+            "end\n"
+            "return sum(20)",
+            optimizedOptions,
+            true,
+            false,
+        },
+        {"local value =\n", {}, false, true},
+        {"function incomplete(\n", minimalOptions, true, true},
+        {std::move(largerSource), minimalOptions, true, false},
+    }};
+
+    std::array<CompileBaseline, compileCases.size()> baselines;
+    for (size_t index = 0; index < compileCases.size(); ++index)
+        baselines[index] = compile_baseline(compileCases[index]);
+
+    // Hold four near-default-limit outputs live at once. Each call receives a
+    // distinct source allocation and output record, proving that ownership is
+    // independent while native compilation is entered from multiple threads.
+    std::string nearLimitSource(1024 * 1024 - 32, ' ');
+    nearLimitSource += "return 101";
+    const CompileCase nearLimitCase = {std::move(nearLimitSource), optimizedOptions, true, false};
+    const CompileBaseline nearLimitBaseline = compile_baseline(nearLimitCase);
+    std::array<std::string, threadCount> independentSources;
+    std::array<CompiledBuffer, threadCount> independentOutputs;
+    for (std::string& source : independentSources)
+        source = nearLimitCase.source;
+    for (size_t first = 0; first < threadCount; ++first)
+    {
+        for (size_t second = first + 1; second < threadCount; ++second)
+            REQUIRE(independentSources[first].data() != independentSources[second].data());
+    }
+
+    run_threads_together<threadCount>([&](size_t index) {
+        REQUIRE(
+            luau_host_compile(
+                bytes(independentSources[index].data()),
+                static_cast<uint64_t>(independentSources[index].size()),
+                &optimizedOptions,
+                &independentOutputs[index].value) == LUAU_HOST_STATUS_OK);
+    });
+
+    for (size_t first = 0; first < threadCount; ++first)
+    {
+        const luau_host_buffer& output = independentOutputs[first].value;
+        REQUIRE(output.data != nullptr);
+        REQUIRE(output.size == nearLimitBaseline.bytes.size());
+        REQUIRE(hash_bytes(output.data, static_cast<size_t>(output.size)) == nearLimitBaseline.hash);
+        REQUIRE(std::equal(nearLimitBaseline.bytes.begin(), nearLimitBaseline.bytes.end(), output.data));
+        for (size_t second = first + 1; second < threadCount; ++second)
+            REQUIRE(output.data != independentOutputs[second].value.data);
+    }
+
+    // Exercise thousands of mixed valid, invalid, option-varied, and larger
+    // inputs. Serial output is the oracle; hashes and exact bytes must match in
+    // every parallel iteration, including deterministic compiler diagnostics.
+    run_threads_together<threadCount>([&](size_t threadIndex) {
+        for (size_t iteration = 0; iteration < iterationsPerThread; ++iteration)
+        {
+            const bool useNearLimitCase = iteration % 31 == 0;
+            const size_t caseIndex = (threadIndex + iteration) % compileCases.size();
+            const CompileCase& compileCase = useNearLimitCase
+                ? nearLimitCase
+                : compileCases[caseIndex];
+            const CompileBaseline& baseline = useNearLimitCase
+                ? nearLimitBaseline
+                : baselines[caseIndex];
+            const std::string independentSource = compileCase.source;
+            CompiledBuffer output;
+            const luau_host_compile_options* options = compileCase.useOptions ? &compileCase.options : nullptr;
+
+            REQUIRE(
+                luau_host_compile(
+                    bytes(independentSource.data()),
+                    static_cast<uint64_t>(independentSource.size()),
+                    options,
+                    &output.value) == LUAU_HOST_STATUS_OK);
+            REQUIRE(output.value.data != nullptr);
+            REQUIRE(output.value.size == baseline.bytes.size());
+            REQUIRE(hash_bytes(output.value.data, static_cast<size_t>(output.value.size)) == baseline.hash);
+            REQUIRE(std::equal(baseline.bytes.begin(), baseline.bytes.end(), output.value.data));
+        }
+    });
 }
 
 void test_root_and_thread_lifecycle()
@@ -1540,6 +1786,9 @@ int main()
 {
     int failures = 0;
     failures += run_test("ABI query, truncation, and invalid arguments", test_abi_query);
+    failures += run_test(
+        "concurrent compiler reentrancy, ownership, and deterministic output",
+        test_concurrent_compile_reentrancy_and_determinism);
     failures += run_test("compiler and host-buffer ownership", test_compile_and_buffer_ownership);
     failures += run_test("root and child-thread lifecycle", test_root_and_thread_lifecycle);
     failures += run_test("load, pcall, ordinary error containment, and reuse", test_execution_error_containment_and_reuse);

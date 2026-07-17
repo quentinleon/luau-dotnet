@@ -403,7 +403,11 @@ partial class LuauState
             state.Options.MaxBytecodeBytes,
             chunkName);
         ThrowIfCompilationStopped(state);
-        state.LoadAcceptedBytecodeInternal(writer.WrittenSpan, utf8ChunkName);
+        state.LoadAcceptedBytecodeInternal(
+            writer.WrittenSpan,
+            utf8ChunkName,
+            chunkName,
+            allowOversizedDiagnostic: true);
     }
 
     static void CompileAndLoadString(

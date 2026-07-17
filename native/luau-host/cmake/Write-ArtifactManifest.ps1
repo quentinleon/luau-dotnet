@@ -31,9 +31,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ApprovedBuildInputSha256 = "d79ce03250269198a11053e31aa42cb0d6e3167e5f6e54e841dee6f46be54b16"
+$ApprovedBuildInputSha256 = "9f5a23faad2e6b07be02bbc9fe1f410629e79937c1626b0d1d58b0ea481cefd6"
 $ApprovedUpstreamRevisionHash = [Convert]::ToUInt64("c45f010aabf167ac", 16)
-$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("a1b9012b8b6e7d0f", 16)
+$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("106bf44141c27552", 16)
 $ApprovedFeatureFlags = [uint32]0x1ff
 $ApprovedExportCount = 85
 

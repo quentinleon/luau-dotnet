@@ -115,13 +115,17 @@ public unsafe partial class LuauState
     unsafe void LoadAcceptedBytecodeInternal(
         ReadOnlySpan<byte> bytecode,
         ReadOnlySpan<byte> utf8ChunkName,
-        string? decodedChunkName = null)
+        string? decodedChunkName = null,
+        bool allowOversizedDiagnostic = false)
     {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
         decodedChunkName ??= DecodeChunkName(utf8ChunkName);
-        ValidateBytecodeSize(bytecode.Length, decodedChunkName);
+        if (!allowOversizedDiagnostic || bytecode.IsEmpty || bytecode[0] != 0)
+        {
+            ValidateBytecodeSize(bytecode.Length, decodedChunkName);
+        }
         LuauNativeProtection.Prepare(context);
 
         var nameBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, utf8ChunkName.Length + 1));

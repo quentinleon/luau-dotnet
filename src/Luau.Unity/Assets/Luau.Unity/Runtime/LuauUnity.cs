@@ -82,7 +82,7 @@ namespace Luau.Unity
             DefaultMaxPrintMessagesPerSecond;
     }
 
-    public static class LuauUnity
+    public static partial class LuauUnity
     {
         public static LuauState CreateState(LuauUnityOptions options = null)
         {

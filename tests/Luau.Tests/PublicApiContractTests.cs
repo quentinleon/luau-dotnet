@@ -122,8 +122,13 @@ public sealed class PublicApiContractTests
         Assert.DoesNotContain("ExecuteBytecodeAsync", names);
 
         Assert.Empty(typeof(LuauCompilerOutput).GetConstructors(PublicDeclared));
+        Assert.Empty(typeof(LuauCompileResult).GetConstructors(PublicDeclared));
         var compile = Assert.Single(typeof(LuauCompiler).GetMethods(PublicDeclared));
         Assert.Equal(typeof(LuauCompilerOutput), compile.ReturnType);
+
+        var serviceCompile = Assert.Single(
+            typeof(ILuauCompilationService).GetMethods(PublicDeclared));
+        Assert.Equal(typeof(ValueTask<LuauCompileResult>), serviceCompile.ReturnType);
     }
 
     static string[] Snapshot(Assembly assembly) => assembly.GetExportedTypes()

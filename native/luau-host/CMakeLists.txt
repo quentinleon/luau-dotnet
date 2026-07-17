@@ -283,12 +283,14 @@ else()
 endif()
 
 if(LUAU_HOST_BUILD_TESTS)
+    find_package(Threads REQUIRED)
+
     add_executable(
         luau_host_conformance
         tests/luau_host_conformance.cpp
     )
     target_compile_features(luau_host_conformance PRIVATE cxx_std_17)
-    target_link_libraries(luau_host_conformance PRIVATE luau_host)
+    target_link_libraries(luau_host_conformance PRIVATE luau_host Threads::Threads)
     target_include_directories(luau_host_conformance PRIVATE "${LUAU_HOST_ROOT}/src")
 
     if(ANDROID)

@@ -222,6 +222,25 @@ public sealed class HardeningRuntimeTests
     }
 
     [Fact]
+    public void OversizedCompilerDiagnosticIsNotReclassifiedAsBytecodeLimit()
+    {
+        const string chunkName = "@mods/oversized-diagnostic.luau";
+        using var state = LuauState.Create(new LuauStateOptions
+        {
+            MaxSourceBytes = 2_048,
+            MaxBytecodeBytes = 8,
+        });
+        var source = "local " + new string('x', 1_024) + " = )";
+
+        var exception = Assert.Throws<LuauException>(() =>
+            state.DoString(source, chunkName));
+
+        Assert.Equal(chunkName, exception.ChunkName);
+        Assert.Contains(chunkName, exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, state.GetTop());
+    }
+
+    [Fact]
     public async Task PreCanceledExecutionDoesNotCompileSource()
     {
         using var state = LuauState.Create();
