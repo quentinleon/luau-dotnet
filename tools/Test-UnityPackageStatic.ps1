@@ -198,6 +198,36 @@ function Assert-FileHash {
     }
 }
 
+function Get-CanonicalUtf8Sha256 {
+    param([byte[]] $Bytes)
+
+    $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+    $canonicalUtf8 = [Text.UTF8Encoding]::new($false)
+    $text = $strictUtf8.GetString($Bytes)
+    $canonicalText = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString(
+            $sha256.ComputeHash($canonicalUtf8.GetBytes($canonicalText)))).Replace("-", "")
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Assert-CanonicalTextFileHash {
+    param(
+        [string] $Description,
+        [string] $Path,
+        [string] $ExpectedSha256
+    )
+
+    $actual = Get-CanonicalUtf8Sha256 ([IO.File]::ReadAllBytes($Path))
+    if (!$actual.Equals($ExpectedSha256, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Description canonical UTF-8 SHA256 mismatch. Expected '$ExpectedSha256', found '$actual'."
+    }
+}
+
 function Assert-FileLength {
     param(
         [string] $Description,
@@ -283,6 +313,24 @@ if (!(Test-Path -LiteralPath $packageRoot -PathType Container)) {
 if (!(Test-Path -LiteralPath $integrationProjectRoot -PathType Container)) {
     throw "The Unity integration project is missing: $integrationProjectRoot"
 }
+
+$canonicalHashProbeUtf8 = [Text.UTF8Encoding]::new($false)
+$canonicalHashLf = Get-CanonicalUtf8Sha256 (
+    $canonicalHashProbeUtf8.GetBytes("stage-5`npackage-metadata`n"))
+$canonicalHashCrLf = Get-CanonicalUtf8Sha256 (
+    $canonicalHashProbeUtf8.GetBytes("stage-5`r`npackage-metadata`r`n"))
+Assert-Equal "Canonical text hash line-ending regression probe" $canonicalHashCrLf $canonicalHashLf
+
+$gitAttributes = Read-RepositoryText ".gitattributes"
+foreach ($requiredAttribute in @(
+    "*.meta text eol=lf",
+    "tests/Luau.Tests/PublicApi.approved.txt text eol=lf",
+    "native/luau-host/include/luau_host.h text eol=lf",
+    "native/luau-host/exports/luau_host.exports text eol=lf"
+)) {
+    Assert-ContainsLiteral "Hash-pinned text checkout policy" $gitAttributes $requiredAttribute
+}
+Write-Host "PASS: hash-pinned text contracts use canonical UTF-8 hashes and LF checkout policy."
 
 $packageTopLevel = @(
     Get-ChildItem -LiteralPath $packageRoot -Force |
@@ -403,7 +451,10 @@ $importerMetaBaselines = @(
     @{ Path = "Runtime/Plugins/android-x64/libluau_host.so.meta"; Sha256 = "618EF509865F2810495805919BF0611968B0AFF751AEE052AC2C05E3F8681C92" }
 )
 foreach ($meta in $importerMetaBaselines) {
-    Assert-FileHash "Checked-in importer metadata $($meta.Path)" (Get-PackageFile $meta.Path) $meta.Sha256
+    Assert-CanonicalTextFileHash `
+        "Checked-in importer metadata $($meta.Path)" `
+        (Get-PackageFile $meta.Path) `
+        $meta.Sha256
 }
 Write-Host "PASS: managed/analyzer/native binaries and their importer metadata match the immutable pre-move hashes."
 
@@ -944,10 +995,10 @@ foreach ($forbidden in @(
 Write-Host "PASS: module loading is immutable, source-only, canonicalized, and rooted in finite Unity defaults."
 
 $managedPublicApiPath = Get-RepositoryFile "tests/Luau.Tests/PublicApi.approved.txt"
-Assert-FileHash `
+Assert-CanonicalTextFileHash `
     "Managed public API approval inventory" `
     $managedPublicApiPath `
-    "A61059B416961749E4500B0DD7BBBD08B458E605BF3A6FF99293E7D774665924"
+    "8BB40DC32B57F7B64DC6C99D0CD164534BF020773FE4CF9F490C1A86B137B7C4"
 $managedPublicApiProject = Read-RepositoryText "tests/Luau.Tests/Luau.Tests.csproj"
 Assert-ContainsLiteral `
     "Managed public API test project" `
@@ -961,15 +1012,15 @@ Assert-NotContainsLiteral `
     "Unity public API approval inventory" `
     $unityPublicApiTests `
     '"56c52c'
-Write-Host "PASS: managed API approval is byte-identical and Unity API approval contains only the reviewed smoke-type removal."
+Write-Host "PASS: managed API approval content is unchanged and Unity API approval contains only the reviewed smoke-type removal."
 
 $headerPath = Get-RequiredFile $hostRoot "include/luau_host.h" "Native host ABI header"
 $exportsPath = Get-RequiredFile $hostRoot "exports/luau_host.exports" "Native host export allowlist"
-Assert-FileHash `
+Assert-CanonicalTextFileHash `
     "Native host ABI header" `
     $headerPath `
     "56D723242B7857B65B5E3BFFEFA54653B229AA7D8015F1798861263DFC962BB2"
-Assert-FileHash `
+Assert-CanonicalTextFileHash `
     "Native host export allowlist" `
     $exportsPath `
     "C5F4E112B480D1C057A334F766CD05FF800974E2D648B34100D0BBEA47EA0A6B"

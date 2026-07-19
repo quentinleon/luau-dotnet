@@ -1,3 +1,11 @@
 # C# raw string literals preserve source newline bytes. Keep managed artifact
 # builds stable across Git clients and checkout locations.
+.gitattributes text eol=lf
 *.cs text eol=lf
+
+# Static package validation pins these textual compatibility contracts by
+# canonical SHA-256. Keep their checkout bytes stable on Windows as well.
+*.meta text eol=lf
+tests/Luau.Tests/PublicApi.approved.txt text eol=lf
+native/luau-host/include/luau_host.h text eol=lf
+native/luau-host/exports/luau_host.exports text eol=lf
