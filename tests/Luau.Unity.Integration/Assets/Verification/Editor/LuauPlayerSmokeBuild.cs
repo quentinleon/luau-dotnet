@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using Luau.Unity.Verification;
 using UnityEditor;
 using UnityEditor.Build;
@@ -84,6 +85,33 @@ namespace Luau.Unity.Editor
             Scene smokeScene = default;
             try
             {
+                var resourcesFolder = AssetDatabase.CreateFolder(
+                    temporaryFolder,
+                    "Resources");
+                resourcesFolder = AssetDatabase.GUIDToAssetPath(resourcesFolder);
+                if (string.IsNullOrEmpty(resourcesFolder))
+                {
+                    throw new BuildFailedException(
+                        "Unable to create the temporary Luau smoke Resources folder.");
+                }
+
+                var backgroundAssetPath = resourcesFolder + "/" +
+                    LuauPlayerSmoke.BackgroundAssetResourceName + ".luau";
+                var absoluteBackgroundAssetPath = Path.GetFullPath(
+                    Path.Combine(Application.dataPath, "..", backgroundAssetPath));
+                File.WriteAllText(
+                    absoluteBackgroundAssetPath,
+                    LuauPlayerSmoke.BackgroundSource,
+                    new UTF8Encoding(false));
+                AssetDatabase.ImportAsset(
+                    backgroundAssetPath,
+                    ImportAssetOptions.ForceSynchronousImport);
+                if (AssetDatabase.LoadAssetAtPath<LuauAsset>(backgroundAssetPath) == null)
+                {
+                    throw new BuildFailedException(
+                        "The temporary Luau background smoke source was not imported as a LuauAsset.");
+                }
+
                 var activeScene = SceneManager.GetActiveScene();
                 var sceneMode = activeScene.IsValid() &&
                                 string.IsNullOrEmpty(activeScene.path) &&

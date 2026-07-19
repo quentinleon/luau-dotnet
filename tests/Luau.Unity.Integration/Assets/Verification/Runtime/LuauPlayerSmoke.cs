@@ -18,6 +18,13 @@ namespace Luau.Unity.Verification
     {
         const int BackgroundCompilationStressIterationsPerLane = 1000;
 
+        public const string BackgroundAssetResourceName = "__LuauPlayerSmokeBackground";
+        public const string BackgroundSource =
+            "capability.Value = 40; " +
+            "capability:Increment(2); " +
+            "capability.Position = vector.create(1, 2, 3); " +
+            "return smokeHost.assertUnityThread(), hostManualAddOne(314), " +
+            "capability.Value, capability.Hidden == nil";
         public const string PassedMarker = "LUAU_PLAYER_SMOKE_PASS";
         public const string FailedMarker = "LUAU_PLAYER_SMOKE_FAIL";
 
@@ -96,16 +103,13 @@ namespace Luau.Unity.Verification
                 {
                     using var capabilityHandle = root.CreateHandle(capability);
                     first["capability"] = capabilityHandle;
-                    const string validBackgroundSource =
-                        "capability.Value = 40; " +
-                        "capability:Increment(2); " +
-                        "capability.Position = vector.create(1, 2, 3); " +
-                        "return smokeHost.assertUnityThread(), hostManualAddOne(314), " +
-                        "capability.Value, capability.Hidden == nil";
-                    var validSource = Encoding.UTF8.GetBytes(validBackgroundSource);
-                    var backgroundAsset = ScriptableObject.CreateInstance<LuauAsset>();
-                    backgroundAsset.name = "@unity/player-smoke-background.luau";
-                    backgroundAsset.SetSource(validBackgroundSource, validSource);
+                    var validSource = Encoding.UTF8.GetBytes(BackgroundSource);
+                    var backgroundAsset = Resources.Load<LuauAsset>(BackgroundAssetResourceName);
+                    if (backgroundAsset == null)
+                    {
+                        throw new LuauException(
+                            "The importer-produced background smoke asset was not included in the player.");
+                    }
                     try
                     {
                         var invalidSource = Encoding.UTF8.GetBytes("local broken = )");
@@ -130,7 +134,7 @@ namespace Luau.Unity.Verification
                     }
                     finally
                     {
-                        UnityEngine.Object.Destroy(backgroundAsset);
+                        Resources.UnloadAsset(backgroundAsset);
                     }
 
                     if (compiledResult.Length != 4 ||

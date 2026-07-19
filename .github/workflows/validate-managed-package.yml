@@ -30,6 +30,12 @@ jobs:
       - name: Run managed tests
         run: dotnet test Luau.slnx --no-restore --configuration Release
 
+      - name: Prove managed harness native selection
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Test-ManagedHarnessSelection.ps1
+
       - name: Require current Unity managed artifacts
         shell: pwsh
         run: >-

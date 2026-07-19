@@ -1,20 +1,145 @@
 param(
-    [string] $UnityPath
+    [string] $UnityPath,
+    [string] $PackageReference,
+    [string] $OutputRoot
 )
 
 $ErrorActionPreference = "Stop"
 
-$root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$project = Join-Path $root "tests/Luau.Unity.PackageConsumer"
-$versionFile = Join-Path $project "ProjectSettings/ProjectVersion.txt"
+$repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$integrationProjectRoot = Join-Path $repositoryRoot "tests/Luau.Unity.Integration"
+$packageRoot = Join-Path $repositoryRoot "Luau.Unity"
+$fixtureRoot = Join-Path $repositoryRoot "tests/Luau.Unity.PackageConsumerProbe"
+$allowedOutputRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $repositoryRoot "native/luau-host/out"))
+$versionFile = Join-Path $integrationProjectRoot "ProjectSettings/ProjectVersion.txt"
+$passedMarker = "LUAU_PACKAGE_CONSUMER_PASS"
+$failedMarker = "LUAU_PACKAGE_CONSUMER_FAIL"
+
+function Assert-ExistingFile([string] $Path, [string] $Description) {
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Description is missing: $Path"
+    }
+}
+
+function Assert-ExistingDirectory([string] $Path, [string] $Description) {
+    if (!(Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "$Description is missing: $Path"
+    }
+}
+
+function Test-IsSameOrDescendant([string] $Path, [string] $Parent) {
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $fullParent = [System.IO.Path]::GetFullPath($Parent).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $parentPrefix = $fullParent + [System.IO.Path]::DirectorySeparatorChar
+
+    return $fullPath.Equals($fullParent, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-StrictDescendant([string] $Path, [string] $Parent) {
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $fullParent = [System.IO.Path]::GetFullPath($Parent).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $parentPrefix = $fullParent + [System.IO.Path]::DirectorySeparatorChar
+
+    if (!$fullPath.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean a path that is not a strict descendant of $fullParent`: $fullPath"
+    }
+}
+
+function Remove-DisposableProject([string] $Path) {
+    Assert-StrictDescendant $Path $allowedOutputRoot
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt 20) {
+                Start-Sleep -Milliseconds 250
+            }
+        }
+    }
+
+    throw "The generated Unity package consumer passed but cleanup failed: $Path`n$lastError"
+}
+
+function ConvertTo-UpmPackageReference([string] $Reference) {
+    if ([string]::IsNullOrWhiteSpace($Reference)) {
+        Assert-ExistingDirectory $packageRoot "Standalone package"
+        return "file:" + $packageRoot.Replace(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar)
+    }
+
+    $candidate = $Reference.Trim()
+    $pathCandidate = $candidate
+    $hasFilePrefix = $candidate.StartsWith(
+        "file:",
+        [System.StringComparison]::OrdinalIgnoreCase)
+    if ($hasFilePrefix) {
+        $pathCandidate = $candidate.Substring(5)
+    }
+
+    if ([System.IO.Path]::IsPathRooted($pathCandidate)) {
+        if (!(Test-Path -LiteralPath $pathCandidate)) {
+            throw "The local package reference does not exist: $pathCandidate"
+        }
+
+        $fullPackagePath = [System.IO.Path]::GetFullPath($pathCandidate)
+        return "file:" + $fullPackagePath.Replace(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar)
+    }
+
+    return $candidate
+}
+
+Assert-ExistingFile $versionFile "Integration-project Unity version"
+Assert-ExistingDirectory $fixtureRoot "Package-consumer source fixture"
+
+$requiredFixtureFiles = @(
+    "ConsumerProbe.asmdef",
+    "ConsumerProbe.asmdef.meta",
+    "ConsumerApiProbe.cs",
+    "ConsumerApiProbe.cs.meta",
+    "ConsumerGeneratedLibrary.cs",
+    "ConsumerGeneratedLibrary.cs.meta",
+    "Editor.meta",
+    "Editor/RunConsumerProbe.cs",
+    "Editor/RunConsumerProbe.cs.meta"
+)
+foreach ($relativePath in $requiredFixtureFiles) {
+    Assert-ExistingFile (Join-Path $fixtureRoot $relativePath) "Package-consumer fixture file"
+}
+
+$unexpectedFixtureFiles = @(Get-ChildItem -LiteralPath $fixtureRoot -Recurse -File |
+    ForEach-Object {
+        $_.FullName.Substring($fixtureRoot.Length + 1).Replace(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar)
+    } |
+    Where-Object { $requiredFixtureFiles -notcontains $_ })
+if ($unexpectedFixtureFiles.Count -ne 0) {
+    throw "The package-consumer fixture contains unexpected files: $($unexpectedFixtureFiles -join ', ')"
+}
+
 $versionLine = Get-Content -LiteralPath $versionFile |
     Where-Object { $_ -like "m_EditorVersion:*" } |
     Select-Object -First 1
-
 if (!$versionLine) {
-    throw "The package-consumer Unity version is missing from $versionFile."
+    throw "The integration-project Unity version is missing from $versionFile."
 }
-
 $unityVersion = ($versionLine -split ":", 2)[1].Trim()
 
 if (!$UnityPath) {
@@ -29,7 +154,8 @@ if (!$UnityPath) {
         $candidates.Add((Join-Path $env:ProgramFiles "Unity/Hub/Editor/$unityVersion/Editor/Unity.exe"))
     }
     if (${env:ProgramFiles(x86)}) {
-        $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Unity/Hub/Editor/$unityVersion/Editor/Unity.exe"))
+        $candidates.Add(
+            (Join-Path ${env:ProgramFiles(x86)} "Unity/Hub/Editor/$unityVersion/Editor/Unity.exe"))
     }
 
     $UnityPath = $candidates |
@@ -40,54 +166,104 @@ if (!$UnityPath) {
 if (!$UnityPath -or !(Test-Path -LiteralPath $UnityPath -PathType Leaf)) {
     throw "Unity $unityVersion was not found. Pass -UnityPath with the matching Unity.exe."
 }
-
 $UnityPath = (Resolve-Path -LiteralPath $UnityPath).Path
-$projectPath = [System.IO.Path]::GetFullPath($project)
-$libraryPath = [System.IO.Path]::GetFullPath((Join-Path $project "Library"))
-$projectPrefix = $projectPath.TrimEnd(
-    [System.IO.Path]::DirectorySeparatorChar,
-    [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-if (!$libraryPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to clean a package-consumer Library outside $projectPath."
-}
-if (Test-Path -LiteralPath $libraryPath) {
-    Remove-Item -LiteralPath $libraryPath -Recurse -Force
-}
+$resolvedPackageReference = ConvertTo-UpmPackageReference $PackageReference
 
-$logDirectory = Join-Path $project "Logs"
-New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
-$logPath = Join-Path $logDirectory "package-consumer-compile.log"
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = $allowedOutputRoot
+}
+$outputParent = [System.IO.Path]::GetFullPath($OutputRoot)
+if (!(Test-IsSameOrDescendant $outputParent $allowedOutputRoot)) {
+    throw "The package-consumer output root must stay under $allowedOutputRoot`: $outputParent"
+}
+New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
 
-Write-Host "Compiling clean path-only package consumer with Unity $unityVersion."
+$projectPath = Join-Path $outputParent (
+    "unity-package-consumer-" + [Guid]::NewGuid().ToString("N"))
+Assert-StrictDescendant $projectPath $allowedOutputRoot
+$assetsPath = Join-Path $projectPath "Assets/ConsumerProbe"
+$packagesPath = Join-Path $projectPath "Packages"
+$projectSettingsPath = Join-Path $projectPath "ProjectSettings"
+$logPath = Join-Path $projectPath "Logs/package-consumer.log"
+
+New-Item -ItemType Directory -Path $assetsPath -Force | Out-Null
+New-Item -ItemType Directory -Path $packagesPath -Force | Out-Null
+New-Item -ItemType Directory -Path $projectSettingsPath -Force | Out-Null
+New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null
+Get-ChildItem -LiteralPath $fixtureRoot -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $assetsPath -Recurse -Force
+}
+Copy-Item -LiteralPath $versionFile -Destination (
+    Join-Path $projectSettingsPath "ProjectVersion.txt") -Force
+
+$manifest = [ordered]@{
+    dependencies = [ordered]@{
+        "com.nuskey.luau.unity" = $resolvedPackageReference
+    }
+}
+$manifestJson = $manifest | ConvertTo-Json -Depth 4
+$utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText(
+    (Join-Path $packagesPath "manifest.json"),
+    $manifestJson,
+    $utf8WithoutBom)
+
+Write-Host "Running generated minimal Unity package consumer with Unity $unityVersion."
+Write-Host "Disposable project: $projectPath"
+$unityArguments = @(
+    "-batchmode",
+    "-nographics",
+    "-quit",
+    "-projectPath",
+    ('"' + $projectPath + '"'),
+    "-executeMethod",
+    "Luau.Unity.PackageConsumerProbe.RunConsumerProbe.Execute",
+    "-logFile",
+    ('"' + $logPath + '"')
+)
+
 $unityProcess = Start-Process `
     -FilePath $UnityPath `
-    -ArgumentList @(
-        "-batchmode",
-        "-nographics",
-        "-quit",
-        "-projectPath",
-        $project,
-        "-logFile",
-        $logPath
-    ) `
+    -ArgumentList $unityArguments `
     -WindowStyle Hidden `
-    -Wait `
     -PassThru
-$exitCode = $unityProcess.ExitCode
+try {
+    $unityProcess.WaitForExit()
+    $unityProcess.Refresh()
+    $exitCode = $unityProcess.ExitCode
+}
+finally {
+    $unityProcess.Dispose()
+}
 
-$log = if (Test-Path -LiteralPath $logPath) {
+$log = if (Test-Path -LiteralPath $logPath -PathType Leaf) {
     Get-Content -LiteralPath $logPath -Raw
 } else {
     ""
 }
+$reportedFailure = $log -match [regex]::Escape($failedMarker)
+$compilerOrPackageFailure = $log -match (
+    "(?im)^.*(?:error CS\d+|Scripts have compiler errors|Compilation failed|" +
+    "Failed to resolve packages?|An error occurred while resolving packages?|" +
+    "DllNotFoundException.*luau_host|EntryPointNotFoundException.*luau_host).*$")
+$passed = $log -match [regex]::Escape($passedMarker)
 
-$compileFailure = $log -match "(?m)^.*(?:error CS\d+|Scripts have compiler errors|Compilation failed).*$"
-if ($exitCode -ne 0 -or $compileFailure) {
+if ($exitCode -ne 0 -or !$passed -or $reportedFailure -or $compilerOrPackageFailure) {
     if ($log) {
-        Get-Content -LiteralPath $logPath -Tail 120
+        Get-Content -LiteralPath $logPath -Tail 160
     }
 
-    throw "The clean Unity package consumer failed to compile (Unity exit code $exitCode)."
+    Write-Host "Failed disposable project and log retained at $projectPath"
+    throw (
+        "The generated Unity package consumer failed " +
+        "(Unity exit code $exitCode, pass marker present: $passed).")
 }
 
-Write-Host "Clean path-only Unity package consumer compiled successfully."
+Remove-DisposableProject $projectPath
+if (Test-Path -LiteralPath $projectPath) {
+    throw "The generated Unity package consumer passed but cleanup failed: $projectPath"
+}
+
+Write-Host (
+    "Generated minimal Unity consumer resolved the package, compiled source-generator output, " +
+    "loaded the native VM, and executed successfully.")

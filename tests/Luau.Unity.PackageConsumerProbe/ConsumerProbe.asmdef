@@ -1,9 +1,8 @@
 {
-    "name": "Luau.Unity.Verification.Editor",
+    "name": "Luau.Unity.PackageConsumerProbe",
     "rootNamespace": "",
     "references": [
-        "GUID:ae747f3b7ca5411e97eb0bc61ae3f38e",
-        "GUID:c727d2ef8dd2e4846ab81fbe6ca1f508"
+        "Luau.Unity"
     ],
     "includePlatforms": [
         "Editor"
