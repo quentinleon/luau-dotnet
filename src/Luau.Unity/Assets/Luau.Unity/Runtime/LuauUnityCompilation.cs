@@ -5,14 +5,51 @@ using UnityEngine;
 
 namespace Luau.Unity
 {
+    internal delegate ValueTask<LuauCompileResult> LuauAssetCompilationProvider(
+        ReadOnlyMemory<byte> utf8Source,
+        LuauCompileOptions options,
+        CancellationToken cancellationToken);
+
     public static partial class LuauUnity
     {
         internal static readonly TimeSpan CompilationServiceDrainTimeout =
             TimeSpan.FromSeconds(5);
 
         static readonly object CompilationServiceGate = new object();
+        static readonly object AssetCompilationProviderGate = new object();
         static LuauThreadedCompilationService compilationService;
         static bool compilationServiceStopping;
+        static LuauAssetCompilationProvider assetCompilationProvider = CompileAsync;
+
+        internal static ValueTask<LuauCompileResult> CompileAssetSourceAsync(
+            ReadOnlyMemory<byte> utf8Source,
+            LuauCompileOptions options,
+            CancellationToken cancellationToken)
+        {
+            LuauAssetCompilationProvider provider;
+            lock (AssetCompilationProviderGate)
+            {
+                provider = assetCompilationProvider;
+            }
+
+            return provider(utf8Source, options, cancellationToken);
+        }
+
+        internal static IDisposable OverrideAssetCompilationProviderForTests(
+            LuauAssetCompilationProvider provider)
+        {
+            if (provider == null)
+            {
+                throw new ArgumentNullException(nameof(provider));
+            }
+
+            lock (AssetCompilationProviderGate)
+            {
+                var previous = assetCompilationProvider;
+                assetCompilationProvider = provider;
+                return new AssetCompilationProviderOverride(previous, provider);
+            }
+        }
 
         /// <summary>
         /// Compiles UTF-8 Luau source on the package-owned, bounded background
@@ -115,11 +152,73 @@ namespace Luau.Unity
                 try
                 {
                     await service.DisposeAsync().ConfigureAwait(false);
+                    lock (CompilationServiceGate)
+                    {
+                        if (ReferenceEquals(compilationService, service))
+                        {
+                            compilationService = null;
+                        }
+                    }
                     return;
                 }
                 catch (LuauCompilationShutdownException exception)
                 {
                     timeoutObserver?.Invoke(exception);
+                }
+            }
+        }
+
+#if UNITY_EDITOR
+        internal static void ResetCompilationServiceAfterDrainForTests()
+        {
+            lock (CompilationServiceGate)
+            {
+                if (!compilationServiceStopping || compilationService != null)
+                {
+                    throw new InvalidOperationException(
+                        "The shared Luau compilation service can only be reset after a completed drain.");
+                }
+
+                compilationServiceStopping = false;
+            }
+        }
+#endif
+
+        sealed class AssetCompilationProviderOverride : IDisposable
+        {
+            readonly LuauAssetCompilationProvider previous;
+            readonly LuauAssetCompilationProvider installed;
+            int disposed;
+
+            internal AssetCompilationProviderOverride(
+                LuauAssetCompilationProvider previous,
+                LuauAssetCompilationProvider installed)
+            {
+                this.previous = previous;
+                this.installed = installed;
+            }
+
+            public void Dispose()
+            {
+                if (Volatile.Read(ref disposed) != 0)
+                {
+                    return;
+                }
+
+                lock (AssetCompilationProviderGate)
+                {
+                    if (disposed != 0)
+                    {
+                        return;
+                    }
+                    if (!ReferenceEquals(assetCompilationProvider, installed))
+                    {
+                        throw new InvalidOperationException(
+                            "Luau asset compilation provider overrides must be disposed in reverse order.");
+                    }
+
+                    assetCompilationProvider = previous;
+                    Volatile.Write(ref disposed, 1);
                 }
             }
         }

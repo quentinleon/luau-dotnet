@@ -241,6 +241,7 @@ foreach ($required in @(
     "options.DebugLevel.ToString(CultureInfo.InvariantCulture)",
     "options.TypeInfoLevel.ToString(CultureInfo.InvariantCulture)",
     "options.CoverageLevel.ToString(CultureInfo.InvariantCulture)",
+    "internal static Hash128 ComputeHash(LuauCompilerOutput output)",
     'output.UpstreamRevisionHash.ToString("x16", CultureInfo.InvariantCulture)',
     'output.HostBuildFingerprint.ToString("x16", CultureInfo.InvariantCulture)',
     "return Hash128.Compute(identity);",
@@ -251,6 +252,17 @@ foreach ($required in @(
     "ComputeHash(LuauCompiler.Compile(ReadOnlySpan<byte>.Empty))"
 )) {
     Assert-ContainsLiteral "Luau compiler identity dependency" $compilerIdentityDependency $required
+}
+$importerPolicyTests = Read-RepositoryText `
+    "src/Luau.Unity/Assets/Luau.Unity/Tests/EditMode/LuauImporterPolicyTests.cs"
+foreach ($required in @(
+    "CompilerIdentityTracksCoverageInstrumentation",
+    "CoverageLevel = 2",
+    "coverageOutput.BytecodeSha256",
+    "LuauCompilerIdentityDependency.ComputeHash(coverageOutput)",
+    "LuauCompilerIdentityDependency.ComputeHash(defaultOutput)"
+)) {
+    Assert-ContainsLiteral "Luau compiler coverage identity test" $importerPolicyTests $required
 }
 Write-Host "PASS: importer invalidation tracks compiler schema, options, and exact native identity before persistent artifact creation."
 Write-Host "PASS: SourceOnly imports compile transiently for diagnostics but persist source."
@@ -296,20 +308,108 @@ Write-Host "PASS: public source access fails closed for bytecode and unknown ser
 
 $stateExtensions = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Runtime/LuauStateExtensions.cs"
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoString("
-Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoStringAsync("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoStringInto("
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.ExecuteVerifiedBytecode("
-Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.ExecuteVerifiedBytecodeAsync("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.ExecuteVerifiedBytecodeInto("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "public static ValueTask<LuauValue[]> ExecuteAsync("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "public static ValueTask<int> ExecuteIntoAsync("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "LuauUnity.CompileAssetSourceAsync"
+Assert-NotContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoStringAsync("
 foreach ($forbidden in @(
     "ExecuteTrusted",
     "LoadTrusted",
     "AllowUnvalidated",
     "state.Load(",
     "state.LoadVerifiedBytecode(",
-    "state.Execute(",
-    "state.ExecuteAsync("
+    "state.Execute("
 )) {
     Assert-NotContainsLiteral "Luau asset execution extensions" $stateExtensions $forbidden
 }
+
+$stateCompilationExtensions = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Runtime/LuauStateCompilationExtensions.cs"
+foreach ($required in @(
+    "public static ValueTask<LuauValue[]> ExecuteWithCompilationServiceAsync(",
+    "public static ValueTask<int> ExecuteIntoWithCompilationServiceAsync(",
+    "SnapshotAssetForAsync(state, asset, cancellationToken)",
+    "ValidateSourceSize(state, source.Length, assetName)",
+    "state.ExecuteCompilerOutputOnOwnerAsync(",
+    "state.ExecuteCompilerOutputIntoOnOwnerAsync(",
+    "state.ExecuteVerifiedBytecodeAsync(",
+    "state.ExecuteVerifiedBytecodeIntoAsync(",
+    "result.CompilationDiagnostic",
+    "throw new LuauExecutionCanceledException("
+)) {
+    Assert-ContainsLiteral "Luau asset compilation execution" $stateCompilationExtensions $required
+}
+Assert-NotContainsLiteral `
+    "Luau asset compilation execution" `
+    $stateCompilationExtensions `
+    "ExecuteCompilerOutputOnOwnerThreadAsync"
+
+$unityCompilation = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Runtime/LuauUnityCompilation.cs"
+foreach ($required in @(
+    "static LuauAssetCompilationProvider assetCompilationProvider = CompileAsync;",
+    "internal static ValueTask<LuauCompileResult> CompileAssetSourceAsync(",
+    "internal static IDisposable OverrideAssetCompilationProviderForTests(",
+    "new LuauThreadedCompilationService(",
+    "MaxQueuedRequestCount = windows ? 32 : 16",
+    "MaxQueuedSourceBytes = windows ? 8L * 1024 * 1024 : 4L * 1024 * 1024",
+    "internal static async Task DrainCompilationServiceAsync(",
+    "compilationServiceStopping = true;",
+    "await service.DisposeAsync().ConfigureAwait(false);",
+    "compilationService = null;",
+    "internal static void ResetCompilationServiceAfterDrainForTests()"
+)) {
+    Assert-ContainsLiteral "Unity package-owned compilation lane" $unityCompilation $required
+}
+$editorCompilationLifetime = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Editor/LuauCompilationServiceEditorLifetime.cs"
+foreach ($required in @(
+    "AssemblyReloadEvents.beforeAssemblyReload += DrainForAssemblyReload;",
+    "internal static void DrainForAssemblyReload()",
+    "LuauUnity.DrainCompilationServiceAsync("
+)) {
+    Assert-ContainsLiteral "Unity Editor compilation lane lifetime" $editorCompilationLifetime $required
+}
+$unityCompilationTests = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Tests/EditMode/LuauCompilationServiceTests.cs"
+foreach ($required in @(
+    "EditorReloadHookDrainsSharedLaneAndRejectsAdmissionUntilReset",
+    "LuauCompilationServiceEditorLifetime.DrainForAssemblyReload();",
+    "LuauUnity.ResetCompilationServiceAfterDrainForTests();",
+    'Does.Contain("shutting down")'
+)) {
+    Assert-ContainsLiteral "Unity shared compilation lane lifecycle tests" $unityCompilationTests $required
+}
+$playerSmoke = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Runtime/LuauPlayerSmoke.cs"
+foreach ($required in @(
+    "compiledResult = await first.ExecuteAsync(backgroundAsset);",
+    '[LuauLibrary("PlayerSmokeCapability", Exposure = LuauLibraryExposure.Capability)]',
+    "using var capabilityHandle = root.CreateHandle(capability);",
+    "capability.Position = vector.create(1, 2, 3)",
+    "capability.Hidden == nil",
+    "exception.InnerException is MissingReferenceException"
+)) {
+    Assert-ContainsLiteral "Luau player ordinary asset and capability smoke" $playerSmoke $required
+}
+Assert-NotContainsLiteral `
+    "Luau player ordinary asset smoke" `
+    $playerSmoke `
+    "ExecuteCompilerOutputOnOwnerThreadAsync"
+Write-Host "PASS: ordinary async asset execution uses the injectable package-owned bounded lane and shared owner dispatch."
+
+$unityPublicApiTests = Read-RepositoryText "src/Luau.Unity/Assets/Luau.Unity/Tests/EditMode/LuauUnityPublicApiTests.cs"
+foreach ($required in @(
+    "RuntimePublicAndProtectedApiMatchesApprovedInventory",
+    "BindingFlags.NonPublic",
+    "IsPublicOrProtected",
+    "ExecuteExtensionSurfaceContainsOnlyApprovedShapes",
+    '"ExecuteInto(Luau.LuauState,Luau.Unity.LuauAsset,System.Span<Luau.LuauValue>)->System.Int32"',
+    '"ExecuteAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<Luau.LuauValue[]>"',
+    'const string ApprovedApiSha256 ='
+)) {
+    Assert-ContainsLiteral "Unity runtime public API inventory" $unityPublicApiTests $required
+}
+Assert-NotContainsLiteral "Unity runtime public API inventory" $unityPublicApiTests "REPLACE_AFTER_PROBE"
+Write-Host "PASS: Unity public/protected API and exact Execute extension shapes have deterministic approval gates."
 
 $managedLoadSurface = Read-RepositoryText "src/Luau/LuauState.Load.cs"
 $managedExecuteSurface = Read-RepositoryText "src/Luau/LuauState.Execute.cs"
@@ -384,6 +484,8 @@ foreach ($required in @(
     "public LuauStateOptions StateOptions { get; set; } = LuauStateOptions.Default;",
     "public LuauModuleMap ModuleMap { get; set; }",
     "state.OpenRequireLibrary(options.ModuleMap);",
+    "return stateOptions with",
+    "DefaultExecutionOptions = executionOptions with",
     "DefaultMaxPrintArguments = 32",
     "DefaultMaxPrintUtf8Bytes = 4 * 1024",
     "DefaultMaxPrintMessagesPerSecond = 20"
@@ -408,8 +510,7 @@ foreach ($forbidden in @(
     "LuauBytecodePolicy.AllowUnvalidated",
     "state.Load(",
     "state.LoadVerifiedBytecode(",
-    "state.Execute(",
-    "state.ExecuteAsync("
+    "state.Execute("
 )) {
     Assert-NotContainsLiteral "Unity package runtime" $runtimeSource $forbidden
 }

@@ -16,6 +16,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
     readonly DisposableBag disposables = new();
     readonly CancellationTokenSource lifetimeCancellationSource = new();
     int managedResourcesDisposeState;
+    int coroutineStatus;
 
     public bool IsDisposed => Volatile.Read(ref disposeState) != 0 || context.IsDisposed;
     public bool IsMainThread => isMainThread;
@@ -64,6 +65,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         {
             throw new ArgumentNullException(nameof(abiVerifier));
         }
+        options = options.Snapshot();
         options.Validate();
         abiVerifier.EnsureAvailable();
 
@@ -205,19 +207,56 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         this.root = root ?? this;
         this.reference = reference;
         this.isMainThread = isMainThread;
+        coroutineStatus = (int)(isMainThread
+            ? LuauThreadStatus.Running
+            : LuauThreadStatus.Suspended);
     }
 
+    /// <summary>
+    /// Gets the managed lifecycle state of a child coroutine. Root-state use
+    /// is invalid because coroutine lifecycle does not describe the root VM.
+    /// </summary>
     public LuauThreadStatus GetStatus()
     {
         ThrowIfDisposed();
-        using var access = EnterNativeAccess();
-        return luau_host_thread_status(l) switch
+        if (IsMainThread)
         {
-            LuauHostStatus.Ok => LuauThreadStatus.Running,
-            LuauHostStatus.Yielded => LuauThreadStatus.Suspended,
-            LuauHostStatus.Break => LuauThreadStatus.Normal,
-            _ => LuauThreadStatus.Error,
-        };
+            ThrowHelper.ThrowInvalidOperationException(
+                "Coroutine status is only available for child Luau threads, not the root state.");
+        }
+
+        return (LuauThreadStatus)Volatile.Read(ref coroutineStatus);
+    }
+
+    internal LuauHostStatus GetNativeOperationStatus()
+    {
+        ThrowIfDisposed();
+        using var access = EnterNativeAccess();
+        return luau_host_thread_status(l);
+    }
+
+    internal void MarkCoroutineRunning()
+    {
+        if (!isMainThread)
+        {
+            Volatile.Write(ref coroutineStatus, (int)LuauThreadStatus.Running);
+        }
+    }
+
+    internal void MarkCoroutineSuspended()
+    {
+        if (!isMainThread)
+        {
+            Volatile.Write(ref coroutineStatus, (int)LuauThreadStatus.Suspended);
+        }
+    }
+
+    internal void MarkCoroutineDead()
+    {
+        if (!isMainThread)
+        {
+            Volatile.Write(ref coroutineStatus, (int)LuauThreadStatus.Dead);
+        }
     }
 
     public LuauState GetMainThread()

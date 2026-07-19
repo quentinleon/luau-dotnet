@@ -58,11 +58,20 @@ unsafe partial class LuauState
         return table;
     }
 
+    /// <summary>
+    /// Creates a managed callback capability that Luau code can call. Unlike a
+    /// script closure returned by a load or value conversion, this capability
+    /// cannot be invoked directly through <see cref="LuauFunction.Invoke"/>.
+    /// </summary>
     public LuauFunction CreateFunction(Action<LuauCallContext> callback)
     {
         return CreateFunction(name: null, callback);
     }
 
+    /// <summary>
+    /// Creates a named managed callback capability that Luau code can call.
+    /// Managed callers cannot invoke the returned capability directly.
+    /// </summary>
     public LuauFunction CreateFunction(string? name, Action<LuauCallContext> callback)
     {
         ThrowIfDisposed();
@@ -85,11 +94,19 @@ unsafe partial class LuauState
             });
     }
 
+    /// <summary>
+    /// Creates an asynchronous managed callback capability for Luau code.
+    /// Managed callers cannot invoke the returned capability directly.
+    /// </summary>
     public LuauFunction CreateAsyncFunction(Func<LuauCallContext, ValueTask> callback)
     {
         return CreateAsyncFunction(name: null, callback);
     }
 
+    /// <summary>
+    /// Creates a named asynchronous managed callback capability for Luau code.
+    /// Managed callers cannot invoke the returned capability directly.
+    /// </summary>
     public LuauFunction CreateAsyncFunction(
         string? name,
         Func<LuauCallContext, ValueTask> callback)
@@ -147,7 +164,7 @@ unsafe partial class LuauState
     public unsafe LuauBuffer CreateBuffer(int size)
     {
         ThrowIfDisposed();
-        if (size < 0) ThrowHelper.ThrowArgumentException(nameof(size), "Buffer size must be greater than 0");
+        if (size < 0) ThrowHelper.ThrowArgumentException(nameof(size), "Buffer size must be non-negative");
         using var access = EnterNativeAccess();
 
         void* data = null;
@@ -201,6 +218,7 @@ unsafe partial class LuauState
         if (value is LuauBuffer buffer) return LuauValue.FromBuffer(buffer);
         if (value is LuauState state) return LuauValue.FromThread(state);
         if (value is LuauUserData userData) return LuauValue.FromUserData(userData);
+        if (value is LuauObjectHandle objectHandle) return LuauValue.FromObjectHandle(objectHandle);
 
         if (value is byte unsignedByte) return LuauValue.FromInteger(unsignedByte);
         if (value is sbyte signedByte) return LuauValue.FromInteger(signedByte);

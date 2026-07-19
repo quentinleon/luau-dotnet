@@ -1,10 +1,15 @@
 namespace Luau;
 
-public abstract class LuauFunction(LuauState state) : IDisposable
+public abstract class LuauFunction : IDisposable
 {
-    LuauState? state = state;
+    LuauState? state;
     int disposeState;
     readonly object lifetimeGate = new();
+
+    internal LuauFunction(LuauState state)
+    {
+        this.state = state ?? throw new ArgumentNullException(nameof(state));
+    }
 
     public LuauState State
     {
@@ -37,7 +42,45 @@ public abstract class LuauFunction(LuauState state) : IDisposable
         }
     }
 
-    protected LuauState OwningState => state!;
+    private protected LuauState OwningState => state!;
+
+    /// <summary>
+    /// Invokes a script closure synchronously on its owning VM root.
+    /// Managed callback functions are host capabilities and cannot be invoked
+    /// directly by managed callers.
+    /// </summary>
+    public LuauValue[] Invoke(
+        ReadOnlySpan<LuauValue> arguments = default,
+        LuauExecutionOptions? executionOptions = null)
+    {
+        if (this is not LuauScriptFunction scriptFunction)
+        {
+            throw CreateHostInvocationCapabilityException();
+        }
+
+        return scriptFunction.InvokeWithArguments(arguments, executionOptions);
+    }
+
+    /// <summary>
+    /// Invokes a script closure asynchronously on its owning VM root.
+    /// Managed callback functions are host capabilities and cannot be invoked
+    /// directly by managed callers.
+    /// </summary>
+    public ValueTask<LuauValue[]> InvokeAsync(
+        ReadOnlyMemory<LuauValue> arguments = default,
+        CancellationToken cancellationToken = default,
+        LuauExecutionOptions? executionOptions = null)
+    {
+        if (this is not LuauScriptFunction scriptFunction)
+        {
+            throw CreateHostInvocationCapabilityException();
+        }
+
+        return scriptFunction.InvokeWithArgumentsAsync(
+            arguments,
+            cancellationToken,
+            executionOptions);
+    }
 
     /// <summary>
     /// Resolves the stack that callers should use when invoking this function.
@@ -45,9 +88,9 @@ public abstract class LuauFunction(LuauState state) : IDisposable
     /// functions override this to use the VM root stack so a closure produced
     /// by a yielded coroutine can be invoked without resuming that coroutine.
     /// </summary>
-    protected virtual LuauState ResolvePublicState(LuauState owningState) => owningState;
+    private protected virtual LuauState ResolvePublicState(LuauState owningState) => owningState;
 
-    protected virtual void DisposeCore() { }
+    private protected virtual void DisposeCore() { }
 
     public void Dispose()
     {
@@ -77,7 +120,7 @@ public abstract class LuauFunction(LuauState state) : IDisposable
         }
     }
 
-    protected void DisposeFromFinalizer()
+    private protected void DisposeFromFinalizer()
     {
         try
         {
@@ -89,7 +132,7 @@ public abstract class LuauFunction(LuauState state) : IDisposable
         }
     }
 
-    protected void ThrowIfDiposed()
+    private protected void ThrowIfDisposed()
     {
         if (IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
     }
@@ -148,6 +191,12 @@ public abstract class LuauFunction(LuauState state) : IDisposable
     internal LuauFunctionAccess AcquireForPush()
     {
         return AcquireFunctionAccess();
+    }
+
+    static InvalidOperationException CreateHostInvocationCapabilityException()
+    {
+        return new InvalidOperationException(
+            "Managed callback functions are host capabilities that can only be invoked by Luau code.");
     }
 }
 

@@ -30,7 +30,7 @@ namespace Luau.Unity.Editor
             EditorApplication.delayCall += RegisterPending;
         }
 
-        static Hash128 ComputeHash(LuauCompilerOutput output)
+        internal static Hash128 ComputeHash(LuauCompilerOutput output)
         {
             var options = output.CompileOptions;
             var identity = string.Join(

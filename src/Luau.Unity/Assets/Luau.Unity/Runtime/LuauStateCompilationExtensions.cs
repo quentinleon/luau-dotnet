@@ -8,10 +8,54 @@ namespace Luau.Unity
     public static partial class LuauStateExtensions
     {
         /// <summary>
-        /// Executes compiler-issued output after explicitly dispatching the
-        /// operation start to the state's configured owner scheduler.
+        /// Compiles a source asset through an explicitly caller-owned service,
+        /// then starts VM execution on the state's configured owner scheduler.
+        /// Verified artifacts bypass the service.
         /// </summary>
-        public static ValueTask<LuauValue[]> ExecuteCompilerOutputOnOwnerThreadAsync(
+        public static ValueTask<LuauValue[]> ExecuteWithCompilationServiceAsync(
+            this LuauState state,
+            LuauAsset asset,
+            ILuauCompilationService compilationService,
+            LuauCompileOptions compileOptions = null,
+            CancellationToken cancellationToken = default,
+            LuauExecutionOptions executionOptions = null)
+        {
+            ValidateCompilationExecutionArguments(state, asset, compilationService);
+            return ExecuteAssetAsync(
+                state,
+                asset,
+                compilationService.CompileAsync,
+                compileOptions,
+                cancellationToken,
+                executionOptions);
+        }
+
+        /// <summary>
+        /// Compiles a source asset through an explicitly caller-owned service,
+        /// then executes it into caller-owned memory on the state's configured
+        /// owner scheduler. Verified artifacts bypass the service.
+        /// </summary>
+        public static ValueTask<int> ExecuteIntoWithCompilationServiceAsync(
+            this LuauState state,
+            LuauAsset asset,
+            ILuauCompilationService compilationService,
+            Memory<LuauValue> destination,
+            LuauCompileOptions compileOptions = null,
+            CancellationToken cancellationToken = default,
+            LuauExecutionOptions executionOptions = null)
+        {
+            ValidateCompilationExecutionArguments(state, asset, compilationService);
+            return ExecuteAssetIntoAsync(
+                state,
+                asset,
+                compilationService.CompileAsync,
+                destination,
+                compileOptions,
+                cancellationToken,
+                executionOptions);
+        }
+
+        internal static ValueTask<LuauValue[]> ExecuteCompilerOutputOnOwnerAsync(
             this LuauState state,
             LuauCompilerOutput output,
             ReadOnlyMemory<char> chunkName = default,
@@ -36,11 +80,7 @@ namespace Luau.Unity
                     executionOptions));
         }
 
-        /// <summary>
-        /// Executes compiler-issued output into caller-owned memory after
-        /// explicitly dispatching the operation start to the state's owner.
-        /// </summary>
-        public static ValueTask<int> ExecuteCompilerOutputOnOwnerThreadAsync(
+        internal static ValueTask<int> ExecuteCompilerOutputIntoOnOwnerAsync(
             this LuauState state,
             LuauCompilerOutput output,
             Memory<LuauValue> destination,
@@ -59,7 +99,7 @@ namespace Luau.Unity
 
             return DispatchToOwnerAsync(
                 state,
-                () => state.ExecuteCompilerOutputAsync(
+                () => state.ExecuteCompilerOutputIntoAsync(
                     output,
                     destination,
                     chunkName,
@@ -67,96 +107,124 @@ namespace Luau.Unity
                     executionOptions));
         }
 
-        /// <summary>
-        /// Compiles a source asset through a host-owned background service,
-        /// then executes successful compiler output on the state's owner.
-        /// </summary>
-        public static async ValueTask<LuauValue[]> ExecuteAsync(
-            this LuauState state,
+        static async ValueTask<LuauValue[]> ExecuteAssetAsync(
+            LuauState state,
             LuauAsset asset,
-            ILuauCompilationService compilationService,
-            LuauCompileOptions compileOptions = null,
-            CancellationToken cancellationToken = default,
-            LuauExecutionOptions executionOptions = null)
+            LuauAssetCompilationProvider compilationProvider,
+            LuauCompileOptions compileOptions,
+            CancellationToken cancellationToken,
+            LuauExecutionOptions executionOptions)
         {
-            ValidateCompilationExecutionArguments(state, asset, compilationService);
-            if (!asset.IsSource)
+            if (compilationProvider == null)
             {
-                ValidateVerifiedPayloadBeforeConstruction(state, asset);
-                var verifiedName = asset.name;
-                var artifact = asset.GetVerifiedBytecode();
-                return await DispatchToOwnerAsync(
-                    state,
-                    () => state.ExecuteVerifiedBytecodeAsync(
-                        artifact,
-                        verifiedName.AsMemory(),
-                        cancellationToken,
-                        executionOptions));
+                throw new ArgumentNullException(nameof(compilationProvider));
             }
 
-            // Snapshot all Unity-owned data before yielding. Compilation
-            // continuations are deliberately free to run on a worker.
-            var assetName = asset.name;
-            var source = asset.AsMemory();
-            ValidateSourceSize(state, source.Length, assetName);
-            var result = await compilationService
-                .CompileAsync(source, compileOptions, cancellationToken)
+            var snapshot = SnapshotAssetForAsync(state, asset, cancellationToken);
+            if (snapshot.Kind == LuauAssetContentKind.VerifiedBytecode)
+            {
+                return await DispatchToOwnerAsync(
+                        state,
+                        () => state.ExecuteVerifiedBytecodeAsync(
+                            snapshot.Artifact,
+                            snapshot.Name.AsMemory(),
+                            cancellationToken,
+                            executionOptions))
+                    .ConfigureAwait(false);
+            }
+
+            var result = await compilationProvider(
+                    snapshot.Source,
+                    compileOptions,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            var output = GetCompilerOutputOrThrow(result, assetName, cancellationToken);
-            return await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+            var output = GetCompilerOutputOrThrow(
+                result,
+                snapshot.Name,
+                cancellationToken);
+            return await state.ExecuteCompilerOutputOnOwnerAsync(
                     output,
-                    assetName.AsMemory(),
+                    snapshot.Name.AsMemory(),
                     cancellationToken,
                     executionOptions)
                 .ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// Compiles a source asset through a host-owned background service,
-        /// then executes successful output into caller-owned memory on the
-        /// state's owner.
-        /// </summary>
-        public static async ValueTask<int> ExecuteAsync(
-            this LuauState state,
+        static async ValueTask<int> ExecuteAssetIntoAsync(
+            LuauState state,
             LuauAsset asset,
-            ILuauCompilationService compilationService,
+            LuauAssetCompilationProvider compilationProvider,
             Memory<LuauValue> destination,
-            LuauCompileOptions compileOptions = null,
-            CancellationToken cancellationToken = default,
-            LuauExecutionOptions executionOptions = null)
+            LuauCompileOptions compileOptions,
+            CancellationToken cancellationToken,
+            LuauExecutionOptions executionOptions)
         {
-            ValidateCompilationExecutionArguments(state, asset, compilationService);
-            if (!asset.IsSource)
+            if (compilationProvider == null)
             {
-                ValidateVerifiedPayloadBeforeConstruction(state, asset);
-                var verifiedName = asset.name;
-                var artifact = asset.GetVerifiedBytecode();
-                return await DispatchToOwnerAsync(
-                    state,
-                    () => state.ExecuteVerifiedBytecodeAsync(
-                        artifact,
-                        destination,
-                        verifiedName.AsMemory(),
-                        cancellationToken,
-                        executionOptions));
+                throw new ArgumentNullException(nameof(compilationProvider));
             }
 
-            // Snapshot all Unity-owned data before yielding. Compilation
-            // continuations are deliberately free to run on a worker.
-            var assetName = asset.name;
-            var source = asset.AsMemory();
-            ValidateSourceSize(state, source.Length, assetName);
-            var result = await compilationService
-                .CompileAsync(source, compileOptions, cancellationToken)
+            var snapshot = SnapshotAssetForAsync(state, asset, cancellationToken);
+            if (snapshot.Kind == LuauAssetContentKind.VerifiedBytecode)
+            {
+                return await DispatchToOwnerAsync(
+                        state,
+                        () => state.ExecuteVerifiedBytecodeIntoAsync(
+                            snapshot.Artifact,
+                            destination,
+                            snapshot.Name.AsMemory(),
+                            cancellationToken,
+                            executionOptions))
+                    .ConfigureAwait(false);
+            }
+
+            var result = await compilationProvider(
+                    snapshot.Source,
+                    compileOptions,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            var output = GetCompilerOutputOrThrow(result, assetName, cancellationToken);
-            return await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+            var output = GetCompilerOutputOrThrow(
+                result,
+                snapshot.Name,
+                cancellationToken);
+            return await state.ExecuteCompilerOutputIntoOnOwnerAsync(
                     output,
                     destination,
-                    assetName.AsMemory(),
+                    snapshot.Name.AsMemory(),
                     cancellationToken,
                     executionOptions)
                 .ConfigureAwait(false);
+        }
+
+        static LuauAssetExecutionSnapshot SnapshotAssetForAsync(
+            LuauState state,
+            LuauAsset asset,
+            CancellationToken cancellationToken)
+        {
+            ValidateAssetExecutionArguments(state, asset);
+            var assetName = asset.name ?? string.Empty;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw new LuauExecutionCanceledException(assetName, cancellationToken);
+            }
+
+            switch (asset.contentKind)
+            {
+                case LuauAssetContentKind.Source:
+                    var source = asset.AsMemory();
+                    ValidateSourceSize(state, source.Length, assetName);
+                    // Never retain Unity-owned serialized memory across an await.
+                    return LuauAssetExecutionSnapshot.FromSource(
+                        assetName,
+                        source.ToArray());
+                case LuauAssetContentKind.VerifiedBytecode:
+                    ValidateVerifiedPayloadBeforeConstruction(state, asset);
+                    return LuauAssetExecutionSnapshot.FromArtifact(
+                        assetName,
+                        asset.GetVerifiedBytecode());
+                default:
+                    throw InvalidContentKind(asset);
+            }
         }
 
         static ValueTask<T> DispatchToOwnerAsync<T>(
@@ -218,10 +286,9 @@ namespace Luau.Unity
             }
         }
 
-        static void ValidateCompilationExecutionArguments(
+        static void ValidateAssetExecutionArguments(
             LuauState state,
-            LuauAsset asset,
-            ILuauCompilationService compilationService)
+            LuauAsset asset)
         {
             if (state == null)
             {
@@ -231,6 +298,18 @@ namespace Luau.Unity
             {
                 throw new ArgumentNullException(nameof(asset));
             }
+            if (state.IsDisposed)
+            {
+                throw new ObjectDisposedException(nameof(LuauState));
+            }
+        }
+
+        static void ValidateCompilationExecutionArguments(
+            LuauState state,
+            LuauAsset asset,
+            ILuauCompilationService compilationService)
+        {
+            ValidateAssetExecutionArguments(state, asset);
             if (compilationService == null)
             {
                 throw new ArgumentNullException(nameof(compilationService));
@@ -252,12 +331,19 @@ namespace Luau.Unity
             {
                 case LuauCompileResultKind.Success when result.Output != null:
                     return result.Output;
-                case LuauCompileResultKind.Diagnostic when result.Diagnostic != null:
-                    ExceptionDispatchInfo.Capture(result.Diagnostic).Throw();
-                    break;
+                case LuauCompileResultKind.Diagnostic
+                    when result.CompilationDiagnostic != null:
+                    if (string.IsNullOrEmpty(chunkName))
+                    {
+                        ExceptionDispatchInfo.Capture(result.CompilationDiagnostic).Throw();
+                    }
+                    throw new LuauCompilationException(
+                        chunkName + ": " + result.CompilationDiagnostic.Message,
+                        chunkName,
+                        result.CompilationDiagnostic);
                 case LuauCompileResultKind.Canceled:
-                    throw new OperationCanceledException(
-                        "Luau compilation was canceled for '" + chunkName + "'.",
+                    throw new LuauExecutionCanceledException(
+                        chunkName,
                         cancellationToken);
                 case LuauCompileResultKind.InfrastructureFailure
                     when result.InfrastructureException != null:
@@ -279,6 +365,48 @@ namespace Luau.Unity
                     LuauLoadInputKind.Source,
                     sourceBytes,
                     limit.Value);
+            }
+        }
+
+        readonly struct LuauAssetExecutionSnapshot
+        {
+            LuauAssetExecutionSnapshot(
+                LuauAssetContentKind kind,
+                string name,
+                byte[] source,
+                LuauBytecodeArtifact artifact)
+            {
+                Kind = kind;
+                Name = name;
+                Source = source;
+                Artifact = artifact;
+            }
+
+            internal LuauAssetContentKind Kind { get; }
+            internal string Name { get; }
+            internal ReadOnlyMemory<byte> Source { get; }
+            internal LuauBytecodeArtifact Artifact { get; }
+
+            internal static LuauAssetExecutionSnapshot FromSource(
+                string name,
+                byte[] source)
+            {
+                return new LuauAssetExecutionSnapshot(
+                    LuauAssetContentKind.Source,
+                    name,
+                    source,
+                    null);
+            }
+
+            internal static LuauAssetExecutionSnapshot FromArtifact(
+                string name,
+                LuauBytecodeArtifact artifact)
+            {
+                return new LuauAssetExecutionSnapshot(
+                    LuauAssetContentKind.VerifiedBytecode,
+                    name,
+                    null,
+                    artifact);
             }
         }
     }

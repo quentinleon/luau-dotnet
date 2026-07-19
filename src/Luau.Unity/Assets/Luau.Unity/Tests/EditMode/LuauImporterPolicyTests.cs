@@ -38,6 +38,28 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
+        public void CompilerIdentityTracksCoverageInstrumentation()
+        {
+            var source = Encoding.UTF8.GetBytes("return 42");
+            var defaultOutput = LuauCompiler.Compile(source, LuauCompileOptions.Default);
+            var coverageOutput = LuauCompiler.Compile(
+                source,
+                LuauCompileOptions.Default with
+                {
+                    CoverageLevel = 2,
+                });
+
+            Assert.That(defaultOutput.CompileOptions.CoverageLevel, Is.Zero);
+            Assert.That(coverageOutput.CompileOptions.CoverageLevel, Is.EqualTo(2));
+            Assert.That(
+                coverageOutput.BytecodeSha256,
+                Is.Not.EqualTo(defaultOutput.BytecodeSha256));
+            Assert.That(
+                LuauCompilerIdentityDependency.ComputeHash(coverageOutput),
+                Is.Not.EqualTo(LuauCompilerIdentityDependency.ComputeHash(defaultOutput)));
+        }
+
+        [Test]
         public void SourceOnlyReimportReplacesPrecompiledContentAndValidatorInspectsContent()
         {
             LuauAssetImportSettings.SetFirstPartyProvenanceIdForTests("tests:first-party");

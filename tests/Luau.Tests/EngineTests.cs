@@ -24,7 +24,7 @@ public sealed class EngineTests
             output,
             "@engine/trusted-bytecode.luau");
 
-        var results = await function.InvokeAsync([]);
+        var results = await function.InvokeAsync(Array.Empty<LuauValue>());
 
         Assert.Single(results);
         Assert.Equal(123, results[0].Read<int>());

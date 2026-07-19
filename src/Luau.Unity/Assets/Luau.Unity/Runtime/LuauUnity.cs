@@ -156,22 +156,12 @@ namespace Luau.Unity
                 return stateOptions;
             }
 
-            var effectiveExecutionOptions = new LuauExecutionOptions
+            return stateOptions with
             {
-                WallClockLimit = executionOptions.WallClockLimit,
-                InterruptCountLimit = executionOptions.InterruptCountLimit,
-                MaxResultCount = executionOptions.MaxResultCount,
-                ContinuationScheduler = scheduler,
-            };
-
-            return new LuauStateOptions
-            {
-                MemoryLimitBytes = stateOptions.MemoryLimitBytes,
-                MaxSourceBytes = stateOptions.MaxSourceBytes,
-                MaxBytecodeBytes = stateOptions.MaxBytecodeBytes,
-                DefaultExecutionOptions = effectiveExecutionOptions,
-                BytecodePolicy = stateOptions.BytecodePolicy,
-                BytecodeValidator = stateOptions.BytecodeValidator,
+                DefaultExecutionOptions = executionOptions with
+                {
+                    ContinuationScheduler = scheduler,
+                },
             };
         }
 

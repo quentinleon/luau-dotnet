@@ -3,6 +3,26 @@ namespace Luau.Tests;
 public sealed class BytecodeCapabilityTests
 {
     [Fact]
+    public void CoverageIsOptInAndChangesCompilerOutputIdentity()
+    {
+        const string sourceText = "local function answer() return 42 end; return answer()";
+        var source = System.Text.Encoding.UTF8.GetBytes(sourceText);
+        var defaults = new LuauCompileOptions();
+        var instrumentedOptions = LuauCompileOptions.Default with { CoverageLevel = 2 };
+
+        var ordinary = LuauCompiler.Compile(source, defaults);
+        var instrumented = LuauCompiler.Compile(source, instrumentedOptions);
+
+        Assert.Equal(0, LuauCompileOptions.Default.CoverageLevel);
+        Assert.Equal(0, defaults.CoverageLevel);
+        Assert.Equal(0, ordinary.CompileOptions.CoverageLevel);
+        Assert.Equal(2, instrumented.CompileOptions.CoverageLevel);
+        Assert.Equal(ordinary.SourceSha256, instrumented.SourceSha256);
+        Assert.NotEqual(ordinary.BytecodeSha256, instrumented.BytecodeSha256);
+        Assert.False(ordinary.ToBytecodeArray().AsSpan().SequenceEqual(instrumented.ToBytecodeArray()));
+    }
+
+    [Fact]
     public void CompilerOutputIsSuccessOnlyOpaqueAndDefensivelyCopied()
     {
         var options = new LuauCompileOptions

@@ -30,7 +30,7 @@ public sealed class LuauCompileResult
     {
         Kind = kind;
         Output = output;
-        Diagnostic = diagnostic;
+        CompilationDiagnostic = diagnostic;
         InfrastructureException = infrastructureException;
     }
 
@@ -44,7 +44,7 @@ public sealed class LuauCompileResult
     public LuauCompilerOutput? Output { get; }
 
     /// <summary>Gets the typed source diagnostic for a rejected program.</summary>
-    public LuauCompilationException? Diagnostic { get; }
+    public LuauCompilationException? CompilationDiagnostic { get; }
 
     /// <summary>Gets the backend failure for an infrastructure outcome.</summary>
     public Exception? InfrastructureException { get; }
@@ -52,7 +52,9 @@ public sealed class LuauCompileResult
     /// <summary>Gets whether this result contains compiler-issued output.</summary>
     public bool IsSuccess => Kind == LuauCompileResultKind.Success;
 
-    internal static LuauCompileResult FromOutput(LuauCompilerOutput output)
+    /// <summary>Creates a successful result containing compiler-issued output.</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="output"/> is null.</exception>
+    public static LuauCompileResult Success(LuauCompilerOutput output)
     {
         return new LuauCompileResult(
             LuauCompileResultKind.Success,
@@ -61,7 +63,9 @@ public sealed class LuauCompileResult
             null);
     }
 
-    internal static LuauCompileResult FromDiagnostic(LuauCompilationException diagnostic)
+    /// <summary>Creates a source-diagnostic result.</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="diagnostic"/> is null.</exception>
+    public static LuauCompileResult Diagnostic(LuauCompilationException diagnostic)
     {
         return new LuauCompileResult(
             LuauCompileResultKind.Diagnostic,
@@ -70,12 +74,15 @@ public sealed class LuauCompileResult
             null);
     }
 
-    internal static LuauCompileResult Canceled()
+    /// <summary>Creates a canceled result with no outcome payload.</summary>
+    public static LuauCompileResult Canceled()
     {
         return new LuauCompileResult(LuauCompileResultKind.Canceled, null, null, null);
     }
 
-    internal static LuauCompileResult FromInfrastructureFailure(Exception exception)
+    /// <summary>Creates an infrastructure-failure result.</summary>
+    /// <exception cref="ArgumentNullException"><paramref name="exception"/> is null.</exception>
+    public static LuauCompileResult InfrastructureFailure(Exception exception)
     {
         return new LuauCompileResult(
             LuauCompileResultKind.InfrastructureFailure,

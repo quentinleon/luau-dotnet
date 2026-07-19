@@ -12,6 +12,17 @@ public class BufferTests
     }
 
     [Fact]
+    public void NegativeLengthDiagnosticMatchesTheAcceptedZeroBoundary()
+    {
+        using var state = LuauState.Create();
+
+        using var empty = state.CreateBuffer(0);
+        Assert.Equal(0, empty.Length);
+        var exception = Assert.Throws<ArgumentException>(() => state.CreateBuffer(-1));
+        Assert.Contains("non-negative", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BoundedReadsAndWrites()
     {
         using var state = LuauState.Create();

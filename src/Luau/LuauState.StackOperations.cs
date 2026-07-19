@@ -254,6 +254,11 @@ public unsafe partial class LuauState
                     LuauReferenceHelper.CreateReference(this, index, "retain a Luau function"));
                 return LuauValue.FromFunction(function);
             case LuauHostType.Userdata:
+                if (TryReadObjectToken(index, out var objectToken))
+                {
+                    return LuauValue.FromObjectHandle(
+                        RetainObjectHandleFromStack(index, objectToken));
+                }
                 var userData = new LuauUserData(
                     this,
                     LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"));
@@ -556,7 +561,14 @@ public unsafe partial class LuauState
                 PushFunction(value.Read<LuauFunction>());
                 break;
             case LuauType.UserData:
-                PushUserData(value.Read<LuauUserData>());
+                if (value.TryRead<LuauObjectHandle>(out var objectHandle))
+                {
+                    PushObjectHandle(objectHandle);
+                }
+                else
+                {
+                    PushUserData(value.Read<LuauUserData>());
+                }
                 break;
             case LuauType.Thread:
                 PushThread(value.Read<LuauState>());
@@ -695,6 +707,12 @@ public unsafe partial class LuauState
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void PushUserData(LuauUserData value)
+    {
+        PushReference(value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void PushObjectHandle(LuauObjectHandle value)
     {
         PushReference(value);
     }

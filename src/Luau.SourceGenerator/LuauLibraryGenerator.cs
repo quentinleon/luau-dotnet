@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Luau.SourceGenerator;
 
@@ -27,10 +29,23 @@ internal enum LuauLibraryParameterKind
     State,
 }
 
+internal enum LuauLibraryExposureKind
+{
+    Global,
+    Capability,
+}
+
+internal enum LuauLibraryValueKind
+{
+    Standard,
+    UnityVector3,
+}
+
 internal sealed record LuauLibraryParameter
 {
     public required string TypeName { get; init; }
     public required LuauLibraryParameterKind Kind { get; init; }
+    public required LuauLibraryValueKind ValueKind { get; init; }
 }
 
 internal sealed record LuauLibraryMember
@@ -43,17 +58,21 @@ internal sealed record LuauLibraryMember
     public required bool CanRead { get; init; }
     public required bool CanWrite { get; init; }
     public required LuauLibraryReturnKind ReturnKind { get; init; }
+    public required LuauLibraryValueKind ValueKind { get; init; }
     public required EquatableArray<LuauLibraryParameter> Parameters { get; init; }
 }
 
 internal sealed record LuauLibraryContext
 {
-    public required IgnoreEquality<DiagnosticReporter> Diagnostics { get; init; }
+    public required EquatableArray<LuauGeneratorDiagnostic> Diagnostics { get; init; }
     public required string LibraryName { get; init; }
     public required string TypeName { get; init; }
     public required string FullTypeName { get; init; }
+    public required string CanonicalMetadataName { get; init; }
     public required string? Namespace { get; init; }
     public required string DeclarationKeyword { get; init; }
+    public required LuauLibraryExposureKind Exposure { get; init; }
+    public required bool RequiresUnityObjectValidation { get; init; }
     public required EquatableArray<LuauLibraryMember> Members { get; init; }
 }
 
@@ -70,6 +89,8 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
     const string TaskOfTTypeName = "System.Threading.Tasks.Task`1";
     const string ValueTaskTypeName = "System.Threading.Tasks.ValueTask";
     const string ValueTaskOfTTypeName = "System.Threading.Tasks.ValueTask`1";
+    const string UnityObjectTypeName = "UnityEngine.Object";
+    const string UnityVector3TypeName = "global::UnityEngine.Vector3";
 
     static readonly SymbolDisplayFormat FullyQualifiedTypeFormat =
         SymbolDisplayFormat.FullyQualifiedFormat
@@ -83,7 +104,8 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             LibraryAttributeName,
             static (node, _) => node is TypeDeclarationSyntax,
             static (attributeContext, cancellationToken) =>
-                Transform(attributeContext, cancellationToken));
+                Transform(attributeContext, cancellationToken))
+            .WithTrackingName("LuauLibraryModels");
 
         context.RegisterSourceOutput(libraries, Emit);
     }
@@ -94,8 +116,10 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
     {
         var symbol = (INamedTypeSymbol)context.TargetSymbol;
         var syntax = (TypeDeclarationSyntax)context.TargetNode;
-        var diagnostics = new DiagnosticReporter();
+        var diagnostics = new List<LuauGeneratorDiagnostic>();
         var location = syntax.Identifier.GetLocation();
+        var libraryAttribute = context.Attributes[0];
+        var exposure = GetExposure(libraryAttribute, diagnostics, location);
 
         if (!syntax.Modifiers.Any(static modifier => modifier.IsKind(SyntaxKind.PartialKeyword)))
         {
@@ -107,7 +131,23 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             diagnostics.ReportDiagnostic(DiagnosticDescriptors.NestedNotAllowed, location);
         }
 
-        if (symbol.IsAbstract)
+        if (exposure == LuauLibraryExposureKind.Capability && symbol.TypeKind != TypeKind.Class)
+        {
+            ReportUnsupported(
+                diagnostics,
+                location,
+                symbol.Name,
+                "capability types must be reference classes.");
+        }
+        else if (exposure == LuauLibraryExposureKind.Capability && symbol.IsStatic)
+        {
+            ReportUnsupported(
+                diagnostics,
+                location,
+                symbol.Name,
+                "static capability types are not supported.");
+        }
+        else if (symbol.IsAbstract)
         {
             diagnostics.ReportDiagnostic(DiagnosticDescriptors.AbstractNotAllowed, location);
         }
@@ -121,7 +161,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                 "generic host-library types are not supported.");
         }
 
-        var libraryName = context.Attributes[0].ConstructorArguments.FirstOrDefault().Value as string;
+        var libraryName = libraryAttribute.ConstructorArguments.FirstOrDefault().Value as string;
         if (!IsValidLuauName(libraryName))
         {
             diagnostics.ReportDiagnostic(DiagnosticDescriptors.InvalidName, location, "library");
@@ -137,6 +177,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         var taskOfTType = context.SemanticModel.Compilation.GetTypeByMetadataName(TaskOfTTypeName);
         var valueTaskType = context.SemanticModel.Compilation.GetTypeByMetadataName(ValueTaskTypeName);
         var valueTaskOfTType = context.SemanticModel.Compilation.GetTypeByMetadataName(ValueTaskOfTTypeName);
+        var unityObjectType = context.SemanticModel.Compilation.GetTypeByMetadataName(UnityObjectTypeName);
 
         var members = new List<LuauLibraryMember>();
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -185,6 +226,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                 var member = CreateMember(
                     memberSymbol,
                     luauName,
+                    exposure,
                     fromStateAttribute,
                     callContextType,
                     stateType,
@@ -204,14 +246,20 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
 
         return new LuauLibraryContext
         {
-            Diagnostics = diagnostics,
+            Diagnostics = diagnostics.ToArray(),
             LibraryName = libraryName!,
             TypeName = EscapeIdentifier(symbol.Name),
             FullTypeName = symbol.ToDisplayString(FullyQualifiedTypeFormat),
+            CanonicalMetadataName = GetCanonicalMetadataName(symbol),
             Namespace = symbol.ContainingNamespace.IsGlobalNamespace
                 ? null
                 : symbol.ContainingNamespace.ToDisplayString(),
             DeclarationKeyword = symbol.IsRecord ? "record class" : "class",
+            Exposure = exposure,
+            RequiresUnityObjectValidation =
+                exposure == LuauLibraryExposureKind.Capability &&
+                unityObjectType != null &&
+                IsUnityObjectType(symbol, unityObjectType),
             Members = members.ToArray(),
         };
     }
@@ -219,6 +267,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
     static LuauLibraryMember? CreateMember(
         ISymbol symbol,
         string luauName,
+        LuauLibraryExposureKind exposure,
         INamedTypeSymbol fromStateAttribute,
         INamedTypeSymbol callContextType,
         INamedTypeSymbol stateType,
@@ -227,13 +276,23 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         INamedTypeSymbol taskOfTType,
         INamedTypeSymbol valueTaskType,
         INamedTypeSymbol valueTaskOfTType,
-        DiagnosticReporter diagnostics,
+        List<LuauGeneratorDiagnostic> diagnostics,
         Location location)
     {
+        if (exposure == LuauLibraryExposureKind.Capability && symbol.IsStatic)
+        {
+            ReportUnsupported(
+                diagnostics,
+                location,
+                symbol.Name,
+                "static members are not supported by object capabilities.");
+            return null;
+        }
+
         switch (symbol)
         {
             case IFieldSymbol field:
-                if (field.IsFixedSizeBuffer || !IsSupportedValueType(field.Type))
+                if (field.IsFixedSizeBuffer || !TryGetValueKind(field.Type, exposure, out var fieldValueKind))
                 {
                     ReportUnsupported(
                         diagnostics,
@@ -253,11 +312,12 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                     CanRead = true,
                     CanWrite = !field.IsReadOnly && !field.IsConst,
                     ReturnKind = LuauLibraryReturnKind.None,
+                    ValueKind = fieldValueKind,
                     Parameters = [],
                 };
 
             case IPropertySymbol property:
-                if (property.IsIndexer || !IsSupportedValueType(property.Type))
+                if (property.IsIndexer || !TryGetValueKind(property.Type, exposure, out var propertyValueKind))
                 {
                     ReportUnsupported(
                         diagnostics,
@@ -269,6 +329,22 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                     return null;
                 }
 
+                var canRead = property.GetMethod?.DeclaredAccessibility == Accessibility.Public;
+                var canWrite = property.SetMethod is
+                {
+                    DeclaredAccessibility: Accessibility.Public,
+                    IsInitOnly: false,
+                };
+                if (exposure == LuauLibraryExposureKind.Capability && !canRead && !canWrite)
+                {
+                    ReportUnsupported(
+                        diagnostics,
+                        location,
+                        property.Name,
+                        "capability properties must have at least one public non-init accessor.");
+                    return null;
+                }
+
                 return new LuauLibraryMember
                 {
                     Kind = LuauLibraryMemberKind.Property,
@@ -276,13 +352,10 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                     ManagedName = EscapeIdentifier(property.Name),
                     TypeName = property.Type.ToDisplayString(FullyQualifiedTypeFormat),
                     IsStatic = property.IsStatic,
-                    CanRead = property.GetMethod?.DeclaredAccessibility == Accessibility.Public,
-                    CanWrite = property.SetMethod is
-                    {
-                        DeclaredAccessibility: Accessibility.Public,
-                        IsInitOnly: false,
-                    },
+                    CanRead = canRead,
+                    CanWrite = canWrite,
                     ReturnKind = LuauLibraryReturnKind.None,
+                    ValueKind = propertyValueKind,
                     Parameters = [],
                 };
 
@@ -290,6 +363,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                 return CreateMethod(
                     method,
                     luauName,
+                    exposure,
                     fromStateAttribute,
                     callContextType,
                     stateType,
@@ -310,6 +384,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
     static LuauLibraryMember? CreateMethod(
         IMethodSymbol method,
         string luauName,
+        LuauLibraryExposureKind exposure,
         INamedTypeSymbol fromStateAttribute,
         INamedTypeSymbol callContextType,
         INamedTypeSymbol stateType,
@@ -318,7 +393,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         INamedTypeSymbol taskOfTType,
         INamedTypeSymbol valueTaskType,
         INamedTypeSymbol valueTaskOfTType,
-        DiagnosticReporter diagnostics,
+        List<LuauGeneratorDiagnostic> diagnostics,
         Location location)
     {
         if (method.MethodKind != MethodKind.Ordinary || method.IsGenericMethod ||
@@ -367,8 +442,9 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             return null;
         }
 
+        var returnValueKind = LuauLibraryValueKind.Standard;
         if (returnKind is LuauLibraryReturnKind.Value or LuauLibraryReturnKind.AsyncValue &&
-            !IsSupportedValueType(returnType))
+            !TryGetValueKind(returnType, exposure, out returnValueKind))
         {
             ReportUnsupported(
                 diagnostics,
@@ -420,8 +496,9 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
                 kind = LuauLibraryParameterKind.Argument;
             }
 
+            var parameterValueKind = LuauLibraryValueKind.Standard;
             if (kind == LuauLibraryParameterKind.Argument &&
-                !IsSupportedValueType(parameter.Type))
+                !TryGetValueKind(parameter.Type, exposure, out parameterValueKind))
             {
                 ReportUnsupported(
                     diagnostics,
@@ -445,6 +522,7 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             {
                 TypeName = parameter.Type.ToDisplayString(FullyQualifiedTypeFormat),
                 Kind = kind,
+                ValueKind = parameterValueKind,
             });
         }
 
@@ -458,15 +536,26 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             CanRead = true,
             CanWrite = false,
             ReturnKind = returnKind,
+            ValueKind = returnValueKind,
             Parameters = parameters.ToArray(),
         };
     }
 
     static void Emit(SourceProductionContext context, LuauLibraryContext library)
     {
-        if (library.Diagnostics.Value.HasDiagnostics)
+        if (library.Diagnostics.Length != 0)
         {
-            library.Diagnostics.Value.ReportToContext(context);
+            foreach (var diagnostic in library.Diagnostics)
+            {
+                context.ReportDiagnostic(diagnostic.ToDiagnostic());
+            }
+
+            return;
+        }
+
+        if (library.Exposure == LuauLibraryExposureKind.Capability)
+        {
+            EmitCapability(context, library);
             return;
         }
 
@@ -517,12 +606,209 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
 
         namespaceBlock.Dispose();
 
-        var hintName = new string(
-            library.FullTypeName
-                .Replace("global::", string.Empty)
+        var hintPrefix = new string(
+            library.CanonicalMetadataName
                 .Select(static character => char.IsLetterOrDigit(character) ? character : '_')
                 .ToArray());
-        context.AddSource($"LuauLibrary.{hintName}.g.cs", builder.ToString());
+        var hintHash = ComputeHintHash(library.CanonicalMetadataName);
+        context.AddSource($"LuauLibrary.{hintPrefix}.{hintHash}.g.cs", builder.ToString());
+    }
+
+    static void EmitCapability(SourceProductionContext context, LuauLibraryContext library)
+    {
+        var builder = new CodeBuilder(0);
+        builder.AppendLine("// <auto-generated/>");
+        builder.AppendLine();
+
+        var namespaceBlock = library.Namespace == null
+            ? builder.Nop
+            : builder.BeginBlock($"namespace {library.Namespace}");
+
+        using (builder.BeginBlock(
+                   $"partial {library.DeclarationKeyword} {library.TypeName} : global::Luau.ILuauObjectCapability"))
+        {
+            builder.AppendLine(
+                $"static readonly global::Luau.LuauObjectDescriptor<{library.FullTypeName}> s_luauObjectDescriptor = new global::Luau.LuauObjectDescriptor<{library.FullTypeName}>(");
+            using (builder.BeginIndent())
+            {
+                builder.AppendLine($"{Literal(library.LibraryName)},");
+                builder.AppendLine(
+                    library.RequiresUnityObjectValidation
+                        ? "global::Luau.Unity.LuauUnityObjectGuard.ThrowIfDestroyed,"
+                        : "null,");
+                builder.AppendLine($"new global::Luau.LuauObjectMember<{library.FullTypeName}>[]");
+                builder.AppendLine("{");
+                using (builder.BeginIndent())
+                {
+                    foreach (var member in library.Members)
+                    {
+                        EmitCapabilityMember(builder, library, member);
+                    }
+                }
+                builder.AppendLine("});");
+            }
+
+            builder.AppendLine();
+            builder.AppendLine(
+                "global::Luau.LuauObjectDescriptor global::Luau.ILuauObjectCapability.LuauObjectDescriptor => s_luauObjectDescriptor;");
+        }
+
+        namespaceBlock.Dispose();
+
+        var hintPrefix = new string(
+            library.CanonicalMetadataName
+                .Select(static character => char.IsLetterOrDigit(character) ? character : '_')
+                .ToArray());
+        var hintHash = ComputeHintHash(library.CanonicalMetadataName);
+        context.AddSource($"LuauLibrary.{hintPrefix}.{hintHash}.g.cs", builder.ToString());
+    }
+
+    static void EmitCapabilityMember(
+        CodeBuilder builder,
+        LuauLibraryContext library,
+        LuauLibraryMember member)
+    {
+        var memberType = $"global::Luau.LuauObjectMember<{library.FullTypeName}>";
+        if (member.Kind is LuauLibraryMemberKind.Field or LuauLibraryMemberKind.Property)
+        {
+            builder.AppendLine($"{memberType}.Property(");
+            using (builder.BeginIndent())
+            {
+                builder.AppendLine($"{Literal(member.LuauName)},");
+                if (member.CanRead)
+                {
+                    builder.AppendLine("static (target, context) =>");
+                    builder.AppendLine("{");
+                    using (builder.BeginIndent())
+                    {
+                        EmitCapabilityReturn(
+                            builder,
+                            member.ValueKind,
+                            $"target.{member.ManagedName}");
+                    }
+                    builder.AppendLine("},");
+                }
+                else
+                {
+                    builder.AppendLine("null,");
+                }
+
+                if (member.CanWrite)
+                {
+                    builder.AppendLine("static (target, context) =>");
+                    builder.AppendLine("{");
+                    using (builder.BeginIndent())
+                    {
+                        builder.AppendLine(
+                            $"target.{member.ManagedName} = {CapabilityReadExpression(member.TypeName, member.ValueKind, 2)};");
+                    }
+                    builder.AppendLine("}),");
+                }
+                else
+                {
+                    builder.AppendLine("null),");
+                }
+            }
+
+            return;
+        }
+
+        var isAsync = member.ReturnKind is LuauLibraryReturnKind.Async or LuauLibraryReturnKind.AsyncValue;
+        builder.AppendLine($"{memberType}.{(isAsync ? "AsyncMethod" : "Method")}(");
+        using (builder.BeginIndent())
+        {
+            builder.AppendLine($"{Literal(member.LuauName)},");
+            builder.AppendLine(isAsync
+                ? "static async (target, context) =>"
+                : "static (target, context) =>");
+            builder.AppendLine("{");
+            using (builder.BeginIndent())
+            {
+                EmitCapabilityMethodBody(builder, library, member);
+            }
+            builder.AppendLine("}),");
+        }
+    }
+
+    static void EmitCapabilityMethodBody(
+        CodeBuilder builder,
+        LuauLibraryContext library,
+        LuauLibraryMember method)
+    {
+        var argumentCount = method.Parameters.Count(
+            static parameter => parameter.Kind == LuauLibraryParameterKind.Argument);
+        if (argumentCount != 0)
+        {
+            var callbackName = $"{library.LibraryName}.{method.LuauName}";
+            var message = $"Host function '{callbackName}' expects at least {argumentCount} argument(s).";
+            using (builder.BeginBlock($"if (context.ArgumentCount < {argumentCount + 1})"))
+            {
+                builder.AppendLine($"throw new global::Luau.LuauException({Literal(message)});");
+            }
+        }
+
+        var argumentIndex = 1;
+        for (var parameterIndex = 0; parameterIndex < method.Parameters.Length; parameterIndex++)
+        {
+            var parameter = method.Parameters[parameterIndex];
+            var expression = parameter.Kind switch
+            {
+                LuauLibraryParameterKind.Argument =>
+                    CapabilityReadExpression(parameter.TypeName, parameter.ValueKind, argumentIndex++),
+                LuauLibraryParameterKind.CallContext => "context",
+                LuauLibraryParameterKind.CancellationToken => "context.CancellationToken",
+                LuauLibraryParameterKind.State => "context.State",
+                _ => throw new ArgumentOutOfRangeException(),
+            };
+            builder.AppendLine($"var arg{parameterIndex} = {expression};");
+        }
+
+        var arguments = string.Join(
+            ", ",
+            Enumerable.Range(0, method.Parameters.Length).Select(static index => $"arg{index}"));
+        var invocation = $"target.{method.ManagedName}({arguments})";
+        switch (method.ReturnKind)
+        {
+            case LuauLibraryReturnKind.None:
+                builder.AppendLine($"{invocation};");
+                break;
+            case LuauLibraryReturnKind.Value:
+                builder.AppendLine($"var result = {invocation};");
+                EmitCapabilityReturn(builder, method.ValueKind, "result");
+                break;
+            case LuauLibraryReturnKind.Async:
+                builder.AppendLine($"await {invocation};");
+                break;
+            case LuauLibraryReturnKind.AsyncValue:
+                builder.AppendLine($"var result = await {invocation};");
+                EmitCapabilityReturn(builder, method.ValueKind, "result");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+
+    static string CapabilityReadExpression(
+        string typeName,
+        LuauLibraryValueKind valueKind,
+        int index) => valueKind == LuauLibraryValueKind.UnityVector3
+        ? $"global::Luau.Unity.LuauUnityValue.ReadVector3(context, {index})"
+        : $"context.Read<{typeName}>({index})";
+
+    static void EmitCapabilityReturn(
+        CodeBuilder builder,
+        LuauLibraryValueKind valueKind,
+        string expression)
+    {
+        if (valueKind == LuauLibraryValueKind.UnityVector3)
+        {
+            builder.AppendLine(
+                $"global::Luau.Unity.LuauUnityValue.ReturnVector3(context, {expression});");
+        }
+        else
+        {
+            builder.AppendLine($"context.Return({expression});");
+        }
     }
 
     static void EmitMethod(
@@ -684,6 +970,76 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer or TypeKind.Error or TypeKind.TypeParameter ||
         type.IsRefLikeType;
 
+    static LuauLibraryExposureKind GetExposure(
+        AttributeData libraryAttribute,
+        List<LuauGeneratorDiagnostic> diagnostics,
+        Location location)
+    {
+        foreach (var namedArgument in libraryAttribute.NamedArguments)
+        {
+            if (!string.Equals(namedArgument.Key, "Exposure", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (namedArgument.Value.Value is int value)
+            {
+                if (value == (int)LuauLibraryExposureKind.Global)
+                {
+                    return LuauLibraryExposureKind.Global;
+                }
+
+                if (value == (int)LuauLibraryExposureKind.Capability)
+                {
+                    return LuauLibraryExposureKind.Capability;
+                }
+            }
+
+            diagnostics.ReportDiagnostic(
+                DiagnosticDescriptors.InvalidExposure,
+                location,
+                namedArgument.Value.Value?.ToString() ?? "null");
+            return LuauLibraryExposureKind.Global;
+        }
+
+        return LuauLibraryExposureKind.Global;
+    }
+
+    static bool IsUnityObjectType(INamedTypeSymbol symbol, INamedTypeSymbol unityObjectType)
+    {
+        for (INamedTypeSymbol? current = symbol; current != null; current = current.BaseType)
+        {
+            if (SymbolEqualityComparer.Default.Equals(current, unityObjectType))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    static bool TryGetValueKind(
+        ITypeSymbol type,
+        LuauLibraryExposureKind exposure,
+        out LuauLibraryValueKind valueKind)
+    {
+        if (IsSupportedValueType(type))
+        {
+            valueKind = LuauLibraryValueKind.Standard;
+            return true;
+        }
+
+        if (exposure == LuauLibraryExposureKind.Capability &&
+            type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == UnityVector3TypeName)
+        {
+            valueKind = LuauLibraryValueKind.UnityVector3;
+            return true;
+        }
+
+        valueKind = LuauLibraryValueKind.Standard;
+        return false;
+    }
+
     static bool IsSupportedValueType(ITypeSymbol type)
     {
         // Generated host APIs use one value-type surface for arguments and
@@ -713,13 +1069,14 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
             "global::Luau.LuauTable" or
             "global::Luau.LuauBuffer" or
             "global::Luau.LuauState" or
+            "global::Luau.LuauObjectHandle" or
             "global::Luau.LuauUserData";
     }
 
     static bool IsValidLuauName(string? name) => name != null && name.IndexOf('\0') < 0;
 
     static void ReportUnsupported(
-        DiagnosticReporter diagnostics,
+        List<LuauGeneratorDiagnostic> diagnostics,
         Location location,
         string memberName,
         string reason) =>
@@ -736,4 +1093,41 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         SyntaxFacts.GetContextualKeywordKind(identifier) != SyntaxKind.None
             ? "@" + identifier
             : identifier;
+
+    static string GetCanonicalMetadataName(INamedTypeSymbol symbol)
+    {
+        var namespaceParts = new Stack<string>();
+        for (var current = symbol.ContainingNamespace;
+             current != null && !current.IsGlobalNamespace;
+             current = current.ContainingNamespace)
+        {
+            namespaceParts.Push(current.MetadataName);
+        }
+
+        var typeParts = new Stack<string>();
+        for (INamedTypeSymbol? current = symbol; current != null; current = current.ContainingType)
+        {
+            typeParts.Push(current.MetadataName);
+        }
+
+        var typeName = string.Join("+", typeParts);
+        return namespaceParts.Count == 0
+            ? typeName
+            : string.Join(".", namespaceParts) + "." + typeName;
+    }
+
+    static string ComputeHintHash(string canonicalMetadataName)
+    {
+        using var sha256 = SHA256.Create();
+        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(canonicalMetadataName));
+        const string hex = "0123456789abcdef";
+        var result = new char[16];
+        for (var index = 0; index < result.Length / 2; index++)
+        {
+            result[index * 2] = hex[hash[index] >> 4];
+            result[(index * 2) + 1] = hex[hash[index] & 0x0f];
+        }
+
+        return new string(result);
+    }
 }

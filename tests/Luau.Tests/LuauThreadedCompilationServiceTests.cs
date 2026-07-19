@@ -265,12 +265,36 @@ public sealed class LuauThreadedCompilationServiceTests
 
         AssertResultShape(success, LuauCompileResultKind.Success);
         AssertResultShape(diagnostic, LuauCompileResultKind.Diagnostic);
-        Assert.Equal("expected source diagnostic", diagnostic.Diagnostic!.Message);
+        Assert.Equal("expected source diagnostic", diagnostic.CompilationDiagnostic!.Message);
         AssertResultShape(infrastructure, LuauCompileResultKind.InfrastructureFailure);
         Assert.Equal("expected backend failure", infrastructure.InfrastructureException!.Message);
         AssertResultShape(canceled, LuauCompileResultKind.Canceled);
         Assert.Equal(3, backendCalls);
         Assert.Equal((0, 0L, 0), service.ReservationSnapshot);
+    }
+
+    [Fact]
+    public async Task PublicServiceImplementerCanConstructEveryResultKind()
+    {
+        var output = LuauCompiler.Compile("return 42"u8);
+        await using ILuauCompilationService service = new FactoryBackedCompilationService(output);
+
+        var success = await service.CompileAsync(new byte[] { 0 });
+        var diagnostic = await service.CompileAsync(new byte[] { 1 });
+        var canceled = await service.CompileAsync(new byte[] { 2 });
+        var infrastructure = await service.CompileAsync(new byte[] { 3 });
+
+        AssertResultShape(success, LuauCompileResultKind.Success);
+        Assert.Same(output, success.Output);
+        AssertResultShape(diagnostic, LuauCompileResultKind.Diagnostic);
+        Assert.Equal("service diagnostic", diagnostic.CompilationDiagnostic!.Message);
+        AssertResultShape(canceled, LuauCompileResultKind.Canceled);
+        AssertResultShape(infrastructure, LuauCompileResultKind.InfrastructureFailure);
+        Assert.Equal("service infrastructure failure", infrastructure.InfrastructureException!.Message);
+
+        Assert.Throws<ArgumentNullException>(() => LuauCompileResult.Success(null!));
+        Assert.Throws<ArgumentNullException>(() => LuauCompileResult.Diagnostic(null!));
+        Assert.Throws<ArgumentNullException>(() => LuauCompileResult.InfrastructureFailure(null!));
     }
 
     [Fact]
@@ -330,7 +354,7 @@ public sealed class LuauThreadedCompilationServiceTests
             .WaitAsync(TestTimeout);
 
         AssertResultShape(result, LuauCompileResultKind.Diagnostic);
-        Assert.Contains("Expected", result.Diagnostic!.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Expected", result.CompilationDiagnostic!.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal((0, 0L, 0), service.ReservationSnapshot);
     }
 
@@ -972,7 +996,7 @@ public sealed class LuauThreadedCompilationServiceTests
         Assert.Equal(expectedKind, result.Kind);
         Assert.Equal(expectedKind == LuauCompileResultKind.Success, result.IsSuccess);
         Assert.Equal(expectedKind == LuauCompileResultKind.Success, result.Output != null);
-        Assert.Equal(expectedKind == LuauCompileResultKind.Diagnostic, result.Diagnostic != null);
+        Assert.Equal(expectedKind == LuauCompileResultKind.Diagnostic, result.CompilationDiagnostic != null);
         Assert.Equal(
             expectedKind == LuauCompileResultKind.InfrastructureFailure,
             result.InfrastructureException != null);
@@ -1035,5 +1059,27 @@ public sealed class LuauThreadedCompilationServiceTests
         protected override void Dispose(bool disposing)
         {
         }
+    }
+
+    sealed class FactoryBackedCompilationService(LuauCompilerOutput output) : ILuauCompilationService
+    {
+        public ValueTask<LuauCompileResult> CompileAsync(
+            ReadOnlyMemory<byte> utf8Source,
+            LuauCompileOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            var result = utf8Source.Span[0] switch
+            {
+                0 => LuauCompileResult.Success(output),
+                1 => LuauCompileResult.Diagnostic(
+                    new LuauCompilationException("service diagnostic", "@service/diagnostic.luau")),
+                2 => LuauCompileResult.Canceled(),
+                _ => LuauCompileResult.InfrastructureFailure(
+                    new InvalidOperationException("service infrastructure failure")),
+            };
+            return ValueTask.FromResult(result);
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

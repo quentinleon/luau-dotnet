@@ -9,13 +9,27 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
     public struct Enumerator(LuauTable table) : IEnumerator<KeyValuePair<LuauValue, LuauValue>>
     {
         KeyValuePair<LuauValue, LuauValue> current;
+        bool completed;
         public KeyValuePair<LuauValue, LuauValue> Current => current;
 
         object IEnumerator.Current => Current;
 
         public bool MoveNext()
         {
-            return table.TryMoveNext(current.Key, out current);
+            if (completed)
+            {
+                return false;
+            }
+
+            if (table.TryMoveNext(current.Key, out var next))
+            {
+                current = next;
+                return true;
+            }
+
+            current = default;
+            completed = true;
+            return false;
         }
 
         public void Dispose()
@@ -24,7 +38,8 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
 
         public void Reset()
         {
-            throw new NotSupportedException();
+            current = default;
+            completed = false;
         }
     }
 
@@ -87,7 +102,12 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
         }
     }
 
-    public int Count
+    /// <summary>
+    /// Gets Luau's raw sequence length for this table. This is the value used
+    /// by raw <c>#</c>/<c>lua_objlen</c> semantics, not a count of key/value
+    /// entries.
+    /// </summary>
+    public int Length
     {
         get
         {
@@ -242,6 +262,29 @@ public unsafe sealed class LuauTable : ILuauReference, IDisposable, IEnumerable<
             LuauNativeProtection.Prepare(state.Context);
             var status = luau_host_table_raw_set(pointer, -3);
             LuauNativeProtection.ThrowIfFailed(state, pointer, status, "write a raw Luau table value");
+        }
+        finally
+        {
+            state.SetTop(originalTop);
+        }
+    }
+
+    internal void SetReadOnly()
+    {
+        using var access = AcquireReference();
+        var state = access.State;
+        var pointer = state.PointerUnsafe;
+        var originalTop = luau_host_stack_get_top(pointer);
+        try
+        {
+            state.Push(this);
+            LuauNativeProtection.Prepare(state.Context);
+            var status = luau_host_table_set_readonly(pointer, -1, 1);
+            LuauNativeProtection.ThrowIfFailed(
+                state,
+                pointer,
+                status,
+                "make a Luau table read-only");
         }
         finally
         {

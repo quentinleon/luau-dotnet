@@ -15,7 +15,7 @@ public readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnume
 
     public EquatableArray(T[] array)
     {
-        this.array = array;
+        this.array = (T[])array.Clone();
     }
 
     public static implicit operator EquatableArray<T>(T[] array)
@@ -29,7 +29,7 @@ public readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnume
         get => ref array![index];
     }
 
-    public int Length => array!.Length;
+    public int Length => array?.Length ?? 0;
 
     public ReadOnlySpan<T> AsSpan()
     {
@@ -43,12 +43,12 @@ public readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnume
 
     IEnumerator<T> IEnumerable<T>.GetEnumerator()
     {
-        return array.AsEnumerable().GetEnumerator();
+        return (array ?? []).AsEnumerable().GetEnumerator();
     }
 
     IEnumerator IEnumerable.GetEnumerator()
     {
-        return array.AsEnumerable().GetEnumerator();
+        return (array ?? []).GetEnumerator();
     }
 
     public bool Equals(EquatableArray<T> other)

@@ -424,11 +424,11 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
                     Options.MaxBytecodeBytesPerResult);
             }
 
-            return LuauCompileResult.FromOutput(output);
+            return LuauCompileResult.Success(output);
         }
         catch (LuauCompilationException diagnostic)
         {
-            return LuauCompileResult.FromDiagnostic(diagnostic);
+            return LuauCompileResult.Diagnostic(diagnostic);
         }
         catch (OperationCanceledException)
             when (request.CancellationToken.IsCancellationRequested)
@@ -437,7 +437,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
         }
         catch (Exception exception)
         {
-            return LuauCompileResult.FromInfrastructureFailure(exception);
+            return LuauCompileResult.InfrastructureFailure(exception);
         }
     }
 
@@ -568,7 +568,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
         {
             FinishPublication(
                 request,
-                LuauCompileResult.FromInfrastructureFailure(exception));
+                LuauCompileResult.InfrastructureFailure(exception));
             return;
         }
 
@@ -592,7 +592,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
         }
         catch (Exception exception)
         {
-            result = LuauCompileResult.FromInfrastructureFailure(exception);
+            result = LuauCompileResult.InfrastructureFailure(exception);
         }
 
         FinishPublication(request, result);
@@ -640,7 +640,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
         }
         catch (Exception exception)
         {
-            result = LuauCompileResult.FromInfrastructureFailure(exception);
+            result = LuauCompileResult.InfrastructureFailure(exception);
         }
 
         FinishPublication(request, result);
@@ -667,7 +667,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
                     ownedResult = ownedRequest.CancellationRequested ||
                         ownedRequest.CancellationToken.IsCancellationRequested
                         ? LuauCompileResult.Canceled()
-                        : LuauCompileResult.FromInfrastructureFailure(
+                        : LuauCompileResult.InfrastructureFailure(
                             fatalException ?? new InvalidOperationException(
                                 "A compiler worker exited while it owned a request."));
                 }
@@ -708,7 +708,7 @@ public sealed class LuauThreadedCompilationService : ILuauCompilationService
             {
                 BeginPublication(
                     request,
-                    LuauCompileResult.FromInfrastructureFailure(fatalException!));
+                    LuauCompileResult.InfrastructureFailure(fatalException!));
             }
         }
         if (signalExit)

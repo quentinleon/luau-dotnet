@@ -98,7 +98,7 @@ public sealed class RuntimeHardeningBehaviorTests
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
         Assert.Same(root, function.State);
 
-        var invoked = await function.InvokeAsync([21d]);
+        var invoked = await function.InvokeAsync(new LuauValue[] { 21d });
         Assert.Equal(42, Assert.Single(invoked).Read<int>());
         Assert.Equal(LuauThreadStatus.Suspended, child.GetStatus());
         Assert.Equal(99, Assert.Single(child.Resume()).Read<int>());
@@ -111,7 +111,7 @@ public sealed class RuntimeHardeningBehaviorTests
         using var callback = root.CreateFunction(context => context.Return(42));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await callback.InvokeAsync([]));
+            await callback.InvokeAsync(Array.Empty<LuauValue>()));
 
         Assert.Contains("only be invoked by Luau", exception.Message);
         root["callback"] = callback;
@@ -160,7 +160,13 @@ public sealed class RuntimeHardeningBehaviorTests
     [Fact]
     public async Task CancellationWaitsForPendingCallbackThenResetsStateSafely()
     {
-        using var state = LuauState.Create();
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromSeconds(5),
+            },
+        });
         using var cancellation = new CancellationTokenSource();
         var callbackEntered = NewSignal();
         var allowLateCompletion = NewSignal();
@@ -201,9 +207,15 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
-    public async Task DisposingRootDuringPendingCallbackDefersCloseAndDeniesLateStateAccess()
+    public async Task DisposalBeforeWallClockDeadlineWinsAndDefersCloseUntilCallbackReturns()
     {
-        var state = LuauState.Create();
+        var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromSeconds(5),
+            },
+        });
         var callbackEntered = NewSignal();
         var allowLateCompletion = NewSignal();
         var lateAccessFailure = new TaskCompletionSource<Exception?>(
@@ -238,6 +250,58 @@ public sealed class RuntimeHardeningBehaviorTests
         finally
         {
             allowLateCompletion.TrySetResult();
+            state.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task DisposalSelectedAfterDeadlineSignalStillHasHardStopPrecedence()
+    {
+        var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromMilliseconds(75),
+            },
+        });
+        var callbackEntered = NewSignal();
+        var deadlineObserved = NewSignal();
+        var allowCallbackReturn = NewSignal();
+
+        state["pendingDeadline"] = state.CreateAsyncFunction(
+            "pendingDeadline",
+            async context =>
+            {
+                callbackEntered.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                {
+                    deadlineObserved.TrySetResult();
+                    await allowCallbackReturn.Task.ConfigureAwait(false);
+                }
+            });
+
+        var execution = state.DoStringAsync(
+            "return pendingDeadline()",
+            "@disposal/deadline-precedence.luau").AsTask();
+
+        try
+        {
+            await callbackEntered.Task.WaitAsync(TestTimeout);
+            await deadlineObserved.Task.WaitAsync(TestTimeout);
+            state.Dispose();
+            allowCallbackReturn.TrySetResult();
+
+            await Assert.ThrowsAsync<ObjectDisposedException>(
+                () => execution.WaitAsync(TestTimeout));
+        }
+        finally
+        {
+            allowCallbackReturn.TrySetResult();
             state.Dispose();
         }
     }
@@ -373,6 +437,160 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
+    public async Task WallClockDeadlineCancelsCooperativeAsyncCallback()
+    {
+        var limit = TimeSpan.FromMilliseconds(75);
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = limit,
+            },
+        });
+        var entered = NewSignal();
+        state["waitForever"] = state.CreateAsyncFunction(
+            "waitForever",
+            async context =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken)
+                    .ConfigureAwait(false);
+            });
+
+        var execution = state.DoStringAsync(
+            "return waitForever()",
+            "@budgets/cooperative-deadline.luau").AsTask();
+        await entered.Task.WaitAsync(TestTimeout);
+        var exception = await Assert.ThrowsAsync<LuauExecutionBudgetException>(
+            () => execution.WaitAsync(TestTimeout));
+
+        Assert.Equal(LuauExecutionBudgetKind.WallClock, exception.BudgetKind);
+        Assert.Equal(limit, exception.WallClockLimit);
+        Assert.Equal("@budgets/cooperative-deadline.luau", exception.ChunkName);
+        Assert.True(exception.Elapsed >= limit);
+        Assert.Equal(7, Assert.Single(state.DoString("return 7")).Read<int>());
+    }
+
+    [Fact]
+    public async Task CallbackCannotCatchDeadlineCancellationAndTurnItIntoSuccess()
+    {
+        var limit = TimeSpan.FromMilliseconds(75);
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = limit,
+            },
+        });
+        var caughtCancellation = false;
+        state["catchDeadline"] = state.CreateAsyncFunction(
+            "catchDeadline",
+            async context =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+                {
+                    caughtCancellation = true;
+                    context.Return(42);
+                }
+            });
+
+        var exception = await Assert.ThrowsAsync<LuauExecutionBudgetException>(async () =>
+            await state.DoStringAsync(
+                "return catchDeadline()",
+                "@budgets/caught-deadline.luau").AsTask().WaitAsync(TestTimeout));
+
+        Assert.True(caughtCancellation);
+        Assert.Equal(LuauExecutionBudgetKind.WallClock, exception.BudgetKind);
+        Assert.Equal("@budgets/caught-deadline.luau", exception.ChunkName);
+    }
+
+    [Fact]
+    public async Task CallerCancellationBeforeDeadlineKeepsCallerCancellationPrecedence()
+    {
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromSeconds(5),
+            },
+        });
+        using var cancellation = new CancellationTokenSource();
+        var entered = NewSignal();
+        state["waitForCancellation"] = state.CreateAsyncFunction(
+            "waitForCancellation",
+            async context =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken)
+                    .ConfigureAwait(false);
+            });
+
+        var execution = state.DoStringAsync(
+            "return waitForCancellation()",
+            "@cancellation/before-deadline.luau",
+            cancellationToken: cancellation.Token).AsTask();
+        await entered.Task.WaitAsync(TestTimeout);
+        cancellation.Cancel();
+
+        var exception = await Assert.ThrowsAsync<LuauExecutionCanceledException>(
+            () => execution.WaitAsync(TestTimeout));
+        Assert.Equal("@cancellation/before-deadline.luau", exception.ChunkName);
+    }
+
+    [Fact]
+    public async Task CompletedOperationDisposesDeadlineBeforeLaterOperation()
+    {
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources);
+        var shortDeadline = LuauExecutionOptions.Unbounded with
+        {
+            WallClockLimit = TimeSpan.FromMilliseconds(50),
+        };
+        Assert.Equal(
+            1,
+            Assert.Single(state.DoString(
+                "return 1",
+                executionOptions: shortDeadline)).Read<int>());
+
+        await Task.Delay(TimeSpan.FromMilliseconds(125));
+        state["later"] = state.CreateAsyncFunction(
+            "later",
+            async context =>
+            {
+                await Task.Delay(25, context.CancellationToken).ConfigureAwait(false);
+                context.Return(context.CancellationToken.IsCancellationRequested);
+            });
+        var results = await state.DoStringAsync(
+            "return later()",
+            "@budgets/later-operation.luau",
+            executionOptions: LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromSeconds(1),
+            });
+
+        Assert.False(Assert.Single(results).Read<bool>());
+    }
+
+    [Fact]
+    public void LongDeadlineIsScheduledWithoutTimerRangeFailure()
+    {
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources);
+
+        var result = state.DoString(
+            "return 42",
+            executionOptions: LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = TimeSpan.FromDays(100),
+            });
+
+        Assert.Equal(42, Assert.Single(result).Read<int>());
+    }
+
+    [Fact]
     public void InterruptBudgetStopsSynchronousInfiniteLoop()
     {
         using var state = LuauState.Create();
@@ -425,7 +643,7 @@ public sealed class RuntimeHardeningBehaviorTests
         using var state = LuauState.Create();
         var destination = new LuauValue[1];
 
-        Assert.Throws<ArgumentException>(() => state.DoString(
+        Assert.Throws<ArgumentException>(() => state.DoStringInto(
             "return 1, 2",
             destination,
             "@results/short-destination.luau"));

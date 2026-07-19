@@ -18,7 +18,7 @@ partial class LuauState
         ExecuteCompilerOutputCore(output, default, chunkName, executionOptions, hasDestination: false).Results!;
 
     /// <summary>Executes compiler output into a caller-owned result span.</summary>
-    public int ExecuteCompilerOutput(
+    public int ExecuteCompilerOutputInto(
         LuauCompilerOutput output,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName = default,
@@ -41,7 +41,7 @@ partial class LuauState
     }
 
     /// <summary>Asynchronously executes compiler output into caller-owned memory.</summary>
-    public async ValueTask<int> ExecuteCompilerOutputAsync(
+    public async ValueTask<int> ExecuteCompilerOutputIntoAsync(
         LuauCompilerOutput output,
         Memory<LuauValue> destination,
         ReadOnlyMemory<char> chunkName = default,
@@ -67,7 +67,7 @@ partial class LuauState
         ExecuteVerifiedBytecodeCore(artifact, default, chunkName, executionOptions, hasDestination: false).Results!;
 
     /// <summary>Validates and executes an artifact into a caller-owned span.</summary>
-    public int ExecuteVerifiedBytecode(
+    public int ExecuteVerifiedBytecodeInto(
         LuauBytecodeArtifact artifact,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName = default,
@@ -92,7 +92,7 @@ partial class LuauState
     /// <summary>
     /// Asynchronously validates and executes an artifact into caller-owned memory.
     /// </summary>
-    public async ValueTask<int> ExecuteVerifiedBytecodeAsync(
+    public async ValueTask<int> ExecuteVerifiedBytecodeIntoAsync(
         LuauBytecodeArtifact artifact,
         Memory<LuauValue> destination,
         ReadOnlyMemory<char> chunkName = default,
@@ -184,7 +184,7 @@ partial class LuauState
         return runner.Run(operation, this, 0);
     }
 
-    public int DoString(
+    public int DoStringInto(
         ReadOnlySpan<char> source,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName = default,
@@ -197,7 +197,7 @@ partial class LuauState
         return runner.Run(operation, this, 0, destination);
     }
 
-    public ValueTask<int> DoStringAsync(
+    public ValueTask<int> DoStringIntoAsync(
         string source,
         Memory<LuauValue> destination,
         string chunkName = "",
@@ -205,7 +205,7 @@ partial class LuauState
         CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
-        return DoStringAsync(
+        return DoStringIntoAsync(
             source.AsMemory(),
             destination,
             chunkName.AsMemory(),
@@ -214,7 +214,7 @@ partial class LuauState
             executionOptions);
     }
 
-    public async ValueTask<int> DoStringAsync(
+    public async ValueTask<int> DoStringIntoAsync(
         ReadOnlyMemory<char> source,
         Memory<LuauValue> destination,
         ReadOnlyMemory<char> chunkName = default,
@@ -268,7 +268,7 @@ partial class LuauState
         return runner.Run(operation, this, 0);
     }
 
-    public int DoString(
+    public int DoStringInto(
         ReadOnlySpan<byte> utf8Source,
         Span<LuauValue> destination,
         ReadOnlySpan<byte> utf8ChunkName = default,
@@ -281,7 +281,7 @@ partial class LuauState
         return runner.Run(operation, this, 0, destination);
     }
 
-    public async ValueTask<int> DoStringAsync(
+    public async ValueTask<int> DoStringIntoAsync(
         ReadOnlyMemory<byte> utf8Source,
         Memory<LuauValue> destination,
         ReadOnlyMemory<byte> utf8ChunkName = default,
@@ -448,13 +448,12 @@ partial class LuauState
         }
     }
 
-    public LuauValue[] Resume(LuauExecutionOptions? executionOptions = null)
-    {
-        return Resume([], executionOptions);
-    }
-
+    /// <summary>
+    /// Resumes this child coroutine with caller-owned arguments and returns a
+    /// newly allocated result array. Argument arrays are never result destinations.
+    /// </summary>
     public LuauValue[] Resume(
-        ReadOnlySpan<LuauValue> arguments,
+        ReadOnlySpan<LuauValue> arguments = default,
         LuauExecutionOptions? executionOptions = null)
     {
         EnsureCoroutine();
@@ -465,14 +464,19 @@ partial class LuauState
         return runner.Run(operation, this, arguments.Length, hasFunction);
     }
 
-    public int Resume(
+    /// <summary>Resumes this child coroutine into a caller-owned result span.</summary>
+    public int ResumeInto(
         Span<LuauValue> destination,
         LuauExecutionOptions? executionOptions = null)
     {
-        return Resume([], destination, executionOptions);
+        return ResumeInto(default, destination, executionOptions);
     }
 
-    public int Resume(
+    /// <summary>
+    /// Resumes this child coroutine with arguments and writes results into a
+    /// distinct caller-owned span.
+    /// </summary>
+    public int ResumeInto(
         ReadOnlySpan<LuauValue> arguments,
         Span<LuauValue> destination,
         LuauExecutionOptions? executionOptions = null)
@@ -485,15 +489,12 @@ partial class LuauState
         return runner.Run(operation, this, arguments.Length, destination, hasFunction);
     }
 
-    public ValueTask<LuauValue[]> ResumeAsync(
-        CancellationToken cancellationToken = default,
-        LuauExecutionOptions? executionOptions = null)
-    {
-        return ResumeAsync(ReadOnlyMemory<LuauValue>.Empty, cancellationToken, executionOptions);
-    }
-
+    /// <summary>
+    /// Asynchronously resumes this child coroutine and returns a newly
+    /// allocated result array.
+    /// </summary>
     public async ValueTask<LuauValue[]> ResumeAsync(
-        ReadOnlyMemory<LuauValue> arguments,
+        ReadOnlyMemory<LuauValue> arguments = default,
         CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
@@ -509,19 +510,24 @@ partial class LuauState
         return await runner.RunAsync(operation, this, arguments.Length, hasFunction).ConfigureAwait(false);
     }
 
-    public ValueTask<int> ResumeAsync(
+    /// <summary>Asynchronously resumes into caller-owned result memory.</summary>
+    public ValueTask<int> ResumeIntoAsync(
         Memory<LuauValue> destination,
         CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
     {
-        return ResumeAsync(
+        return ResumeIntoAsync(
             ReadOnlyMemory<LuauValue>.Empty,
             destination,
             cancellationToken,
             executionOptions);
     }
 
-    public async ValueTask<int> ResumeAsync(
+    /// <summary>
+    /// Asynchronously resumes with arguments and writes results into distinct
+    /// caller-owned memory.
+    /// </summary>
+    public async ValueTask<int> ResumeIntoAsync(
         ReadOnlyMemory<LuauValue> arguments,
         Memory<LuauValue> destination,
         CancellationToken cancellationToken = default,
@@ -593,7 +599,8 @@ partial class LuauState
         ThrowIfDisposed();
         if (IsMainThread)
         {
-            ThrowHelper.ThrowInvalidOperationException("attempt to yield from outside a coroutine");
+            ThrowHelper.ThrowInvalidOperationException(
+                "Resume requires a child Luau coroutine; the root state cannot be resumed.");
         }
     }
 

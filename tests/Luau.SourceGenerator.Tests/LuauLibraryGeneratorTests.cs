@@ -17,10 +17,17 @@ using System.Threading.Tasks;
 
 namespace Luau
 {
+    public enum LuauLibraryExposure
+    {
+        Global = 0,
+        Capability = 1,
+    }
+
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class LuauLibraryAttribute : Attribute
     {
         public LuauLibraryAttribute(string name) { }
+        public LuauLibraryExposure Exposure { get; set; }
     }
 
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property | AttributeTargets.Method)]
@@ -37,6 +44,41 @@ namespace Luau
         void RegisterTo(LuauState state);
     }
 
+    public interface ILuauObjectCapability
+    {
+        LuauObjectDescriptor LuauObjectDescriptor { get; }
+    }
+
+    public abstract class LuauObjectDescriptor { }
+
+    public sealed class LuauObjectDescriptor<T> : LuauObjectDescriptor
+        where T : class
+    {
+        public LuauObjectDescriptor(
+            string typeName,
+            Action<T>? validateTarget,
+            LuauObjectMember<T>[] members) { }
+    }
+
+    public sealed class LuauObjectMember<T>
+        where T : class
+    {
+        LuauObjectMember() { }
+
+        public static LuauObjectMember<T> Property(
+            string name,
+            Action<T, LuauCallContext>? getter,
+            Action<T, LuauCallContext>? setter) => new();
+
+        public static LuauObjectMember<T> Method(
+            string name,
+            Action<T, LuauCallContext> callback) => new();
+
+        public static LuauObjectMember<T> AsyncMethod(
+            string name,
+            Func<T, LuauCallContext, ValueTask> callback) => new();
+    }
+
     public sealed class LuauException : Exception
     {
         public LuauException(string message) : base(message) { }
@@ -45,6 +87,7 @@ namespace Luau
     public sealed class LuauFunction { }
     public sealed class LuauBuffer { }
     public sealed class LuauUserData { }
+    public sealed class LuauObjectHandle { }
     public readonly struct LuauValue { }
 
     public sealed class LuauTable : IDisposable
@@ -70,6 +113,32 @@ namespace Luau
         public CancellationToken CancellationToken => default;
         public T Read<T>(int zeroBasedIndex) => default!;
         public void Return<T>(T value) { }
+    }
+}
+
+namespace UnityEngine
+{
+    public class Object { }
+    public readonly struct Vector3 { }
+}
+
+namespace Luau.Unity
+{
+    public static class LuauUnityObjectGuard
+    {
+        public static void ThrowIfDestroyed<T>(T target)
+            where T : UnityEngine.Object { }
+    }
+
+    public static class LuauUnityValue
+    {
+        public static UnityEngine.Vector3 ReadVector3(
+            global::Luau.LuauCallContext context,
+            int index) => default;
+
+        public static void ReturnVector3(
+            global::Luau.LuauCallContext context,
+            UnityEngine.Vector3 value) { }
     }
 }
 """;
@@ -254,6 +323,7 @@ public partial class PropertyApi
     [InlineData("LuauTable")]
     [InlineData("LuauBuffer")]
     [InlineData("LuauState")]
+    [InlineData("LuauObjectHandle")]
     [InlineData("LuauUserData")]
     public void ExplicitLuauValueConversionTypesAreSupported(string typeName)
     {
@@ -367,6 +437,294 @@ public partial class AsyncApi
         Assert.Equal(2, Count(generated, "context.Return(result);"));
     }
 
+    [Fact]
+    public void ExplicitGlobalExposurePreservesGlobalGeneratedSource()
+    {
+        var explicitGlobalSource = RepresentativeSource.Replace(
+            "[LuauLibrary(\"ship\\\"yard\")]",
+            "[LuauLibrary(\"ship\\\"yard\", Exposure = LuauLibraryExposure.Global)]",
+            StringComparison.Ordinal);
+
+        var implicitResult = RunGenerator(
+            CreateCompilation(RepresentativeSource),
+            out var implicitCompilation);
+        var explicitResult = RunGenerator(
+            CreateCompilation(explicitGlobalSource),
+            out var explicitCompilation);
+
+        AssertNoErrors(implicitCompilation);
+        AssertNoErrors(explicitCompilation);
+        var implicitGenerated = Assert.Single(implicitResult.GeneratedSources);
+        var explicitGenerated = Assert.Single(explicitResult.GeneratedSources);
+        Assert.Equal(implicitGenerated.HintName, explicitGenerated.HintName);
+        Assert.Equal(
+            Normalize(implicitGenerated.SourceText.ToString()),
+            Normalize(explicitGenerated.SourceText.ToString()));
+    }
+
+    [Fact]
+    public void CapabilityExposureGeneratesTypedDescriptorAndDispatchAndCompiles()
+    {
+        const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Luau;
+
+namespace Demo;
+
+[LuauLibrary("Door", Exposure = LuauLibraryExposure.Capability)]
+public partial class Door
+{
+    [LuauMember("is-open")]
+    public bool IsOpen { get; set; }
+
+    [LuauMember("write-only")]
+    public int WriteOnly { private get; set; }
+
+    [LuauMember("sum")]
+    public int Sum(
+        int first,
+        LuauCallContext callContext,
+        [FromLuauState] LuauState state,
+        CancellationToken cancellationToken,
+        int second) => first + second;
+
+    [LuauMember("later")]
+    public ValueTask<string> Later(string value) => ValueTask.FromResult(value);
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(outputCompilation);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+        Assert.Contains(
+            "partial class Door : global::Luau.ILuauObjectCapability",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "static readonly global::Luau.LuauObjectDescriptor<global::Demo.Door> s_luauObjectDescriptor",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::Luau.LuauObjectDescriptor global::Luau.ILuauObjectCapability.LuauObjectDescriptor => s_luauObjectDescriptor;",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::Luau.LuauObjectMember<global::Demo.Door>.Property(",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("context.Return(target.IsOpen);", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "target.IsOpen = context.Read<global::System.Boolean>(2);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("\"write-only\",", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("context.Return(target.WriteOnly)", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "target.WriteOnly = context.Read<global::System.Int32>(2);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::Luau.LuauObjectMember<global::Demo.Door>.Method(",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("if (context.ArgumentCount < 3)", generated, StringComparison.Ordinal);
+        Assert.Contains("context.Read<global::System.Int32>(1)", generated, StringComparison.Ordinal);
+        Assert.Contains("context.Read<global::System.Int32>(2)", generated, StringComparison.Ordinal);
+        Assert.Contains("var arg1 = context;", generated, StringComparison.Ordinal);
+        Assert.Contains("var arg2 = context.State;", generated, StringComparison.Ordinal);
+        Assert.Contains("var arg3 = context.CancellationToken;", generated, StringComparison.Ordinal);
+        Assert.Contains("target.Sum(arg0, arg1, arg2, arg3, arg4)", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "global::Luau.LuauObjectMember<global::Demo.Door>.AsyncMethod(",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("var result = await target.Later(arg0);", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("global::Luau.ILuauLibrary.RegisterTo", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Reflection", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsafe", generated, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("[LuauMember] public static int Value;", "Value")]
+    [InlineData("[LuauMember] public static int Value { get; set; }", "Value")]
+    [InlineData("[LuauMember] public static void Run() { }", "Run")]
+    public void CapabilityExposureRejectsStaticMembers(string member, string memberName)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("static-member", Exposure = LuauLibraryExposure.Capability)]
+public partial class Api
+{
+    {{member}}
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains(memberName, diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Contains("static members", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Fact]
+    public void CapabilityExposureRejectsStaticTypes()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("static-type", Exposure = LuauLibraryExposure.Capability)]
+public static partial class Api { }
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("static capability types", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Theory]
+    [InlineData("struct")]
+    [InlineData("record struct")]
+    public void CapabilityExposureRejectsValueTypesWithoutGeneratingMismatchedPartials(
+        string declarationKind)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("value-type", Exposure = LuauLibraryExposure.Capability)]
+public partial {{declarationKind}} Api { }
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out _);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("reference classes", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedSources);
+    }
+
+    [Fact]
+    public void InvalidCapabilityExposureValueReportsDiagnostic()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("invalid", Exposure = (LuauLibraryExposure)42)]
+public partial class Api { }
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU007");
+        Assert.Contains("42", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Fact]
+    public void UnityCapabilityUsesDestroyedObjectGuardAndVectorAdapters()
+    {
+        const string source = """
+using System.Threading.Tasks;
+using Luau;
+
+namespace Demo;
+
+[LuauLibrary("Mover", Exposure = LuauLibraryExposure.Capability)]
+public partial class Mover : MoverBase
+{
+    [LuauMember("position")]
+    public UnityEngine.Vector3 Position { get; set; }
+
+    [LuauMember("translate")]
+    public UnityEngine.Vector3 Translate(UnityEngine.Vector3 amount) => amount;
+
+    [LuauMember("move-later")]
+    public ValueTask<UnityEngine.Vector3> MoveLater(UnityEngine.Vector3 amount) =>
+        ValueTask.FromResult(amount);
+}
+
+public class MoverBase : UnityEngine.Object { }
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        AssertNoErrors(outputCompilation);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+        Assert.Contains(
+            "global::Luau.Unity.LuauUnityObjectGuard.ThrowIfDestroyed,",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "global::Luau.Unity.LuauUnityValue.ReturnVector3(context, target.Position);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "target.Position = global::Luau.Unity.LuauUnityValue.ReadVector3(context, 2);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Equal(2, Count(
+            generated,
+            "global::Luau.Unity.LuauUnityValue.ReadVector3(context, 1)"));
+        Assert.Contains(
+            "global::Luau.Unity.LuauUnityValue.ReturnVector3(context, result);",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains("var result = await target.MoveLater(arg0);", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("context.Read<global::UnityEngine.Vector3>", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("context.Return(target.Position)", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CapabilityExposureRejectsUnsupportedSignatures()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("unsupported", Exposure = LuauLibraryExposure.Capability)]
+public partial class Api
+{
+    [LuauMember] public void Mutate(ref int value) { }
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("ref", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Fact]
+    public void CapabilityExposureRejectsPropertiesWithoutPublicAccessors()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("inaccessible", Exposure = LuauLibraryExposure.Capability)]
+public partial class Api
+{
+    [LuauMember] private int Hidden { get; set; }
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("public", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
     [Theory]
     [InlineData("[LuauLibrary(\"bad\")] public class Api { }", "LUAU001")]
     [InlineData("public class Outer { [LuauLibrary(\"bad\")] public partial class Api { } }", "LUAU002")]
@@ -447,6 +805,358 @@ public partial class Api
         Assert.Empty(result.GeneratedSources);
     }
 
+    [Fact]
+    public void RetainedDriverUpdatesGlobalCapabilityAndGlobalExposureTransitions()
+    {
+        const string globalSource = """
+using Luau;
+
+[LuauLibrary("mode")]
+public partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+        const string capabilitySource = """
+using Luau;
+
+[LuauLibrary("mode", Exposure = LuauLibraryExposure.Capability)]
+public partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+
+        var session = new RetainedGeneratorSession(globalSource);
+
+        var initial = session.Run();
+        var initialGenerated = Assert.Single(initial.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("global::Luau.ILuauLibrary", initialGenerated, StringComparison.Ordinal);
+        Assert.DoesNotContain("ILuauObjectCapability", initialGenerated, StringComparison.Ordinal);
+        AssertNoErrors(initial.OutputCompilation);
+
+        var capability = session.Run(capabilitySource);
+        var capabilityGenerated = Assert.Single(capability.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("global::Luau.ILuauObjectCapability", capabilityGenerated, StringComparison.Ordinal);
+        Assert.DoesNotContain("global::Luau.ILuauLibrary.RegisterTo", capabilityGenerated, StringComparison.Ordinal);
+        AssertNoErrors(capability.OutputCompilation);
+
+        var recovered = session.Run(globalSource);
+        var recoveredGenerated = Assert.Single(recovered.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("global::Luau.ILuauLibrary", recoveredGenerated, StringComparison.Ordinal);
+        Assert.DoesNotContain("ILuauObjectCapability", recoveredGenerated, StringComparison.Ordinal);
+        AssertNoErrors(recovered.OutputCompilation);
+    }
+
+    [Fact]
+    public void RetainedDriverUpdatesValidAbstractAndValidTransitions()
+    {
+        const string validSource = """
+using Luau;
+
+[LuauLibrary("lifecycle")]
+public partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+        const string abstractSource = """
+using Luau;
+
+[LuauLibrary("lifecycle")]
+public abstract partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+
+        var session = new RetainedGeneratorSession(validSource);
+
+        var initial = session.Run();
+        Assert.Empty(initial.Result.Diagnostics);
+        Assert.Single(initial.Result.GeneratedSources);
+        AssertNoErrors(initial.OutputCompilation);
+
+        var invalid = session.Run(abstractSource);
+        Assert.Contains(invalid.Result.Diagnostics, diagnostic => diagnostic.Id == "LUAU003");
+        Assert.Empty(invalid.Result.GeneratedSources);
+        AssertNoErrors(invalid.OutputCompilation);
+
+        var recovered = session.Run(validSource);
+        Assert.Empty(recovered.Result.Diagnostics);
+        Assert.Single(recovered.Result.GeneratedSources);
+        AssertNoErrors(recovered.OutputCompilation);
+    }
+
+    [Fact]
+    public void RetainedDriverUpdatesValidUnsupportedAndValidMemberTransitions()
+    {
+        const string validSource = """
+using Luau;
+
+[LuauLibrary("signature")]
+public partial class Api
+{
+    [LuauMember] public int Echo(int value) => value;
+}
+""";
+        const string unsupportedSource = """
+using Luau;
+
+[LuauLibrary("signature")]
+public partial class Api
+{
+    [LuauMember] public void Echo(object value) { }
+}
+""";
+
+        var session = new RetainedGeneratorSession(validSource);
+
+        var initial = session.Run();
+        Assert.Empty(initial.Result.Diagnostics);
+        Assert.Contains(
+            "context.Read<global::System.Int32>(0)",
+            Assert.Single(initial.Result.GeneratedSources).SourceText.ToString(),
+            StringComparison.Ordinal);
+        AssertNoErrors(initial.OutputCompilation);
+
+        var invalid = session.Run(unsupportedSource);
+        var diagnostic = Assert.Single(
+            invalid.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("script argument type", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(invalid.Result.GeneratedSources);
+        AssertNoErrors(invalid.OutputCompilation);
+
+        var recovered = session.Run(validSource);
+        Assert.Empty(recovered.Result.Diagnostics);
+        Assert.Contains(
+            "context.Read<global::System.Int32>(0)",
+            Assert.Single(recovered.Result.GeneratedSources).SourceText.ToString(),
+            StringComparison.Ordinal);
+        AssertNoErrors(recovered.OutputCompilation);
+    }
+
+    [Fact]
+    public void RetainedDriverUpdatesManagedAndLuauMemberNames()
+    {
+        const string initialSource = """
+using Luau;
+
+[LuauLibrary("names")]
+public partial class Api
+{
+    [LuauMember("script-name")] public int ManagedOne() => 1;
+}
+""";
+        const string managedRenameSource = """
+using Luau;
+
+[LuauLibrary("names")]
+public partial class Api
+{
+    [LuauMember("script-name")] public int ManagedTwo() => 1;
+}
+""";
+        const string luauRenameSource = """
+using Luau;
+
+[LuauLibrary("names")]
+public partial class Api
+{
+    [LuauMember("renamed-script")] public int ManagedTwo() => 1;
+}
+""";
+
+        var session = new RetainedGeneratorSession(initialSource);
+        var initial = session.Run();
+        var initialGenerated = Assert.Single(initial.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("this.ManagedOne()", initialGenerated, StringComparison.Ordinal);
+        Assert.Contains("case \"script-name\":", initialGenerated, StringComparison.Ordinal);
+        AssertNoErrors(initial.OutputCompilation);
+
+        var managedRename = session.Run(managedRenameSource);
+        var managedRenameGenerated = Assert.Single(managedRename.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("this.ManagedTwo()", managedRenameGenerated, StringComparison.Ordinal);
+        Assert.DoesNotContain("ManagedOne", managedRenameGenerated, StringComparison.Ordinal);
+        Assert.Contains("case \"script-name\":", managedRenameGenerated, StringComparison.Ordinal);
+        AssertNoErrors(managedRename.OutputCompilation);
+
+        var luauRename = session.Run(luauRenameSource);
+        var luauRenameGenerated = Assert.Single(luauRename.Result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("this.ManagedTwo()", luauRenameGenerated, StringComparison.Ordinal);
+        Assert.Contains("case \"renamed-script\":", luauRenameGenerated, StringComparison.Ordinal);
+        Assert.DoesNotContain("case \"script-name\":", luauRenameGenerated, StringComparison.Ordinal);
+        AssertNoErrors(luauRename.OutputCompilation);
+    }
+
+    [Fact]
+    public void RetainedDriverUpdatesDiagnosticOnlyChangesAndLocations()
+    {
+        const string abstractSource = """
+using Luau;
+[LuauLibrary("diagnostic")]
+public abstract partial class Api { }
+""";
+        const string nonPartialSource = """
+using Luau;
+[LuauLibrary("diagnostic")]
+public class Api { }
+""";
+        const string movedNonPartialSource = """
+
+
+using Luau;
+[LuauLibrary("diagnostic")]
+public class Api { }
+""";
+
+        var session = new RetainedGeneratorSession(abstractSource);
+        var abstractRun = session.Run();
+        Assert.Contains(abstractRun.Result.Diagnostics, diagnostic => diagnostic.Id == "LUAU003");
+        Assert.Empty(abstractRun.Result.GeneratedSources);
+        AssertNoErrors(abstractRun.OutputCompilation);
+
+        var nonPartialRun = session.Run(nonPartialSource);
+        var nonPartialDiagnostic = Assert.Single(
+            nonPartialRun.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU001");
+        Assert.DoesNotContain(nonPartialRun.Result.Diagnostics, diagnostic => diagnostic.Id == "LUAU003");
+        Assert.Empty(nonPartialRun.Result.GeneratedSources);
+        AssertNoErrors(nonPartialRun.OutputCompilation);
+
+        var movedRun = session.Run(movedNonPartialSource);
+        var movedDiagnostic = Assert.Single(
+            movedRun.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU001");
+        Assert.True(
+            movedDiagnostic.Location.GetLineSpan().StartLinePosition.Line >
+            nonPartialDiagnostic.Location.GetLineSpan().StartLinePosition.Line);
+        Assert.Empty(movedRun.Result.GeneratedSources);
+        AssertNoErrors(movedRun.OutputCompilation);
+    }
+
+    [Fact]
+    public void RetainedDriverUpdatesDiagnosticMessageArguments()
+    {
+        const string firstSource = """
+using Luau;
+
+[LuauLibrary("diagnostic-message")]
+public partial class Api
+{
+    [LuauMember] public T BadOne<T>(T value) => value;
+}
+""";
+        const string secondSource = """
+using Luau;
+
+[LuauLibrary("diagnostic-message")]
+public partial class Api
+{
+    [LuauMember] public T BadTwo<T>(T value) => value;
+}
+""";
+
+        var session = new RetainedGeneratorSession(firstSource);
+        var first = session.Run();
+        var firstDiagnostic = Assert.Single(
+            first.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("BadOne", firstDiagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(first.Result.GeneratedSources);
+        AssertNoErrors(first.OutputCompilation);
+
+        var second = session.Run(secondSource);
+        var secondDiagnostic = Assert.Single(
+            second.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU005");
+        Assert.Contains("BadTwo", secondDiagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.DoesNotContain("BadOne", secondDiagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(second.Result.GeneratedSources);
+        AssertNoErrors(second.OutputCompilation);
+    }
+
+    [Fact]
+    public void HashedHintsSeparateTypesWhoseSanitizedMetadataNamesCollide()
+    {
+        const string source = """
+using Luau;
+
+namespace A.B_C
+{
+    [LuauLibrary("one")]
+    public partial class D { }
+}
+
+namespace A_B.C
+{
+    [LuauLibrary("two")]
+    public partial class D { }
+}
+""";
+
+        var session = new RetainedGeneratorSession(source);
+        var run = session.Run();
+
+        Assert.Empty(run.Result.Diagnostics);
+        AssertNoErrors(run.OutputCompilation);
+        var hints = run.Result.GeneratedSources
+            .Select(static generated => generated.HintName)
+            .OrderBy(static hint => hint, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(2, hints.Length);
+        Assert.All(
+            hints,
+            hint => Assert.StartsWith("LuauLibrary.A_B_C_D.", hint, StringComparison.Ordinal));
+        Assert.NotEqual(hints[0], hints[1]);
+    }
+
+    [Fact]
+    public void RetainedDriverReportsCachedOutputForUnchangedInput()
+    {
+        const string source = """
+using Luau;
+
+[LuauLibrary("cached")]
+public partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+
+        var session = new RetainedGeneratorSession(source, trackIncrementalSteps: true);
+        var initial = session.Run();
+        AssertNoErrors(initial.OutputCompilation);
+
+        var unchanged = session.Run();
+        AssertNoErrors(unchanged.OutputCompilation);
+        var reasons = unchanged.Result.TrackedOutputSteps.Values
+            .SelectMany(static steps => steps)
+            .SelectMany(static step => step.Outputs)
+            .Select(static output => output.Reason)
+            .ToArray();
+
+        Assert.NotEmpty(reasons);
+        Assert.Contains(
+            reasons,
+            reason => reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged);
+    }
+
+    [Fact]
+    public void HintNamesAreDeterministicAcrossGeneratorInstances()
+    {
+        var first = RunGenerator(CreateCompilation(RepresentativeSource), out var firstCompilation);
+        var second = RunGenerator(CreateCompilation(RepresentativeSource), out var secondCompilation);
+
+        AssertNoErrors(firstCompilation);
+        AssertNoErrors(secondCompilation);
+        var firstHint = Assert.Single(first.GeneratedSources).HintName;
+        var secondHint = Assert.Single(second.GeneratedSources).HintName;
+        Assert.Equal(firstHint, secondHint);
+        Assert.Matches("^LuauLibrary\\.Demo_ShipApi\\.[0-9a-f]{16}\\.g\\.cs$", firstHint);
+    }
+
     static CSharpCompilation CreateCompilation(string source)
     {
         var apiTree = CSharpSyntaxTree.ParseText(ApiSource, ParseOptions, @"C:\probe\LuauApi.cs");
@@ -465,19 +1175,31 @@ public partial class Api
         CSharpCompilation compilation,
         out Compilation outputCompilation)
     {
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            [new LuauLibraryGenerator().AsSourceGenerator()],
-            parseOptions: ParseOptions);
+        var driver = CreateGeneratorDriver(trackIncrementalSteps: false);
 
         driver = driver.RunGeneratorsAndUpdateCompilation(
             compilation,
             out outputCompilation,
             out var generatorDiagnostics);
 
-        Assert.Empty(generatorDiagnostics.Where(
-            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error &&
-                          diagnostic.Id == "CS8785"));
+        AssertNoGeneratorCrash(generatorDiagnostics);
         return driver.GetRunResult().Results.Single();
+    }
+
+    static GeneratorDriver CreateGeneratorDriver(bool trackIncrementalSteps) =>
+        CSharpGeneratorDriver.Create(
+            [new LuauLibraryGenerator().AsSourceGenerator()],
+            parseOptions: ParseOptions,
+            driverOptions: new GeneratorDriverOptions(
+                IncrementalGeneratorOutputKind.None,
+                trackIncrementalSteps));
+
+    static void AssertNoGeneratorCrash(IEnumerable<Diagnostic> diagnostics)
+    {
+        Assert.DoesNotContain(
+            diagnostics,
+            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error &&
+                          diagnostic.Id == "CS8785");
     }
 
     static void AssertNoErrors(Compilation compilation)
@@ -512,4 +1234,42 @@ public partial class Api
         using var reader = new PEReader(stream);
         return reader.HasMetadata;
     }
+
+    sealed class RetainedGeneratorSession
+    {
+        GeneratorDriver driver;
+        CSharpCompilation compilation;
+        SyntaxTree consumerTree;
+
+        public RetainedGeneratorSession(string source, bool trackIncrementalSteps = false)
+        {
+            compilation = CreateCompilation(source);
+            consumerTree = compilation.SyntaxTrees.Single(
+                tree => string.Equals(tree.FilePath, ConsumerPath, StringComparison.Ordinal));
+            driver = CreateGeneratorDriver(trackIncrementalSteps);
+        }
+
+        public GeneratorSnapshot Run(string? source = null)
+        {
+            if (source != null)
+            {
+                var updatedTree = CSharpSyntaxTree.ParseText(source, ParseOptions, ConsumerPath);
+                compilation = compilation.ReplaceSyntaxTree(consumerTree, updatedTree);
+                consumerTree = updatedTree;
+            }
+
+            driver = driver.RunGeneratorsAndUpdateCompilation(
+                compilation,
+                out var outputCompilation,
+                out var generatorDiagnostics);
+            AssertNoGeneratorCrash(generatorDiagnostics);
+            return new GeneratorSnapshot(
+                driver.GetRunResult().Results.Single(),
+                outputCompilation);
+        }
+    }
+
+    sealed record GeneratorSnapshot(
+        GeneratorRunResult Result,
+        Compilation OutputCompilation);
 }

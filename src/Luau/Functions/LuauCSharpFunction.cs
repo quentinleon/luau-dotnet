@@ -106,7 +106,7 @@ internal sealed unsafe class LuauCSharpFunction : LuauFunction, ILuauManagedCall
         return $"function: (C# delegate)";
     }
 
-    protected override void DisposeCore()
+    private protected override void DisposeCore()
     {
         var id = Interlocked.Exchange(ref registrationId, 0);
         if (id != 0)

@@ -9,7 +9,10 @@ public unsafe partial class LuauState
 {
     static readonly byte[] defaultChunkName = [.. "main"u8, 0];
 
-    /// <summary>Loads opaque bytecode returned by this process's compiler.</summary>
+    /// <summary>
+    /// Loads opaque bytecode returned by this process's compiler as a script
+    /// closure that managed code may execute through <see cref="LuauFunction.Invoke"/>.
+    /// </summary>
     public LuauFunction LoadCompilerOutput(
         LuauCompilerOutput output,
         ReadOnlySpan<char> chunkName = default)
@@ -46,7 +49,8 @@ public unsafe partial class LuauState
 
     /// <summary>
     /// Loads a persistent artifact after build-identity and configured
-    /// provenance validation. Caller-provided chunk names are diagnostic only.
+    /// provenance validation as a host-invokable script closure. Caller-provided
+    /// chunk names are diagnostic only.
     /// </summary>
     public LuauFunction LoadVerifiedBytecode(
         LuauBytecodeArtifact artifact,
@@ -148,13 +152,17 @@ public unsafe partial class LuauState
             fixed (byte* namePointer = nullTerminatedName)
             {
                 var loadStatus = LuauHostStatus.Ok;
-                var protectedStatus = luau_host_load(
-                    l,
-                    namePointer,
-                    bytecodePointer,
-                    (ulong)bytecode.Length,
-                    0,
-                    &loadStatus);
+                LuauHostStatus protectedStatus;
+                using (context.BeginBytecodeLoad())
+                {
+                    protectedStatus = luau_host_load(
+                        l,
+                        namePointer,
+                        bytecodePointer,
+                        (ulong)bytecode.Length,
+                        0,
+                        &loadStatus);
+                }
                 LuauNativeProtection.ThrowIfFailed(
                     this,
                     l,

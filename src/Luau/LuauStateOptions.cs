@@ -5,11 +5,12 @@ namespace Luau;
 /// Options are validated when initialized so native callbacks can consume
 /// primitive, prevalidated values without performing validation or allocating.
 /// </summary>
-public sealed class LuauStateOptions
+public sealed record LuauStateOptions
 {
-    long? memoryLimitBytes;
-    int? maxSourceBytes;
-    int? maxBytecodeBytes;
+    long? memoryLimitBytes = 64L * 1024 * 1024;
+    int? maxSourceBytes = 1024 * 1024;
+    int? maxBytecodeBytes = 4 * 1024 * 1024;
+    int? maxManagedHandleCount = 1024;
     LuauExecutionOptions defaultExecutionOptions = LuauExecutionOptions.Default;
     LuauBytecodePolicy bytecodePolicy = LuauBytecodePolicy.Reject;
 
@@ -18,17 +19,19 @@ public sealed class LuauStateOptions
     /// Hosts that intentionally run trusted content may explicitly construct
     /// a less restrictive options instance.
     /// </summary>
-    public static LuauStateOptions Default { get; } = new()
+    public static LuauStateOptions Default { get; } = new();
+
+    /// <summary>
+    /// Gets an explicitly unbounded resource profile. Persistent bytecode
+    /// remains rejected and still requires separate validator-gated policy.
+    /// </summary>
+    public static LuauStateOptions UnboundedResources { get; } = new()
     {
-        MemoryLimitBytes = 64L * 1024 * 1024,
-        MaxSourceBytes = 1024 * 1024,
-        MaxBytecodeBytes = 4 * 1024 * 1024,
-        DefaultExecutionOptions = new LuauExecutionOptions
-        {
-            WallClockLimit = TimeSpan.FromMilliseconds(250),
-            InterruptCountLimit = 100_000,
-            MaxResultCount = 64,
-        },
+        MemoryLimitBytes = null,
+        MaxSourceBytes = null,
+        MaxBytecodeBytes = null,
+        MaxManagedHandleCount = null,
+        DefaultExecutionOptions = LuauExecutionOptions.Unbounded,
         BytecodePolicy = LuauBytecodePolicy.Reject,
     };
 
@@ -99,6 +102,31 @@ public sealed class LuauStateOptions
     }
 
     /// <summary>
+    /// Gets the maximum number of live managed object capability registrations
+    /// owned by this VM, or <see langword="null"/> when explicitly unbounded.
+    /// Collected userdata releases its registration back to this quota.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The assigned limit is zero or negative.
+    /// </exception>
+    public int? MaxManagedHandleCount
+    {
+        get => maxManagedHandleCount;
+        init
+        {
+            if (value.HasValue && value.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxManagedHandleCount),
+                    value,
+                    "A managed capability limit must be greater than zero.");
+            }
+
+            maxManagedHandleCount = value;
+        }
+    }
+
+    /// <summary>
     /// Gets the budgets used when an execution call does not supply its own
     /// <see cref="LuauExecutionOptions"/>.
     /// </summary>
@@ -151,5 +179,13 @@ public sealed class LuauStateOptions
             throw new InvalidOperationException(
                 $"{nameof(BytecodeValidator)} must be provided when {nameof(BytecodePolicy)} is {LuauBytecodePolicy.RequireValidator}.");
         }
+    }
+
+    internal LuauStateOptions Snapshot()
+    {
+        return this with
+        {
+            DefaultExecutionOptions = DefaultExecutionOptions with { },
+        };
     }
 }

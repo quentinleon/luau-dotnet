@@ -7,74 +7,87 @@ namespace Luau.Unity
 {
     public static partial class LuauStateExtensions
     {
-        public static int Execute(this LuauState state, LuauAsset asset, Span<LuauValue> destination)
+        /// <summary>
+        /// Executes an asset into caller-owned memory. Source assets compile
+        /// synchronously on the calling thread; use <see cref="ExecuteIntoAsync"/>
+        /// for the ordinary bounded Unity execution lane.
+        /// </summary>
+        public static int ExecuteInto(
+            this LuauState state,
+            LuauAsset asset,
+            Span<LuauValue> destination)
         {
+            ValidateAssetExecutionArguments(state, asset);
+            var assetName = asset.name;
             return asset.contentKind switch
             {
                 LuauAssetContentKind.Source =>
-                    state.DoString(asset.AsSpan(), destination, Encoding.UTF8.GetBytes(asset.name)),
+                    state.DoStringInto(asset.AsSpan(), destination, Encoding.UTF8.GetBytes(assetName)),
                 LuauAssetContentKind.VerifiedBytecode =>
                     ExecuteVerified(state, asset, destination),
                 _ => throw InvalidContentKind(asset),
             };
         }
 
+        /// <summary>
+        /// Executes an asset and allocates its result array. Source assets
+        /// compile synchronously on the calling thread; use
+        /// <see cref="ExecuteAsync(LuauState,LuauAsset,CancellationToken)"/> for
+        /// the ordinary bounded Unity execution lane.
+        /// </summary>
         public static LuauValue[] Execute(this LuauState state, LuauAsset asset)
         {
+            ValidateAssetExecutionArguments(state, asset);
+            var assetName = asset.name;
             return asset.contentKind switch
             {
                 LuauAssetContentKind.Source =>
-                    state.DoString(asset.AsSpan(), Encoding.UTF8.GetBytes(asset.name)),
+                    state.DoString(asset.AsSpan(), Encoding.UTF8.GetBytes(assetName)),
                 LuauAssetContentKind.VerifiedBytecode =>
                     ExecuteVerified(state, asset),
                 _ => throw InvalidContentKind(asset),
             };
         }
 
-        public static async ValueTask<int> ExecuteAsync(this LuauState state, LuauAsset asset, Memory<LuauValue> destination, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// Executes an asset into caller-owned memory. Source compilation uses
+        /// Unity's package-owned bounded background lane, while VM execution
+        /// starts on the state's configured owner scheduler.
+        /// </summary>
+        public static ValueTask<int> ExecuteIntoAsync(
+            this LuauState state,
+            LuauAsset asset,
+            Memory<LuauValue> destination,
+            CancellationToken cancellationToken = default)
         {
-            if (asset.contentKind == LuauAssetContentKind.VerifiedBytecode)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    throw new LuauExecutionCanceledException(asset.name, cancellationToken);
-                ValidateVerifiedPayloadBeforeConstruction(state, asset);
-                return await state.ExecuteVerifiedBytecodeAsync(
-                    asset.GetVerifiedBytecode(),
-                    destination,
-                    asset.name.AsMemory(),
-                    cancellationToken);
-            }
-            if (!asset.IsSource)
-                throw InvalidContentKind(asset);
-
-            var chunkName = Encoding.UTF8.GetBytes(asset.name);
-            return await state.DoStringAsync(
-                asset.AsMemory(),
+            return ExecuteAssetIntoAsync(
+                state,
+                asset,
+                LuauUnity.CompileAssetSourceAsync,
                 destination,
-                chunkName,
-                cancellationToken: cancellationToken);
+                compileOptions: null,
+                cancellationToken,
+                executionOptions: null);
         }
 
-        public static async ValueTask<LuauValue[]> ExecuteAsync(this LuauState state, LuauAsset asset, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// Executes an asset through Unity's ordinary bounded lane. Source
+        /// compilation runs on the package-owned background service and VM
+        /// execution starts on the state's configured owner scheduler.
+        /// Verified artifacts bypass source compilation.
+        /// </summary>
+        public static ValueTask<LuauValue[]> ExecuteAsync(
+            this LuauState state,
+            LuauAsset asset,
+            CancellationToken cancellationToken = default)
         {
-            if (asset.contentKind == LuauAssetContentKind.VerifiedBytecode)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    throw new LuauExecutionCanceledException(asset.name, cancellationToken);
-                ValidateVerifiedPayloadBeforeConstruction(state, asset);
-                return await state.ExecuteVerifiedBytecodeAsync(
-                    asset.GetVerifiedBytecode(),
-                    asset.name.AsMemory(),
-                    cancellationToken);
-            }
-            if (!asset.IsSource)
-                throw InvalidContentKind(asset);
-
-            var chunkName = Encoding.UTF8.GetBytes(asset.name);
-            return await state.DoStringAsync(
-                asset.AsMemory(),
-                chunkName,
-                cancellationToken: cancellationToken);
+            return ExecuteAssetAsync(
+                state,
+                asset,
+                LuauUnity.CompileAssetSourceAsync,
+                compileOptions: null,
+                cancellationToken,
+                executionOptions: null);
         }
 
         static InvalidOperationException InvalidContentKind(LuauAsset asset)
@@ -90,7 +103,7 @@ namespace Luau.Unity
             Span<LuauValue> destination)
         {
             ValidateVerifiedPayloadBeforeConstruction(state, asset);
-            return state.ExecuteVerifiedBytecode(
+            return state.ExecuteVerifiedBytecodeInto(
                 asset.GetVerifiedBytecode(),
                 destination,
                 asset.name);

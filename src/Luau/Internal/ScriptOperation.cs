@@ -35,12 +35,15 @@ internal enum ScriptHardStopReason
 
 internal sealed class ScriptOperation : IDisposable
 {
+    static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue - 1d);
     static long nextCallbackFailureToken;
     readonly CancellationToken callerCancellationToken;
     readonly CancellationTokenSource linkedCancellationSource;
+    readonly CancellationTokenSource? deadlineCancellationSource;
     readonly long startedTimestamp;
     readonly ScriptOperation? previousAmbient;
 
+    Timer? deadlineTimer;
     LuauManagedCallbackRegistration? pendingCallback;
     string? pendingCallbackName;
     Exception? callbackFailure;
@@ -52,6 +55,8 @@ internal sealed class ScriptOperation : IDisposable
     int asyncCallbackPhase;
     int hardStopReason;
     int disposeState;
+    int coroutineLifecycleArmed;
+    int coroutineCompletion;
     long interruptCount;
 
     internal unsafe ScriptOperation(
@@ -74,11 +79,47 @@ internal sealed class ScriptOperation : IDisposable
         FromPointer = state.From == null ? IntPtr.Zero : (IntPtr)state.From.PointerUnsafe;
         callerCancellationToken = cancellationToken;
         this.previousAmbient = previousAmbient;
-        linkedCancellationSource = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            state.LifetimeToken,
-            context.DisposalToken);
         startedTimestamp = Stopwatch.GetTimestamp();
+
+        CancellationTokenSource? deadlineSource = null;
+        Timer? timer = null;
+        try
+        {
+            if (options.WallClockLimit is { } wallClockLimit)
+            {
+                deadlineSource = new CancellationTokenSource();
+                timer = new Timer(
+                    static operation => ((ScriptOperation)operation!).SignalDeadline(),
+                    this,
+                    Timeout.InfiniteTimeSpan,
+                    Timeout.InfiniteTimeSpan);
+                deadlineCancellationSource = deadlineSource;
+                deadlineTimer = timer;
+                timer.Change(GetTimerDelay(wallClockLimit), Timeout.InfiniteTimeSpan);
+            }
+            else
+            {
+                deadlineCancellationSource = null;
+            }
+
+            linkedCancellationSource = deadlineSource == null
+                ? CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    state.LifetimeToken,
+                    context.DisposalToken)
+                : CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    state.LifetimeToken,
+                    context.DisposalToken,
+                    deadlineSource.Token);
+        }
+        catch
+        {
+            timer?.Dispose();
+            deadlineSource?.Dispose();
+            throw;
+        }
+
         var token = Interlocked.Increment(ref nextCallbackFailureToken);
         CallbackFailureToken = (IntPtr)(token == 0 ? 1 : token);
     }
@@ -97,6 +138,27 @@ internal sealed class ScriptOperation : IDisposable
     internal long InterruptCount => Interlocked.Read(ref interruptCount);
 
     internal ScriptYieldReason YieldReason => (ScriptYieldReason)Volatile.Read(ref yieldReason);
+
+    internal void ArmCoroutineLifecycle()
+    {
+        if (Mode != ScriptOperationMode.TopLevelResume || State.IsMainThread)
+        {
+            return;
+        }
+
+        Volatile.Write(ref coroutineLifecycleArmed, 1);
+        State.MarkCoroutineRunning();
+    }
+
+    internal void CompleteCoroutineSuspended()
+    {
+        Volatile.Write(ref coroutineCompletion, 1);
+    }
+
+    internal void CompleteCoroutineDead()
+    {
+        Volatile.Write(ref coroutineCompletion, 2);
+    }
 
     internal void PrepareResume()
     {
@@ -291,7 +353,8 @@ internal sealed class ScriptOperation : IDisposable
             else if (Options.WallClockLimit is { } wallClockLimit)
             {
                 var elapsed = GetElapsedTime();
-                if (elapsed >= wallClockLimit)
+                if (deadlineCancellationSource?.IsCancellationRequested == true ||
+                    elapsed >= wallClockLimit)
                 {
                     candidate = ScriptHardStopReason.WallClock;
                 }
@@ -336,6 +399,51 @@ internal sealed class ScriptOperation : IDisposable
         return TimeSpan.FromSeconds((double)elapsedTicks / Stopwatch.Frequency);
     }
 
+    void SignalDeadline()
+    {
+        var deadlineSource = deadlineCancellationSource;
+        if (deadlineSource == null || Volatile.Read(ref disposeState) != 0)
+        {
+            return;
+        }
+
+        var remaining = Options.WallClockLimit!.Value - GetElapsedTime();
+        if (remaining > TimeSpan.Zero)
+        {
+            try
+            {
+                Volatile.Read(ref deadlineTimer)?.Change(
+                    GetTimerDelay(remaining),
+                    Timeout.InfiniteTimeSpan);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Operation disposal won the race with a long-deadline rearm.
+            }
+            return;
+        }
+
+        try
+        {
+            deadlineSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Operation disposal won the race with the timer callback.
+        }
+        catch
+        {
+            // Registrations on the callback-visible token are host code. A
+            // throwing cancellation callback cannot escape the timer thread;
+            // the source is already canceled and the runner will observe it.
+        }
+    }
+
+    static TimeSpan GetTimerDelay(TimeSpan remaining)
+    {
+        return remaining <= MaximumTimerDelay ? remaining : MaximumTimerDelay;
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposeState, 1) != 0)
@@ -343,7 +451,20 @@ internal sealed class ScriptOperation : IDisposable
             return;
         }
 
+        Interlocked.Exchange(ref deadlineTimer, null)?.Dispose();
         linkedCancellationSource.Dispose();
+        deadlineCancellationSource?.Dispose();
+        if (Volatile.Read(ref coroutineLifecycleArmed) != 0)
+        {
+            if (Volatile.Read(ref coroutineCompletion) == 1)
+            {
+                State.MarkCoroutineSuspended();
+            }
+            else
+            {
+                State.MarkCoroutineDead();
+            }
+        }
         Context.EndOperation(this);
     }
 }

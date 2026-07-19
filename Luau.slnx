@@ -4,6 +4,7 @@
     <Project Path="src/Luau/Luau.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Luau.ConsumerContract/Luau.ConsumerContract.csproj" />
     <Project Path="tests/Luau.Host.AbiFixtureHost/Luau.Host.AbiFixtureHost.csproj" />
     <Project Path="tests/Luau.HostSoak/Luau.HostSoak.csproj" />
     <Project Path="tests/Luau.SourceGenerator.Tests/Luau.SourceGenerator.Tests.csproj" />

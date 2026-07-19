@@ -291,7 +291,7 @@ public sealed class SandboxTests
 
         Assert.All(
             [osError, debugError, requireError, customError],
-            error => Assert.Contains("before SandboxRoot", error.Message));
+            error => Assert.Contains("root Luau state", error.Message));
         Assert.Equal(0, customLibrary.RegisterCount);
 
         var results = child.DoString(
@@ -299,6 +299,58 @@ public sealed class SandboxTests
 
         Assert.Equal(3, results.Length);
         Assert.All(results, result => Assert.True(result.Read<bool>()));
+    }
+
+    [Fact]
+    public void PreexistingChildCannotRegisterAnyLibraryFamilyBeforeOrAfterRootSandboxing()
+    {
+        using var root = LuauState.Create();
+        using var child = root.CreateThread();
+        var requirer = new CountingRequirer();
+        var customLibrary = new TrackingLibrary();
+
+        AssertChildRegistrationRejected(child, requirer, customLibrary);
+        Assert.Equal(0, customLibrary.RegisterCount);
+        Assert.Equal(0, ConstructedTrackingLibrary.ConstructionCount);
+
+        root.OpenBaseLibrary();
+        root.SandboxRoot();
+
+        AssertChildRegistrationRejected(child, requirer, customLibrary);
+        Assert.Equal(0, customLibrary.RegisterCount);
+        Assert.Equal(0, ConstructedTrackingLibrary.ConstructionCount);
+    }
+
+    static void AssertChildRegistrationRejected(
+        LuauState child,
+        LuauRequirer requirer,
+        TrackingLibrary customLibrary)
+    {
+        ConstructedTrackingLibrary.ResetConstructionCount();
+        Action[] registrations =
+        [
+            child.OpenBaseLibrary,
+            child.OpenMathLibrary,
+            child.OpenTableLibrary,
+            child.OpenStringLibrary,
+            child.OpenCoroutineLibrary,
+            child.OpenBit32Library,
+            child.OpenUtf8Library,
+            child.OpenOSLibrary,
+            child.OpenDebugLibrary,
+            child.OpenBufferLibrary,
+            child.OpenVectorLibrary,
+            child.OpenIntegerLibrary,
+            () => child.OpenRequireLibrary(requirer),
+            () => child.OpenLibrary(customLibrary),
+            () => child.OpenLibrary<ConstructedTrackingLibrary>(),
+        ];
+
+        foreach (var registration in registrations)
+        {
+            var exception = Assert.Throws<InvalidOperationException>(registration);
+            Assert.Contains("root Luau state", exception.Message);
+        }
     }
 
     static LuauState CreateSandboxedRoot()
@@ -435,6 +487,27 @@ public sealed class SandboxTests
         public void RegisterTo(LuauState state)
         {
             Interlocked.Increment(ref registerCount);
+        }
+    }
+
+    public sealed class ConstructedTrackingLibrary : ILuauLibrary
+    {
+        static int constructionCount;
+
+        public ConstructedTrackingLibrary()
+        {
+            Interlocked.Increment(ref constructionCount);
+        }
+
+        public static int ConstructionCount => Volatile.Read(ref constructionCount);
+
+        public static void ResetConstructionCount()
+        {
+            Volatile.Write(ref constructionCount, 0);
+        }
+
+        public void RegisterTo(LuauState state)
+        {
         }
     }
 }

@@ -10,18 +10,50 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
     public int Reference => Volatile.Read(ref reference);
     LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference(Reference);
 
-    protected override LuauState ResolvePublicState(LuauState owningState) =>
+    private protected override LuauState ResolvePublicState(LuauState owningState) =>
         owningState.GetMainThread();
 
-    internal async ValueTask<LuauValue[]> InvokeWithArgumentsAsync(
-        ReadOnlyMemory<LuauValue> arguments,
-        CancellationToken cancellationToken)
+    internal LuauValue[] InvokeWithArguments(
+        ReadOnlySpan<LuauValue> arguments,
+        LuauExecutionOptions? executionOptions)
     {
-        ThrowIfDiposed();
+        ThrowIfDisposed();
         var state = State;
         using var operation = state.BeginOperation(
             chunkName: null,
-            options: null,
+            options: executionOptions,
+            cancellationToken: default,
+            isAsync: false);
+        using var runner = ScriptRunner.Rent();
+
+        var baseTop = state.GetTop();
+        try
+        {
+            state.Push(this);
+            for (var i = 0; i < arguments.Length; i++)
+            {
+                state.Push(arguments[i]);
+            }
+        }
+        catch
+        {
+            state.SetTop(baseTop);
+            throw;
+        }
+
+        return runner.Run(operation, state, arguments.Length);
+    }
+
+    internal async ValueTask<LuauValue[]> InvokeWithArgumentsAsync(
+        ReadOnlyMemory<LuauValue> arguments,
+        CancellationToken cancellationToken,
+        LuauExecutionOptions? executionOptions)
+    {
+        ThrowIfDisposed();
+        var state = State;
+        using var operation = state.BeginOperation(
+            chunkName: null,
+            options: executionOptions,
             cancellationToken,
             isAsync: true);
         using var runner = ScriptRunner.Rent();
@@ -50,7 +82,7 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
         return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
-    protected override void DisposeCore()
+    private protected override void DisposeCore()
     {
         var currentReference = Interlocked.Exchange(ref reference, -1);
         if (currentReference >= 0)

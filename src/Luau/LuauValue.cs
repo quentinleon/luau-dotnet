@@ -50,6 +50,15 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return new(LuauType.UserData, default, value);
     }
 
+    /// <summary>Creates an opaque userdata value from a managed object capability.</summary>
+    public static LuauValue FromObjectHandle(LuauObjectHandle value)
+    {
+        return new(
+            LuauType.UserData,
+            default,
+            value ?? throw new ArgumentNullException(nameof(value)));
+    }
+
     public static LuauValue FromVector(Vector3 value)
     {
         return new(LuauType.Vector, new() { VectorValue = value }, null);
@@ -105,7 +114,12 @@ public readonly struct LuauValue : IEquatable<LuauValue>
             LuauType.String => ((string)reference!).ToString(),
             LuauType.Table => ((LuauTable)reference!).ToString(),
             LuauType.Function => ((LuauFunction)reference!).ToString()!,
-            LuauType.UserData => ((LuauUserData)reference!).ToString(),
+            LuauType.UserData => reference switch
+            {
+                LuauObjectHandle handle => handle.ToString(),
+                LuauUserData userData => userData.ToString(),
+                _ => "userdata",
+            },
             LuauType.Thread => ((LuauState)reference!).ToString()!,
             LuauType.Buffer => ((LuauBuffer)reference!).ToString()!,
             _ => "",
@@ -120,6 +134,13 @@ public readonly struct LuauValue : IEquatable<LuauValue>
 
     public bool IsNil => Type == LuauType.Nil;
 
+    /// <summary>Reads this value as the requested managed representation.</summary>
+    /// <remarks>
+    /// Reading a Luau script closure as <see cref="LuauFunction"/> produces a
+    /// host-invokable function. Managed callback capabilities created by
+    /// <see cref="LuauState.CreateFunction(Action{LuauCallContext})"/> remain
+    /// callable only from Luau.
+    /// </remarks>
     public T Read<T>()
     {
         if (TryRead<T>(out var result)) return result;
@@ -167,13 +188,21 @@ public readonly struct LuauValue : IEquatable<LuauValue>
                 }
                 break;
             case LuauType.UserData:
+                if (typeof(T) == typeof(LuauObjectHandle) && reference is LuauObjectHandle objectHandle)
+                {
+                    return Assign(objectHandle, out result);
+                }
                 if (typeof(T) == typeof(LuauUserData))
                 {
-                    return Assign((LuauUserData)reference!, out result);
+                    if (reference is LuauUserData userData)
+                    {
+                        return Assign(userData, out result);
+                    }
+                    break;
                 }
                 if (typeof(T) == typeof(object))
                 {
-                    return Assign((object)(LuauUserData)reference!, out result);
+                    return Assign(reference!, out result);
                 }
                 break;
             case LuauType.LightUserData:
@@ -409,4 +438,5 @@ public readonly struct LuauValue : IEquatable<LuauValue>
     public static implicit operator LuauValue(LuauState value) => FromThread(value);
     public static implicit operator LuauValue(LuauBuffer value) => FromBuffer(value);
     public static implicit operator LuauValue(LuauUserData value) => FromUserData(value);
+    public static implicit operator LuauValue(LuauObjectHandle value) => FromObjectHandle(value);
 }

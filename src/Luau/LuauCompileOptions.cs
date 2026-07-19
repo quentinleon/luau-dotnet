@@ -10,5 +10,9 @@ public sealed record LuauCompileOptions
 
     public int TypeInfoLevel { get; init; } = 1;
 
-    public int CoverageLevel { get; init; } = 2;
+    /// <summary>
+    /// Gets the coverage instrumentation level. Production compilation does
+    /// not instrument coverage by default; tooling must opt in explicitly.
+    /// </summary>
+    public int CoverageLevel { get; init; } = 0;
 }

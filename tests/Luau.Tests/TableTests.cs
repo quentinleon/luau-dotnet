@@ -39,6 +39,90 @@ public sealed class TableTests
     }
 
     [Fact]
+    public void LengthUsesRawSequenceSemanticsRatherThanEntryCount()
+    {
+        using var state = LuauState.Create();
+        using var array = state.CreateTable();
+        array[1d] = "first";
+        array[2d] = "second";
+        array[3d] = "third";
+        Assert.Equal(3, array.Length);
+
+        using var sparse = state.CreateTable();
+        sparse[1d] = "first";
+        sparse[100d] = "distant";
+        Assert.Equal(1, sparse.Length);
+
+        using var keyed = state.CreateTable();
+        keyed["first"] = 1;
+        keyed["second"] = 2;
+        Assert.Equal(0, keyed.Length);
+
+        keyed.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => _ = keyed.Length);
+    }
+
+    [Fact]
+    public void EmptyEnumeratorRemainsTerminalUntilReset()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+        var enumerator = table.GetEnumerator();
+
+        Assert.False(enumerator.MoveNext());
+        Assert.False(enumerator.MoveNext());
+        enumerator.Reset();
+        Assert.False(enumerator.MoveNext());
+    }
+
+    [Fact]
+    public void OneEntryEnumeratorCanBeExplicitlyReset()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+        table["only"] = 42;
+        var enumerator = table.GetEnumerator();
+
+        Assert.True(enumerator.MoveNext());
+        Assert.Equal("only", enumerator.Current.Key.Read<string>());
+        Assert.Equal(42, enumerator.Current.Value.Read<int>());
+        Assert.False(enumerator.MoveNext());
+        Assert.False(enumerator.MoveNext());
+
+        enumerator.Reset();
+        Assert.True(enumerator.MoveNext());
+        Assert.Equal("only", enumerator.Current.Key.Read<string>());
+        Assert.False(enumerator.MoveNext());
+    }
+
+    [Fact]
+    public void MultiEntryEnumeratorIsTerminalAndDisposalFailuresStayContained()
+    {
+        using var state = LuauState.Create();
+        var table = state.CreateTable();
+        table[1] = 10;
+        table[2] = 20;
+        table[3] = 30;
+        var enumerator = table.GetEnumerator();
+        var values = new HashSet<int>();
+
+        while (enumerator.MoveNext())
+        {
+            values.Add(enumerator.Current.Value.Read<int>());
+        }
+
+        Assert.Equal([10, 20, 30], values.Order());
+        Assert.False(enumerator.MoveNext());
+        Assert.False(enumerator.MoveNext());
+
+        enumerator.Reset();
+        Assert.True(enumerator.MoveNext());
+        table.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => enumerator.MoveNext());
+        Assert.Equal(7, Assert.Single(state.DoString("return 7")).Read<int>());
+    }
+
+    [Fact]
     public void Foreach()
     {
         using var state = LuauState.Create();

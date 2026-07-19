@@ -8,4 +8,15 @@ public sealed class LuauCompilationException : LuauException
         : base(message)
     {
     }
+
+    /// <summary>
+    /// Initializes an exception with compiler diagnostic and chunk context.
+    /// </summary>
+    public LuauCompilationException(
+        string message,
+        string? chunkName,
+        Exception? innerException = null)
+        : base(message, chunkName, innerException)
+    {
+    }
 }

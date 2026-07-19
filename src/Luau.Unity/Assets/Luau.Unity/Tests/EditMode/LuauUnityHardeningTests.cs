@@ -28,7 +28,9 @@ namespace Luau.Unity.Tests
                 "Luau.Unity.LuauModuleMap",
                 "Luau.Unity.LuauStateExtensions",
                 "Luau.Unity.LuauUnity",
+                "Luau.Unity.LuauUnityObjectGuard",
                 "Luau.Unity.LuauUnityOptions",
+                "Luau.Unity.LuauUnityValue",
                 "Luau.Unity.Verification.LuauPlayerSmoke",
             }));
         }
@@ -145,17 +147,26 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
-        public void DefaultStateCapturesUnitySynchronizationContextAndPreservesBudgets()
+        public void DefaultStateCapturesUnitySynchronizationContextAndPreservesAllOptions()
         {
             var currentContext = SynchronizationContext.Current;
             Assert.That(currentContext, Is.Not.Null,
                 "The Unity test runner did not install its main-thread synchronization context.");
+            const long memoryLimit = 32L * 1024 * 1024;
+            const int sourceLimit = 512 * 1024;
+            const int bytecodeLimit = 2 * 1024 * 1024;
+            const int managedHandleLimit = 17;
 
             using var root = LuauUnity.CreateState(new LuauUnityOptions
             {
                 StateOptions = new LuauStateOptions
                 {
-                    BytecodePolicy = LuauBytecodePolicy.Reject,
+                    MemoryLimitBytes = memoryLimit,
+                    MaxSourceBytes = sourceLimit,
+                    MaxBytecodeBytes = bytecodeLimit,
+                    MaxManagedHandleCount = managedHandleLimit,
+                    BytecodePolicy = LuauBytecodePolicy.RequireValidator,
+                    BytecodeValidator = AcceptArtifactValidator.Instance,
                     DefaultExecutionOptions = new LuauExecutionOptions
                     {
                         WallClockLimit = TimeSpan.FromSeconds(1),
@@ -176,6 +187,12 @@ namespace Luau.Unity.Tests
             Assert.That(executionOptions.WallClockLimit, Is.EqualTo(TimeSpan.FromSeconds(1)));
             Assert.That(executionOptions.InterruptCountLimit, Is.EqualTo(100));
             Assert.That(executionOptions.MaxResultCount, Is.EqualTo(8));
+            Assert.That(root.Options.MemoryLimitBytes, Is.EqualTo(memoryLimit));
+            Assert.That(root.Options.MaxSourceBytes, Is.EqualTo(sourceLimit));
+            Assert.That(root.Options.MaxBytecodeBytes, Is.EqualTo(bytecodeLimit));
+            Assert.That(root.Options.MaxManagedHandleCount, Is.EqualTo(managedHandleLimit));
+            Assert.That(root.Options.BytecodePolicy, Is.EqualTo(LuauBytecodePolicy.RequireValidator));
+            Assert.That(root.Options.BytecodeValidator, Is.SameAs(AcceptArtifactValidator.Instance));
         }
 
         [Test]

@@ -1,20 +1,32 @@
 namespace Luau;
 
 /// <summary>
-/// Configures optional budgets for Luau execution or resume operations.
+/// Configures budgets for Luau execution, invocation, or resume operations.
 /// State defaults are authoritative. Per-operation values may add or tighten
 /// limits but cannot remove state limits or replace its continuation scheduler.
 /// </summary>
-public sealed class LuauExecutionOptions
+public sealed record LuauExecutionOptions
 {
-    TimeSpan? wallClockLimit;
-    long? interruptCountLimit;
-    int? maxResultCount;
+    TimeSpan? wallClockLimit = TimeSpan.FromMilliseconds(250);
+    long? interruptCountLimit = 100_000;
+    int? maxResultCount = 64;
 
     /// <summary>
-    /// Gets an options instance with no execution budgets.
+    /// Gets the finite execution policy used by ordinary script states.
     /// </summary>
     public static LuauExecutionOptions Default { get; } = new();
+
+    /// <summary>
+    /// Gets an explicitly unbounded execution policy. Hosts should use this
+    /// profile only for trusted work whose resource ownership is controlled by
+    /// another layer.
+    /// </summary>
+    public static LuauExecutionOptions Unbounded { get; } = new()
+    {
+        WallClockLimit = null,
+        InterruptCountLimit = null,
+        MaxResultCount = null,
+    };
 
     /// <summary>
     /// Gets the maximum wall-clock duration for an operation, or
@@ -116,7 +128,7 @@ public sealed class LuauExecutionOptions
                 "A per-operation continuation scheduler cannot replace the Luau state's scheduler.");
         }
 
-        return new LuauExecutionOptions
+        return stateDefaults with
         {
             WallClockLimit = Tighter(stateDefaults.WallClockLimit, operationOptions.WallClockLimit),
             InterruptCountLimit = Tighter(stateDefaults.InterruptCountLimit, operationOptions.InterruptCountLimit),

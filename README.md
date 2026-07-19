@@ -87,10 +87,17 @@ context by default, so async continuations return to the Unity thread.
 
 ## Background Compilation
 
-Downloaded source and SDK/editor preview source should normally be compiled
-through Unity's package-owned background lane. It uses one bounded queue and a
-dedicated managed worker, so native compilation does not block the Unity owner
-thread:
+Execute an imported `LuauAsset` through the ordinary Unity path. Source assets
+compile on the package-owned bounded background lane, then VM installation and
+execution begin on the state's configured Unity owner scheduler. Verified
+artifacts bypass source compilation and retain their validator-gated trust path:
+
+```csharp
+LuauValue[] values = await state.ExecuteAsync(asset, cancellationToken);
+```
+
+Use `LuauUnity.CompileAsync` when compilation and execution are deliberately
+separate host decisions:
 
 ```csharp
 using Luau;
@@ -103,16 +110,16 @@ var compilation = await LuauUnity.CompileAsync(
 switch (compilation.Kind)
 {
     case LuauCompileResultKind.Success:
-        // Installing compiler output is a separate host decision. This helper
-        // posts the VM operation to the state's configured owner scheduler.
-        var values = await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+        // This code resumed on the Unity synchronization context captured by
+        // LuauUnity.CreateState, so execution starts on the VM owner.
+        var values = await state.ExecuteCompilerOutputAsync(
             compilation.Output!,
             "@mods/example/main.luau".AsMemory(),
             cancellationToken);
         break;
 
     case LuauCompileResultKind.Diagnostic:
-        ShowAuthoringDiagnostic(compilation.Diagnostic!.Message);
+        ShowAuthoringDiagnostic(compilation.CompilationDiagnostic!.Message);
         break;
 
     case LuauCompileResultKind.Canceled:
@@ -140,9 +147,12 @@ dispose it.
 An advanced host that needs an isolated queue, custom resource policy, or an
 independent lifetime can construct `LuauThreadedCompilationService` directly,
 usually with `LuauUnity.GetRecommendedCompilationOptions()` as its starting
-policy. Such a service is caller-owned, is not tracked by Unity, and must be
-disposed before its owning subsystem or Editor assembly lifetime ends. Windows
-hosts may opt into a second worker only after representative stress testing.
+policy, and pass it to `ExecuteWithCompilationServiceAsync`. Such a service is
+caller-owned, is not tracked by Unity, and must be disposed before its owning
+subsystem or Editor assembly lifetime ends. A custom `ILuauCompilationService`
+returns invariant-preserving results through `LuauCompileResult.Success`,
+`Diagnostic`, `Canceled`, or `InfrastructureFailure`. Windows hosts may opt into
+a second worker only after representative stress testing.
 
 Threads provide responsiveness and bounded admission, not crash, hang, hard
 timeout, or compiler-intermediate-memory isolation. Copied output bytes are not
@@ -150,12 +160,12 @@ load capabilities and must not be placed into source-only mod packages. A
 persistent first-party cache must create and later validate a
 `LuauBytecodeArtifact` through the separate trust lane.
 
-`LuauState.DoStringAsync` and the legacy source-asset `ExecuteAsync` overloads
-still compile synchronously before asynchronous VM execution. Streamed source
-should use `LuauUnity.CompileAsync`. The `LuauAsset` overload accepting an
-`ILuauCompilationService` is available for advanced caller-owned lanes. Unity's
-`ScriptedImporter` callback is synchronous and continues to compile transiently
-for import diagnostics.
+Use `state.ExecuteAsync(asset)` for ordinary asset execution,
+`LuauUnity.CompileAsync` when compilation and later execution are separate, and
+`LuauThreadedCompilationService` only for an isolated caller-owned queue. The
+synchronous `state.Execute(asset)` API intentionally compiles source on its
+caller. Unity's `ScriptedImporter` callback is also synchronous and continues to
+compile transiently for import diagnostics.
 
 ## Safe Host APIs
 
@@ -210,6 +220,47 @@ Generated member names and signatures are validated at compile time. Generated
 callbacks run under the same lifetime, cancellation, stack-boundary, and failure
 rules as manual callbacks.
 
+### Object capabilities
+
+Use the same attributes with explicit capability exposure to grant one object a
+small, generated member surface. The generator emits AOT-safe dispatch code; it
+does not reflect over the object or expose a pointer, `GCHandle`, registry token,
+or arbitrary userdata constructor.
+
+```csharp
+using Luau;
+using UnityEngine;
+
+[LuauLibrary("Door", Exposure = LuauLibraryExposure.Capability)]
+public partial class DoorController : MonoBehaviour
+{
+    [LuauMember]
+    public bool IsOpen { get; private set; }
+
+    public string InternalDebugName => name; // not visible to Luau
+
+    [LuauMember]
+    public void Open() => IsOpen = true;
+}
+
+using var root = LuauUnity.CreateState(new LuauUnityOptions
+{
+    ConfigureHostApis = state => state.OpenLibrary(new ShipApi()),
+});
+using var child = root.CreateSandboxedThread();
+using var doorHandle = root.CreateHandle(doorController);
+child["door"] = doorHandle;
+
+LuauValue[] results = await child.ExecuteAsync(asset, cancellationToken);
+```
+
+Capabilities are opaque, per-root, descriptor-specific, and quota bounded by
+`LuauStateOptions.MaxManagedHandleCount` (1,024 by default). Only
+`[LuauMember]` members are reachable. Access after the managed target is
+collected or a `UnityEngine.Object` is destroyed fails deterministically.
+Built-in explicit adapters cover `GameObject`, `Transform`, and
+`UnityEngine.Vector3`; arbitrary component discovery is intentionally absent.
+
 ### Manual callbacks
 
 Use manual callbacks only for small dynamic integrations that do not justify a
@@ -221,7 +272,7 @@ state["clamp"] = state.CreateFunction("clamp", context =>
     var value = context.Read<double>(0);
     var minimum = context.Read<double>(1);
     var maximum = context.Read<double>(2);
-    return context.Return(Math.Clamp(value, minimum, maximum));
+    context.Return(Math.Clamp(value, minimum, maximum));
 });
 ```
 
@@ -256,7 +307,8 @@ bool ready = results[2].Read<bool>();
 | string | `string` |
 | table | `LuauTable` |
 | function | `LuauFunction` |
-| userdata | `LuauUserData` |
+| managed object capability | `LuauObjectHandle` |
+| other VM-created userdata | inspect-only `LuauUserData` |
 | thread | `LuauState` |
 | buffer | `LuauBuffer` |
 
@@ -265,15 +317,26 @@ values are copied. `LuauBuffer.ToArray()`, `Read(...)`, and `Write(...)` copy
 through bounded operations; no borrowed view of native buffer memory is exposed
 across VM actions, collection, wrapper disposal, or root disposal.
 
-Invoke a script function with managed values rather than manipulating its stack:
+Invoke a script closure with managed values rather than manipulating its stack.
+Use the synchronous form when the closure cannot reach an asynchronous host
+callback, and the asynchronous form otherwise:
 
 ```csharp
 using var function = state.DoString("return function(a, b) return a + b end")[0]
     .Read<LuauFunction>();
 
-var results = await function.InvokeAsync([20, 22]);
-Debug.Log(results[0].Read<long>()); // 42
+var immediate = function.Invoke([20, 22]);
+var asynchronous = await function.InvokeAsync([20, 22]);
+Debug.Log(immediate[0].Read<long>()); // 42
 ```
+
+Managed callback functions are host capabilities callable by Luau, not arbitrary
+C# delegates, so host invocation is restricted to script closures. For child
+coroutines, `Resume(arguments)` allocates its result array and `ResumeInto`
+writes into caller-owned memory; the async forms follow the same naming rule.
+`GetStatus()` reports the managed child lifecycle (`Suspended`, `Running`, or
+`Dead`) and rejects root-state use. `LuauTable.Length` is Luau's raw sequence
+length (`#`), not a count of key/value entries.
 
 ## Sandboxing and Untrusted Content
 
@@ -297,13 +360,14 @@ using Luau.Unity;
 // state policy only after measuring representative mods.
 using var state = LuauUnity.CreateState(new LuauUnityOptions
 {
-    StateOptions = new LuauStateOptions
+    StateOptions = LuauStateOptions.Default with
     {
         MemoryLimitBytes = 16 * 1024 * 1024,
         MaxSourceBytes = 1024 * 1024,
         MaxBytecodeBytes = 1024 * 1024,
+        MaxManagedHandleCount = 256,
         BytecodePolicy = LuauBytecodePolicy.Reject,
-        DefaultExecutionOptions = new LuauExecutionOptions
+        DefaultExecutionOptions = LuauExecutionOptions.Default with
         {
             WallClockLimit = TimeSpan.FromMilliseconds(50),
             InterruptCountLimit = 10_000,
@@ -317,13 +381,13 @@ var compilation = await LuauUnity.CompileAsync(
     untrustedSource,
     cancellationToken: cancellationToken);
 if (compilation.Kind == LuauCompileResultKind.Diagnostic)
-    throw compilation.Diagnostic!;
+    throw compilation.CompilationDiagnostic!;
 if (compilation.Kind == LuauCompileResultKind.Canceled)
     throw new OperationCanceledException(cancellationToken);
 if (compilation.Kind == LuauCompileResultKind.InfrastructureFailure)
     throw compilation.InfrastructureException!;
 
-var results = await state.ExecuteCompilerOutputOnOwnerThreadAsync(
+var results = await state.ExecuteCompilerOutputAsync(
     compilation.Output!,
     "@mods/example/main.luau".AsMemory(),
     cancellationToken);
@@ -341,6 +405,13 @@ Controlled failures use typed managed exceptions. The shared operation engine
 restores its stack boundary and leaves the root reusable when safe; a failed
 terminal reset poisons and disposes the entire root. Failure precedence is hard
 stop, then managed callback failure, then allocator or native failure.
+
+`new LuauStateOptions()` and `new LuauExecutionOptions()` are the finite ordinary
+policy. Removing budgets requires the visibly named
+`LuauStateOptions.UnboundedResources` or `LuauExecutionOptions.Unbounded`
+profile; unbounded resources still reject persistent bytecode. Libraries,
+generated global APIs, and `require()` can be registered only on the root before
+`SandboxRoot` freezes it.
 
 ## Managed `require()`
 
@@ -389,6 +460,11 @@ cannot be reconstructed from bytes, so it can be loaded on a bytecode-rejecting
 state for SDK tests, editor previews, and other same-process workflows.
 Compilation diagnostics throw `LuauCompilationException`.
 
+Production compilation defaults to `CoverageLevel = 0`. Tooling that needs
+coverage instrumentation opts in explicitly with
+`LuauCompileOptions.Default with { CoverageLevel = 2 }`; coverage participates
+in compiler identity and bytecode hashes.
+
 ```csharp
 var output = LuauCompiler.Compile("return 42"u8);
 using var function = state.LoadCompilerOutput(
@@ -421,12 +497,8 @@ allowlist. It must not trust a provenance label, asset GUID, or hash merely
 because the artifact contains it.
 
 ```csharp
-var stateOptions = new LuauStateOptions
+var stateOptions = LuauStateOptions.Default with
 {
-    MemoryLimitBytes = LuauStateOptions.Default.MemoryLimitBytes,
-    MaxSourceBytes = LuauStateOptions.Default.MaxSourceBytes,
-    MaxBytecodeBytes = LuauStateOptions.Default.MaxBytecodeBytes,
-    DefaultExecutionOptions = LuauStateOptions.Default.DefaultExecutionOptions,
     BytecodePolicy = LuauBytecodePolicy.RequireValidator,
     BytecodeValidator = firstPartyManifestValidator,
 };

@@ -37,7 +37,7 @@ public unsafe partial class LuauState
                 mode);
         }
 
-        var initialThreadStatus = GetStatus();
+        var initialThreadStatus = GetNativeOperationStatus();
         var created = BeginOperation(
             chunkName: null,
             options: null,
@@ -51,12 +51,12 @@ public unsafe partial class LuauState
 internal readonly ref struct LuauOperationLease
 {
     readonly ScriptOperation? ownedOperation;
-    readonly LuauThreadStatus? initialThreadStatus;
+    readonly Luau.Internal.Interop.LuauHostStatus? initialThreadStatus;
 
     internal LuauOperationLease(
         ScriptOperation operation,
         ScriptOperation? ownedOperation,
-        LuauThreadStatus? initialThreadStatus,
+        Luau.Internal.Interop.LuauHostStatus? initialThreadStatus,
         ScriptOperationMode mode)
     {
         Operation = operation;
@@ -70,8 +70,8 @@ internal readonly ref struct LuauOperationLease
 
     internal bool IsOwnedOperationSuspended =>
         ownedOperation != null &&
-        initialThreadStatus == LuauThreadStatus.Running &&
-        ownedOperation.State.GetStatus() != LuauThreadStatus.Running;
+        initialThreadStatus == Luau.Internal.Interop.LuauHostStatus.Ok &&
+        ownedOperation.State.GetNativeOperationStatus() != Luau.Internal.Interop.LuauHostStatus.Ok;
 
     internal void AbortSuspendedOperation()
     {

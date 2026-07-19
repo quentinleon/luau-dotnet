@@ -89,34 +89,93 @@ namespace Luau.Unity.Verification
                 var asyncResult = await first.DoStringAsync(
                     "local answer = smokeHost.asyncAnswer(); return answer, smokeHost.assertUnityThread()",
                     "@unity/player-smoke-async.luau");
-                var compiledResult = await Task.Run(async () =>
+                var capabilityObject = new GameObject("Luau Player Smoke Capability");
+                var capability = capabilityObject.AddComponent<LuauPlayerSmokeCapability>();
+                LuauValue[] compiledResult;
+                try
                 {
-                    var validSource = Encoding.UTF8.GetBytes(
-                        "return smokeHost.assertUnityThread(), hostManualAddOne(314)");
-                    var invalidSource = Encoding.UTF8.GetBytes("local broken = )");
-                    var nearLimitSource = new byte[1024 * 1024 - 32];
-                    for (var index = 0; index < nearLimitSource.Length; index++)
+                    using var capabilityHandle = root.CreateHandle(capability);
+                    first["capability"] = capabilityHandle;
+                    const string validBackgroundSource =
+                        "capability.Value = 40; " +
+                        "capability:Increment(2); " +
+                        "capability.Position = vector.create(1, 2, 3); " +
+                        "return smokeHost.assertUnityThread(), hostManualAddOne(314), " +
+                        "capability.Value, capability.Hidden == nil";
+                    var validSource = Encoding.UTF8.GetBytes(validBackgroundSource);
+                    var backgroundAsset = ScriptableObject.CreateInstance<LuauAsset>();
+                    backgroundAsset.name = "@unity/player-smoke-background.luau";
+                    backgroundAsset.SetSource(validBackgroundSource, validSource);
+                    try
                     {
-                        nearLimitSource[index] = (byte)' ';
-                    }
-                    Buffer.BlockCopy(
-                        validSource,
-                        0,
-                        nearLimitSource,
-                        nearLimitSource.Length - validSource.Length,
-                        validSource.Length);
-
-                    var compilerOutput = await StressCompilationServiceAsync(
+                        var invalidSource = Encoding.UTF8.GetBytes("local broken = )");
+                        var nearLimitSource = new byte[1024 * 1024 - 32];
+                        for (var index = 0; index < nearLimitSource.Length; index++)
+                        {
+                            nearLimitSource[index] = (byte)' ';
+                        }
+                        Buffer.BlockCopy(
                             validSource,
-                            invalidSource,
-                            nearLimitSource)
-                        .ConfigureAwait(false);
+                            0,
+                            nearLimitSource,
+                            nearLimitSource.Length - validSource.Length,
+                            validSource.Length);
 
-                    return await first.ExecuteCompilerOutputOnOwnerThreadAsync(
-                            compilerOutput,
-                            "@unity/player-smoke-background.luau".AsMemory())
-                        .ConfigureAwait(false);
-                });
+                        _ = await Task.Run(async () => await StressCompilationServiceAsync(
+                                validSource,
+                                invalidSource,
+                                nearLimitSource)
+                            .ConfigureAwait(false));
+                        compiledResult = await first.ExecuteAsync(backgroundAsset);
+                    }
+                    finally
+                    {
+                        UnityEngine.Object.Destroy(backgroundAsset);
+                    }
+
+                    if (compiledResult.Length != 4 ||
+                        !compiledResult[0].Read<bool>() ||
+                        compiledResult[1].Read<int>() != 315 ||
+                        compiledResult[2].Read<int>() != 42 ||
+                        !compiledResult[3].Read<bool>() ||
+                        capability.Value != 42 ||
+                        capability.Position != new Vector3(1, 2, 3))
+                    {
+                        throw new LuauException(
+                            "Background compilation, ordinary Unity asset execution, or generated capability dispatch failed.");
+                    }
+
+                    UnityEngine.Object.Destroy(capabilityObject);
+                    for (var frame = 0; frame < 3 && capability != null; frame++)
+                    {
+                        await Task.Yield();
+                    }
+                    if (capability != null)
+                    {
+                        throw new LuauException(
+                            "The player smoke capability did not enter Unity's destroyed-object state.");
+                    }
+
+                    try
+                    {
+                        first.DoString(
+                            "return capability.Value",
+                            "@unity/player-smoke-destroyed-capability.luau");
+                        throw new LuauException(
+                            "A destroyed Unity capability remained accessible to Luau.");
+                    }
+                    catch (LuauManagedCallbackException exception)
+                        when (exception.InnerException is MissingReferenceException)
+                    {
+                    }
+                }
+                finally
+                {
+                    if (capabilityObject != null)
+                    {
+                        UnityEngine.Object.Destroy(capabilityObject);
+                    }
+                }
 
                 if (firstResult.Length != 4 ||
                     !firstResult[0].Read<bool>() ||
@@ -140,14 +199,6 @@ namespace Luau.Unity.Verification
                 {
                     throw new LuauException(
                         "The asynchronous managed callback or Unity-thread-affinity smoke test failed.");
-                }
-
-                if (compiledResult.Length != 2 ||
-                    !compiledResult[0].Read<bool>() ||
-                    compiledResult[1].Read<int>() != 315)
-                {
-                    throw new LuauException(
-                        "Background compilation or explicit owner-thread execution failed.");
                 }
 
                 if (!root.MemoryUsage.IsLimited || root.MemoryUsage.PeakBytes <= 0)
@@ -198,15 +249,15 @@ namespace Luau.Unity.Verification
                 if (expectDiagnostic)
                 {
                     if (compilation.Kind != LuauCompileResultKind.Diagnostic ||
-                        compilation.Diagnostic == null)
+                        compilation.CompilationDiagnostic == null)
                     {
                         throw new LuauException(
                             "Invalid source did not produce a compilation diagnostic during concurrent player stress.");
                     }
 
-                    diagnostic = diagnostic ?? compilation.Diagnostic.Message;
+                    diagnostic = diagnostic ?? compilation.CompilationDiagnostic.Message;
                     if (!string.Equals(
-                            compilation.Diagnostic.Message,
+                            compilation.CompilationDiagnostic.Message,
                             diagnostic,
                             StringComparison.Ordinal))
                     {
@@ -298,6 +349,24 @@ namespace Luau.Unity.Verification
             {
                 throw new InvalidOperationException(message);
             }
+        }
+    }
+
+    [LuauLibrary("PlayerSmokeCapability", Exposure = LuauLibraryExposure.Capability)]
+    internal sealed partial class LuauPlayerSmokeCapability : MonoBehaviour
+    {
+        [LuauMember]
+        public int Value { get; set; }
+
+        [LuauMember]
+        public Vector3 Position { get; set; }
+
+        public int Hidden => 99;
+
+        [LuauMember]
+        public void Increment(int amount)
+        {
+            Value += amount;
         }
     }
 }

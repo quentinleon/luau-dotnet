@@ -118,7 +118,7 @@ public sealed class LifecycleTests
         Assert.True(buffer.IsDisposed);
         Assert.True(function.IsDisposed);
         Assert.True(callback.IsDisposed);
-        Assert.Throws<ObjectDisposedException>(() => _ = table.Count);
+        Assert.Throws<ObjectDisposedException>(() => _ = table.Length);
         Assert.Throws<ObjectDisposedException>(() => _ = buffer.Length);
         Assert.Throws<ObjectDisposedException>(() => _ = function.State);
         Assert.Throws<ObjectDisposedException>(() => _ = callback.State);
@@ -291,7 +291,7 @@ public sealed class LifecycleTests
                 {
                     try
                     {
-                        _ = table.Count;
+                        _ = table.Length;
                     }
                     catch (ObjectDisposedException)
                     {
@@ -319,7 +319,7 @@ public sealed class LifecycleTests
             var script = root.LoadCompilerOutput(LuauCompiler.Compile("return 1"u8));
             var callback = root.CreateFunction(_ => { });
 
-            await RaceUseAndDisposeAsync(() => Assert.Equal(1, table.Count), table.Dispose);
+            await RaceUseAndDisposeAsync(() => Assert.Equal(1, table.Length), table.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.Equal(16, buffer.Length), buffer.Dispose);
             await RaceUseAndDisposeAsync(() => Assert.StartsWith("function:", script.ToString()), script.Dispose);
             await RaceUseAndDisposeAsync(

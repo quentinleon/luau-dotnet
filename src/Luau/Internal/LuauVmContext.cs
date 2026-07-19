@@ -12,6 +12,23 @@ internal enum LuauAllocatorFailure
     SystemOutOfMemory = 2,
 }
 
+internal ref struct LuauBytecodeLoadScope
+{
+    LuauVmContext? context;
+
+    internal LuauBytecodeLoadScope(LuauVmContext context)
+    {
+        this.context = context;
+    }
+
+    public void Dispose()
+    {
+        var current = context;
+        context = null;
+        current?.EndBytecodeLoad();
+    }
+}
+
 internal sealed unsafe class LuauVmContext
 {
     static readonly ConcurrentDictionary<IntPtr, WeakReference<LuauState>> globalStates = new();
@@ -39,6 +56,7 @@ internal sealed unsafe class LuauVmContext
     ScriptOperation? activeOperation;
     int lifecycleState;
     int rootSandboxed;
+    int bytecodeLoadDepth;
     int releasedReferenceCount;
     int closeCount;
 
@@ -49,14 +67,31 @@ internal sealed unsafe class LuauVmContext
     {
         mainPointer = (IntPtr)main;
         Options = options;
+        ObjectRegistry = new LuauObjectRegistry(options.MaxManagedHandleCount);
     }
 
     internal LuauStateOptions Options { get; }
+    internal LuauObjectRegistry ObjectRegistry { get; }
 
     internal bool IsDisposed => Volatile.Read(ref lifecycleState) != 0;
     internal bool IsDisposalRequested => Volatile.Read(ref lifecycleState) != 0;
     internal CancellationToken DisposalToken => disposalCancellationSource.Token;
     internal bool IsRootSandboxed => Volatile.Read(ref rootSandboxed) != 0;
+    internal bool IsLoadingBytecode => Volatile.Read(ref bytecodeLoadDepth) != 0;
+
+    internal LuauBytecodeLoadScope BeginBytecodeLoad()
+    {
+        Interlocked.Increment(ref bytecodeLoadDepth);
+        return new LuauBytecodeLoadScope(this);
+    }
+
+    internal void EndBytecodeLoad()
+    {
+        if (Interlocked.Decrement(ref bytecodeLoadDepth) < 0)
+        {
+            throw new InvalidOperationException("The Luau bytecode-load scope was disposed more than once.");
+        }
+    }
 
     internal int CachedStateCount
     {
@@ -262,6 +297,7 @@ internal sealed unsafe class LuauVmContext
                 ResetAllocatorFailure();
                 activeOperation = operation;
                 ambientOperation.Value = operation;
+                operation.ArmCoroutineLifecycle();
                 return operation;
             }
         }
@@ -836,6 +872,14 @@ internal sealed unsafe class LuauVmContext
         finally
         {
             globalContexts.TryRemove(pointer, out _);
+            try
+            {
+                ObjectRegistry.Close();
+            }
+            catch
+            {
+                // Capability wrapper cleanup cannot prevent VM teardown.
+            }
             disposalCancellationSource.Dispose();
             Volatile.Write(ref lifecycleState, 2);
         }

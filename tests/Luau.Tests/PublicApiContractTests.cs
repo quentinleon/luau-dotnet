@@ -10,6 +10,8 @@ public sealed class PublicApiContractTests
 {
     const BindingFlags PublicDeclared =
         BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+    const BindingFlags ContractDeclared =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
     const string BaselineResource = "Luau.Tests.PublicApi.approved.txt";
 
     [Fact]
@@ -80,10 +82,6 @@ public sealed class PublicApiContractTests
         ];
 
         Assert.DoesNotContain(stateMethods, method => forbiddenNames.Contains(method.Name));
-        Assert.DoesNotContain(
-            typeof(LuauFunction).GetMethods(PublicDeclared),
-            method => method.Name == "InvokeAsync");
-
         Assert.All(
             stateMethods.Where(method => method.Name is "CreateFunction" or "CreateAsyncFunction"),
             method =>
@@ -96,6 +94,68 @@ public sealed class PublicApiContractTests
                 Assert.NotEqual(typeof(int), invoke.ReturnType);
                 Assert.NotEqual(typeof(ValueTask<int>), invoke.ReturnType);
             });
+    }
+
+    [Fact]
+    public void ResultDestinationsUseOnlyIntoNamesAndResumeArrayBindingIsUnambiguous()
+    {
+        var methods = typeof(LuauState).GetMethods(PublicDeclared);
+        string[] allocatingNames =
+        [
+            "Resume", "ResumeAsync", "DoString", "DoStringAsync",
+            "ExecuteCompilerOutput", "ExecuteCompilerOutputAsync",
+            "ExecuteVerifiedBytecode", "ExecuteVerifiedBytecodeAsync",
+        ];
+
+        Assert.DoesNotContain(
+            methods.Where(method => allocatingNames.Contains(method.Name, StringComparer.Ordinal)),
+            method => method.GetParameters().Any(parameter =>
+                parameter.ParameterType == typeof(Span<LuauValue>) ||
+                parameter.ParameterType == typeof(Memory<LuauValue>)));
+
+        string[] intoNames =
+        [
+            "ResumeInto", "ResumeIntoAsync", "DoStringInto", "DoStringIntoAsync",
+            "ExecuteCompilerOutputInto", "ExecuteCompilerOutputIntoAsync",
+            "ExecuteVerifiedBytecodeInto", "ExecuteVerifiedBytecodeIntoAsync",
+        ];
+        Assert.All(intoNames, name => Assert.Contains(methods, method => method.Name == name));
+
+        var resume = Assert.Single(methods, method => method.Name == "Resume");
+        Assert.Equal(typeof(LuauValue[]), resume.ReturnType);
+        Assert.Equal(typeof(ReadOnlySpan<LuauValue>), resume.GetParameters()[0].ParameterType);
+
+        var resumeAsync = Assert.Single(methods, method => method.Name == "ResumeAsync");
+        Assert.Equal(typeof(ValueTask<LuauValue[]>), resumeAsync.ReturnType);
+        Assert.Equal(typeof(ReadOnlyMemory<LuauValue>), resumeAsync.GetParameters()[0].ParameterType);
+    }
+
+    [Fact]
+    public void FunctionInvocationAndCoroutineLifecycleHaveClosedPublicShapes()
+    {
+        var functionMethods = typeof(LuauFunction).GetMethods(PublicDeclared);
+        var invoke = Assert.Single(functionMethods, method => method.Name == "Invoke");
+        var invokeAsync = Assert.Single(functionMethods, method => method.Name == "InvokeAsync");
+
+        Assert.Equal(typeof(LuauValue[]), invoke.ReturnType);
+        Assert.Equal(typeof(ReadOnlySpan<LuauValue>), invoke.GetParameters()[0].ParameterType);
+        Assert.Equal(typeof(ValueTask<LuauValue[]>), invokeAsync.ReturnType);
+        Assert.Equal(typeof(ReadOnlyMemory<LuauValue>), invokeAsync.GetParameters()[0].ParameterType);
+        Assert.All(
+            typeof(LuauFunction).GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
+            constructor => Assert.False(
+                constructor.IsPublic || constructor.IsFamily || constructor.IsFamilyOrAssembly,
+                "LuauFunction must not expose a constructor usable by external subclasses."));
+        Assert.DoesNotContain(
+            typeof(LuauFunction).Assembly.GetExportedTypes(),
+            type => type != typeof(LuauFunction) && typeof(LuauFunction).IsAssignableFrom(type));
+        Assert.Null(typeof(LuauFunction).Assembly.GetType("Luau.LuauFunctionExtensions"));
+
+        Assert.Equal(
+            [nameof(LuauThreadStatus.Suspended), nameof(LuauThreadStatus.Running), nameof(LuauThreadStatus.Dead)],
+            Enum.GetNames<LuauThreadStatus>());
+        Assert.Null(typeof(LuauTable).GetProperty("Count", PublicDeclared));
+        Assert.Equal(typeof(int), typeof(LuauTable).GetProperty("Length", PublicDeclared)!.PropertyType);
     }
 
     [Fact]
@@ -129,6 +189,18 @@ public sealed class PublicApiContractTests
         var serviceCompile = Assert.Single(
             typeof(ILuauCompilationService).GetMethods(PublicDeclared));
         Assert.Equal(typeof(ValueTask<LuauCompileResult>), serviceCompile.ReturnType);
+
+        var factories = typeof(LuauCompileResult).GetMethods(PublicDeclared)
+            .Where(method => method.IsStatic)
+            .Select(method => method.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Contains(nameof(LuauCompileResult.Success), factories);
+        Assert.Contains(nameof(LuauCompileResult.Diagnostic), factories);
+        Assert.Contains(nameof(LuauCompileResult.Canceled), factories);
+        Assert.Contains(nameof(LuauCompileResult.InfrastructureFailure), factories);
+        Assert.NotNull(typeof(LuauCompileResult).GetProperty(
+            nameof(LuauCompileResult.CompilationDiagnostic),
+            PublicDeclared));
     }
 
     static string[] Snapshot(Assembly assembly) => assembly.GetExportedTypes()
@@ -136,15 +208,32 @@ public sealed class PublicApiContractTests
         .Order(StringComparer.Ordinal)
         .ToArray();
 
-    static MemberInfo[] PublicMembers(Type type) =>
-        type.GetConstructors(PublicDeclared).Cast<MemberInfo>()
-            .Concat(type.GetMethods(PublicDeclared).Where(method =>
-                !method.IsSpecialName || method.Name.StartsWith("op_", StringComparison.Ordinal)))
-            .Concat(type.GetProperties(PublicDeclared))
-            .Concat(type.GetEvents(PublicDeclared))
-            .Concat(type.GetFields(PublicDeclared).Where(field => !field.IsSpecialName))
+    static MemberInfo[] PublicMembers(Type type)
+    {
+        var includeProtected = type.IsClass &&
+            !type.IsSealed &&
+            type.GetConstructors(ContractDeclared).Any(constructor =>
+                constructor.IsPublic || constructor.IsFamily || constructor.IsFamilyOrAssembly);
+        return type.GetConstructors(ContractDeclared)
+            .Where(constructor => IsContractVisible(constructor, includeProtected))
+            .Cast<MemberInfo>()
+            .Concat(type.GetMethods(ContractDeclared).Where(method =>
+                IsContractVisible(method, includeProtected) &&
+                (!method.IsSpecialName || method.Name.StartsWith("op_", StringComparison.Ordinal))))
+            .Concat(type.GetProperties(ContractDeclared).Where(property =>
+                property.GetAccessors(nonPublic: true)
+                    .Any(accessor => IsContractVisible(accessor, includeProtected))))
+            .Concat(type.GetEvents(ContractDeclared).Where(@event =>
+                new[] { @event.AddMethod, @event.RemoveMethod, @event.RaiseMethod }
+                    .Where(accessor => accessor != null)
+                    .Cast<MethodInfo>()
+                    .Any(accessor => IsContractVisible(accessor, includeProtected))))
+            .Concat(type.GetFields(ContractDeclared).Where(field =>
+                !field.IsSpecialName &&
+                (field.IsPublic || includeProtected && (field.IsFamily || field.IsFamilyOrAssembly))))
             .OrderBy(FormatMember, StringComparer.Ordinal)
             .ToArray();
+    }
 
     static string FormatTypeDeclaration(Type type)
     {
@@ -185,13 +274,54 @@ public sealed class PublicApiContractTests
         var detail = member switch
         {
             PropertyInfo property => $"{property} {{ " +
-                (property.GetMethod?.IsPublic == true ? "get; " : string.Empty) +
-                (property.SetMethod?.IsPublic == true ? "set; " : string.Empty) + "}",
+                FormatAccessor(property.GetMethod, "get") +
+                FormatAccessor(property.SetMethod, "set") + "}",
             FieldInfo field when field.IsLiteral =>
                 $"{field} = {FormatConstant(field.GetRawConstantValue(), field.FieldType)}",
             _ => member.ToString()!,
         };
-        return $"{kind} {FormatType(member.DeclaringType!)} :: {detail}";
+        return $"{FormatVisibility(member)}{kind} {FormatType(member.DeclaringType!)} :: {detail}";
+    }
+
+    static bool IsContractVisible(MethodBase method, bool includeProtected) =>
+        method.IsPublic || includeProtected && (method.IsFamily || method.IsFamilyOrAssembly);
+
+    static string FormatVisibility(MemberInfo member)
+    {
+        return member switch
+        {
+            MethodBase method => FormatVisibility(method),
+            FieldInfo field when field.IsFamilyOrAssembly => "protected internal ",
+            FieldInfo field when field.IsFamily => "protected ",
+            PropertyInfo property => FormatVisibility(MostVisibleAccessor(property.GetAccessors(nonPublic: true))),
+            EventInfo @event => FormatVisibility(MostVisibleAccessor(
+                new[] { @event.AddMethod, @event.RemoveMethod, @event.RaiseMethod }
+                    .Where(accessor => accessor != null)
+                    .Cast<MethodInfo>())),
+            _ => string.Empty,
+        };
+    }
+
+    static string FormatVisibility(MethodBase? method)
+    {
+        if (method == null || method.IsPublic) return string.Empty;
+        if (method.IsFamilyOrAssembly) return "protected internal ";
+        return method.IsFamily ? "protected " : string.Empty;
+    }
+
+    static MethodInfo? MostVisibleAccessor(IEnumerable<MethodInfo> accessors) => accessors
+        .OrderBy(accessor => accessor.IsPublic ? 0 : accessor.IsFamilyOrAssembly ? 1 : accessor.IsFamily ? 2 : 3)
+        .FirstOrDefault();
+
+    static string FormatAccessor(MethodInfo? accessor, string name)
+    {
+        if (accessor == null ||
+            !(accessor.IsPublic || accessor.IsFamily || accessor.IsFamilyOrAssembly))
+        {
+            return string.Empty;
+        }
+
+        return $"{FormatVisibility(accessor)}{name}; ";
     }
 
     static string FormatType(Type type)

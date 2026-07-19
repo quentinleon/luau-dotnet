@@ -13,7 +13,7 @@ namespace Luau.Unity.Editor
             EditorApplication.quitting += DrainForEditorQuit;
         }
 
-        static void DrainForAssemblyReload()
+        internal static void DrainForAssemblyReload()
         {
             Drain("assembly reload");
         }

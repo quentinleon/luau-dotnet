@@ -227,6 +227,7 @@ internal sealed class ScriptRunner : IDisposable
 
             if (status == LuauHostStatus.Ok)
             {
+                operation.CompleteCoroutineDead();
                 operation.ClearInjectedCallbackFailure();
                 ThrowIfHardStopped(operation, state);
                 ThrowIfUninjectedCallbackFailure(operation, state);
@@ -245,7 +246,9 @@ internal sealed class ScriptRunner : IDisposable
             {
                 case ScriptYieldReason.None:
                     ThrowIfUninjectedCallbackFailure(operation, state);
-                    return GetResultCount(operation, state, baseTop);
+                    var yieldedResultCount = GetResultCount(operation, state, baseTop);
+                    operation.CompleteCoroutineSuspended();
+                    return yieldedResultCount;
                 case ScriptYieldReason.CallbackFailure:
                     resumeWithError = true;
                     argumentCount = 0;
@@ -303,6 +306,7 @@ internal sealed class ScriptRunner : IDisposable
 
             if (status == LuauHostStatus.Ok)
             {
+                operation.CompleteCoroutineDead();
                 operation.ClearInjectedCallbackFailure();
                 return await LuauContinuationDispatcher.InvokeAsync(
                     scheduler,
@@ -330,13 +334,15 @@ internal sealed class ScriptRunner : IDisposable
             switch (operation.YieldReason)
             {
                 case ScriptYieldReason.None:
-                    return await LuauContinuationDispatcher.InvokeAsync(
+                    var yieldedResultCount = await LuauContinuationDispatcher.InvokeAsync(
                         scheduler,
                         () =>
                         {
                             ThrowIfUninjectedCallbackFailure(operation, state);
                             return GetResultCount(operation, state, baseTop);
                         }).ConfigureAwait(false);
+                    operation.CompleteCoroutineSuspended();
+                    return yieldedResultCount;
                 case ScriptYieldReason.CallbackFailure:
                     resumeWithError = true;
                     argumentCount = 0;
