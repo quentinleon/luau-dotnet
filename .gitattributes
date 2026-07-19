@@ -1,0 +1,3 @@
+# C# raw string literals preserve source newline bytes. Keep managed artifact
+# builds stable across Git clients and checkout locations.
+*.cs text eol=lf
