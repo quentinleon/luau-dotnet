@@ -16,6 +16,13 @@ namespace Luau.Unity.Tests
             var asset = ScriptableObject.CreateInstance<LuauAsset>();
             using var root = LuauUnity.CreateState(new LuauUnityOptions
             {
+                StateOptions = LuauStateOptions.Default with
+                {
+                    DefaultExecutionOptions = LuauExecutionOptions.Default with
+                    {
+                        WallClockLimit = TimeSpan.FromSeconds(5),
+                    },
+                },
                 ConfigureHostApis = state => state.OpenLibrary(new CapabilityHostService()),
             });
             using var child = root.CreateSandboxedThread();

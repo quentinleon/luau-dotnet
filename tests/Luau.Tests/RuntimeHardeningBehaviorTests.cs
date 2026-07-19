@@ -510,6 +510,36 @@ public sealed class RuntimeHardeningBehaviorTests
     }
 
     [Fact]
+    public void DeadlineDetectedDuringCallbackArgumentReadKeepsHardStopPrecedence()
+    {
+        var limit = TimeSpan.FromMilliseconds(25);
+        using var state = LuauState.Create(LuauStateOptions.UnboundedResources with
+        {
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
+            {
+                WallClockLimit = limit,
+            },
+        });
+        state["readAfterDeadline"] = state.CreateFunction(
+            "readAfterDeadline",
+            context =>
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(75));
+                _ = context.Read<string>(0);
+            });
+
+        var exception = Assert.Throws<LuauExecutionBudgetException>(() =>
+            state.DoString(
+                "return readAfterDeadline('value')",
+                "@budgets/callback-read-after-deadline.luau"));
+
+        Assert.Equal(LuauExecutionBudgetKind.WallClock, exception.BudgetKind);
+        Assert.Equal(limit, exception.WallClockLimit);
+        Assert.Equal("@budgets/callback-read-after-deadline.luau", exception.ChunkName);
+        Assert.Equal(7, Assert.Single(state.DoString("return 7")).Read<int>());
+    }
+
+    [Fact]
     public async Task CallerCancellationBeforeDeadlineKeepsCallerCancellationPrecedence()
     {
         using var state = LuauState.Create(LuauStateOptions.UnboundedResources with

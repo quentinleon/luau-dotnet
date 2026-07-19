@@ -480,9 +480,12 @@ internal sealed class ScriptRunner : IDisposable
 
     static void ThrowExecutionFailure(ScriptOperation operation, IntPtr state)
     {
-        var recordedHardStop = operation.YieldReason == ScriptYieldReason.HardStop
-            ? operation.GetHardStopException()
-            : null;
+        // A callback can discover a hard stop while accessing the VM and then
+        // report that exception through the callback-failure channel. Capture
+        // the sticky hard stop independently of the last yield reason so the
+        // operation-wide precedence remains hard stop, callback failure, then
+        // allocator/native failure.
+        var recordedHardStop = operation.GetHardStopException();
         var isInjectedCallbackFailure = IsCallbackFailureToken(operation, state);
         var callbackFailure = isInjectedCallbackFailure
             ? operation.TakeInjectedCallbackFailure()
@@ -505,14 +508,14 @@ internal sealed class ScriptRunner : IDisposable
 
         Abort(operation, state);
 
-        if (callbackFailure != null)
-        {
-            throw callbackFailure;
-        }
-
         if (recordedHardStop != null)
         {
             throw recordedHardStop;
+        }
+
+        if (callbackFailure != null)
+        {
+            throw callbackFailure;
         }
 
         if (operation.Context.AllocatorFailure == LuauAllocatorFailure.QuotaExceeded)
