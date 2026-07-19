@@ -418,7 +418,7 @@ public sealed class RuntimeHardeningBehaviorTests
         var limit = TimeSpan.FromMilliseconds(20);
         using var state = LuauState.Create(new LuauStateOptions
         {
-            DefaultExecutionOptions = new LuauExecutionOptions
+            DefaultExecutionOptions = LuauExecutionOptions.Unbounded with
             {
                 WallClockLimit = limit,
             },
