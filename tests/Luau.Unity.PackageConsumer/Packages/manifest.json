@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "com.nuskey.luau.unity": "file:../../../src/Luau.Unity/Assets/Luau.Unity"
-  }
-}

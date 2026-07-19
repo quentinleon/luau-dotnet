@@ -16,7 +16,7 @@ set(
 set(LUAU_HOST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 get_filename_component(
     LUAU_UPSTREAM_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../luau"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../luau"
     REALPATH
 )
 

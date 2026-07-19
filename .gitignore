@@ -7,25 +7,17 @@ bin/
 obj/
 /artifacts/
 
-# Unity generated state
-src/Luau.Unity/Library/
-src/Luau.Unity/Temp/
-src/Luau.Unity/Logs/
-src/Luau.Unity/Builds/
-src/Luau.Unity/UserSettings/
-src/Luau.Unity/.idea/
-src/Luau.Unity/Assets/**/obj/
-src/Luau.Unity/Assets/**/obj.meta
-src/Luau.Unity/Assets/**/bin/
-src/Luau.Unity/Assets/**/bin.meta
-
-# Clean path-only Unity package consumer generated state
-tests/Luau.Unity.PackageConsumer/Library/
-tests/Luau.Unity.PackageConsumer/Temp/
-tests/Luau.Unity.PackageConsumer/Logs/
-tests/Luau.Unity.PackageConsumer/UserSettings/
-tests/Luau.Unity.PackageConsumer/ProjectSettings/*
-!tests/Luau.Unity.PackageConsumer/ProjectSettings/ProjectVersion.txt
+# Unity integration-project generated state
+tests/Luau.Unity.Integration/Library/
+tests/Luau.Unity.Integration/Temp/
+tests/Luau.Unity.Integration/Logs/
+tests/Luau.Unity.Integration/Builds/
+tests/Luau.Unity.Integration/UserSettings/
+tests/Luau.Unity.Integration/.idea/
+tests/Luau.Unity.Integration/Assets/**/obj/
+tests/Luau.Unity.Integration/Assets/**/obj.meta
+tests/Luau.Unity.Integration/Assets/**/bin/
+tests/Luau.Unity.Integration/Assets/**/bin.meta
 
 # Native luau_host CMake output
 native/luau-host/out/
