@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <!-- This repo is Unity-first. .NET projects are retained as build and test harnesses. -->
-    <RepositoryUrl>https://github.com/nuskey8/luau-dotnet</RepositoryUrl>
+    <RepositoryUrl>https://github.com/Quantum-Lion-Labs/Luau-Unity</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 

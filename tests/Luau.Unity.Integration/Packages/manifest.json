@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.nuskey.luau.unity": "file:../../../Luau.Unity",
+    "com.qll.luau.unity": "file:../../../Luau.Unity",
     "com.github-glitchenzo.nugetforunity": "https://github.com/GlitchEnzo/NuGetForUnity.git?path=/src/NuGetForUnity",
     "com.ucp.bridge": "https://github.com/mflRevan/unity-control-protocol.git?path=unity-package/com.ucp.bridge#v0.6.0",
     "com.unity.ai.navigation": "2.0.13",
@@ -50,6 +50,6 @@
     "com.unity.visualscripting": "1.9.11"
   },
   "testables": [
-    "com.nuskey.luau.unity"
+    "com.qll.luau.unity"
   ]
 }

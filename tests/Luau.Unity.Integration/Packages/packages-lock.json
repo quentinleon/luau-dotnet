@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "com.nuskey.luau.unity": {
+    "com.qll.luau.unity": {
       "version": "file:../../../Luau.Unity",
       "depth": 0,
       "source": "local",

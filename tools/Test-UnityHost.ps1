@@ -919,7 +919,7 @@ $dotnetArtifacts = Join-Path $validationRoot "dotnet-artifacts"
 $logsRoot = Join-Path $validationRoot "logs"
 $resultsRoot = Join-Path $validationRoot "results"
 $buildsRoot = Join-Path $validationRoot "builds"
-$luauPackageName = "com.nuskey.luau.unity"
+$luauPackageName = "com.qll.luau.unity"
 $androidPackageName = "com.luauunity.host.smoke"
 
 if (Test-Path -LiteralPath $validationRoot) {

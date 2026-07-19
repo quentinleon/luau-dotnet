@@ -13,12 +13,12 @@ breaking changes.
 In Package Manager, choose **Add package from git URL** and use the exact tag:
 
 ```text
-https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0
+https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#v0.2.0
 ```
 
-The package ID remains `com.nuskey.luau.unity` for compatibility with the
-original nuskey package lineage. The canonical repository is maintained under
-the `nuskey8` GitHub account.
+The package ID is `com.qll.luau.unity`. Luau.Unity is developed by
+[Quantum Lion Labs](https://github.com/Quantum-Lion-Labs), the studio behind
+NervBox.
 
 ## One ordinary Unity workflow
 

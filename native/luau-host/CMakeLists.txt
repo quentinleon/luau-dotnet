@@ -213,6 +213,21 @@ if(ANDROID)
     # The NDK runtime choice is part of the reviewed toolchain contract. The
     # wrapper preset deliberately selects the shared libc++ used by Unity.
     target_link_libraries(luau_host PRIVATE c++_shared)
+
+    # NDK lld otherwise hashes host-specific unstripped debug metadata into the
+    # GNU build ID, even though the reviewed stripped binaries are identical.
+    # Keep symbol correlation while making the ID a stable digest of the
+    # source, target, toolchain, configuration, and reviewed shipping recipe.
+    set(_luau_host_android_build_recipe "android-shipping-v1")
+    string(
+        SHA1
+        _luau_host_android_build_id
+        "recipe=${_luau_host_android_build_recipe};inputs=${LUAU_HOST_BUILD_INPUT_FINGERPRINT};abi=${ANDROID_ABI};platform=${ANDROID_PLATFORM};stl=${ANDROID_STL};ndk=${LUAU_HOST_APPROVED_ANDROID_NDK_REVISION};compiler=${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION};configuration=${_luau_host_build_configuration}"
+    )
+    target_link_options(
+        luau_host
+        PRIVATE "LINKER:--build-id=0x${_luau_host_android_build_id}"
+    )
 endif()
 
 set_target_properties(
@@ -263,8 +278,13 @@ if(UNIX AND NOT APPLE)
         PRIVATE
             "LINKER:--version-script=${LUAU_HOST_ELF_VERSION_SCRIPT}"
             "LINKER:--exclude-libs,ALL"
-            "LINKER:--no-undefined"
     )
+    # Production ELF hosts must remain self-contained. Clang's shared-library
+    # ASan mode deliberately leaves sanitizer hooks for the instrumented final
+    # executable to provide, so --no-undefined is incompatible with that lane.
+    if(NOT LUAU_HOST_ENABLE_SANITIZERS)
+        target_link_options(luau_host PRIVATE "LINKER:--no-undefined")
+    endif()
     set_property(
         TARGET luau_host
         APPEND

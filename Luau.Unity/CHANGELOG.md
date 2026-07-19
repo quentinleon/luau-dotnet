@@ -20,6 +20,8 @@ API or ABI breaks.
 
 ### Changed
 
+- The UPM package ID is now `com.qll.luau.unity`, published by Quantum Lion
+  Labs from the canonical `Quantum-Lion-Labs/Luau-Unity` repository.
 - Allocating execution, invocation, and resume APIs return a disposable
   `LuauResultScope`; `*Into` APIs retain caller-owned destination semantics.
 - Callback reference arguments are borrowed and callback-scoped. Call
@@ -39,12 +41,4 @@ API or ABI breaks.
   paths.
 - Verification-only smoke types from the product API inventory.
 
-## [0.1.6] - 2026-07-19
-
-- Completed the standalone `Luau.Unity` UPM migration.
-- Established the package as the sole Unity product and interop authority.
-- Added deterministic managed/native artifact checks and generated-consumer
-  validation.
-
-[0.2.0]: https://github.com/nuskey8/luau-dotnet/releases/tag/v0.2.0
-[0.1.6]: https://github.com/nuskey8/luau-dotnet/releases/tag/v0.1.6
+[0.2.0]: https://github.com/Quantum-Lion-Labs/Luau-Unity/releases/tag/v0.2.0

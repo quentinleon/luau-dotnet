@@ -1017,15 +1017,17 @@ void test_allocator_quota_and_recovery()
 
     constexpr uint32_t memoryInfoFixedPrefixSize =
         static_cast<uint32_t>(offsetof(luau_host_memory_info, current_bytes));
-    alignas(luau_host_memory_info) std::array<uint8_t, memoryInfoFixedPrefixSize + 1> shortStorage = {};
-    shortStorage.fill(0xa5);
-    auto* shortInfo = reinterpret_cast<luau_host_memory_info*>(shortStorage.data());
-    shortInfo->struct_size = memoryInfoFixedPrefixSize;
+    // Keep a complete C++ object while advertising only the ABI prefix; the
+    // canary still proves that the host honors the caller-declared size.
+    luau_host_memory_info shortInfo = {};
+    std::memset(&shortInfo, 0xa5, sizeof(shortInfo));
+    shortInfo.struct_size = memoryInfoFixedPrefixSize;
+    const auto* shortBytes = reinterpret_cast<const uint8_t*>(&shortInfo);
     for (int query = 0; query < 2; ++query)
     {
-        REQUIRE(luau_host_memory_get(root.state, shortInfo) == LUAU_HOST_STATUS_OK);
-        REQUIRE(shortInfo->struct_size == memoryInfoFixedPrefixSize);
-        REQUIRE(shortStorage[memoryInfoFixedPrefixSize] == 0xa5);
+        REQUIRE(luau_host_memory_get(root.state, &shortInfo) == LUAU_HOST_STATUS_OK);
+        REQUIRE(shortInfo.struct_size == memoryInfoFixedPrefixSize);
+        REQUIRE(shortBytes[memoryInfoFixedPrefixSize] == 0xa5);
     }
 
     const std::vector<uint8_t> largeString(

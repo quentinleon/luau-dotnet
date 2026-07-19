@@ -2,10 +2,10 @@
 
 A focused Unity runtime for the official Luau VM, with a safe managed API,
 attribute-generated host libraries, and maintained Windows and Android plugins.
+Developed by [Quantum Lion Labs](https://github.com/Quantum-Lion-Labs), the
+studio behind [NervBox](https://nervbox.com/).
 
-![header](./docs/images/img-header.png)
-
-[![Releases](https://img.shields.io/github/release/nuskey8/luau-dotnet.svg)](https://github.com/nuskey8/luau-dotnet/releases)
+[![Releases](https://img.shields.io/github/release/Quantum-Lion-Labs/Luau-Unity.svg)](https://github.com/Quantum-Lion-Labs/Luau-Unity/releases)
 [![license](https://img.shields.io/badge/LICENSE-MIT-green.svg)](LICENSE)
 
 > [!CAUTION]
@@ -58,7 +58,7 @@ and build fingerprint. The native binary exports only the approved
 In Unity Package Manager, choose **Add package from git URL** and enter:
 
 ```text
-https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0
+https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#v0.2.0
 ```
 
 Or add the package to `Packages/manifest.json`:
@@ -66,7 +66,7 @@ Or add the package to `Packages/manifest.json`:
 ```json
 {
   "dependencies": {
-    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0"
+    "com.qll.luau.unity": "https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#v0.2.0"
   }
 }
 ```
@@ -618,6 +618,15 @@ ucp run-tests --mode edit
 Pop-Location
 ```
 
+Pushing a tag matching `v*.*.*` also starts the unified release workflow. It
+reruns managed, native, sanitizer, fuzz, and deterministic-package validation,
+requires the tag to equal `v` plus the version in `Luau.Unity/package.json`,
+then publishes the archive and manifest on a GitHub Release. The hosted release
+job skips only the Unity consumer because hosted runners do not carry the
+licensed project editor. The exact tagged remote install remains a
+maintained-Unity-environment check using the command above after the tag is
+pushed.
+
 Native plugins are built separately with the CMake presets under
 `native/luau-host`. Managed refresh copies only `Luau.dll`, its `Luau.xml`
 IntelliSense file, and `Luau.SourceGenerator.dll`; the package already owns its
@@ -625,6 +634,28 @@ interop source.
 
 See the [maintainer guide](docs/maintainer-guide.md) for authority boundaries,
 operation semantics, and validation recipes.
+
+## Attribution
+
+Luau.Unity began as a fork of
+[nuskey8/luau-dotnet](https://github.com/nuskey8/luau-dotnet), originally
+authored by Yusuke Nakada and released under the MIT License. Both copyright lines live in [`LICENSE`](./LICENSE).
+
+This repository takes that foundation in a Unity-first direction. `Luau.Unity`
+is a standalone UPM package with a bounded managed API, source-generated host
+bindings, explicit trust and resource policies, and maintained native plugins
+for Windows and Android. The .NET solution is a fast build and test harness over
+the same managed implementation rather than a separate distribution. Package
+consumer, Unity EditMode, and player-smoke validation cover the code that ships
+to Unity projects, with untrusted mod source and precompiled game scripts both
+treated as first-class use cases for Quantum Lion Labs and NervBox.
+
+The native runtime and compiler are the official
+[Luau VM](https://github.com/luau-lang/luau), developed by Roblox and pinned as
+an upstream submodule. This repository provides the versioned host ABI and the
+managed and Unity integration around it. See
+[`Luau.Unity/Third Party Notices.md`](Luau.Unity/Third%20Party%20Notices.md) for
+the Luau and other redistributed dependency notices.
 
 ## License
 

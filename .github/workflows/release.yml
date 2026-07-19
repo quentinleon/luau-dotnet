@@ -1,0 +1,117 @@
+name: Release Luau.Unity
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  require-release-source:
+    name: Require canonical main commit
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Require canonical repository
+        shell: pwsh
+        env:
+          ACTUAL_REPOSITORY: ${{ github.repository }}
+        run: |
+          $expectedRepository = "Quantum-Lion-Labs/Luau-Unity"
+          if ($env:ACTUAL_REPOSITORY -cne $expectedRepository) {
+              throw "Releases must run from '$expectedRepository', not '$env:ACTUAL_REPOSITORY'."
+          }
+
+      - name: Checkout exact release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Require tagged commit on main
+        shell: pwsh
+        run: |
+          & git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) {
+              throw "The tagged commit is not contained in the canonical main branch."
+          }
+
+  validate-managed:
+    name: Validate managed package
+    needs: require-release-source
+    uses: ./.github/workflows/validate-managed-package.yml
+
+  validate-native:
+    name: Validate native hosts
+    needs: require-release-source
+    uses: ./.github/workflows/build-luau-host.yml
+
+  publish:
+    name: Validate tag and publish GitHub release
+    needs: [validate-managed, validate-native]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Require tag to match package version
+        id: package
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $package = Get-Content -LiteralPath Luau.Unity/package.json -Raw | ConvertFrom-Json
+          $expectedTag = "v$($package.version)"
+          if ($env:RELEASE_TAG -cne $expectedTag) {
+              throw "Release tag '$env:RELEASE_TAG' does not match package version '$($package.version)'. Expected '$expectedTag'."
+          }
+          $archiveName = "$($package.name)-$($package.version).tgz"
+          "version=$($package.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "archive_name=$archiveName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Validate exact tag and build deterministic package
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          ARCHIVE_NAME: ${{ steps.package.outputs.archive_name }}
+        run: |
+          & ./tools/Test-UnityPackageRelease.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -SkipUnityConsumer `
+            -OutputPath "native/luau-host/out/release/$env:ARCHIVE_NAME"
+
+      - name: Retain published package inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: luau-unity-upm-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            native/luau-host/out/release/${{ steps.package.outputs.archive_name }}
+            native/luau-host/out/release/${{ steps.package.outputs.archive_name }}.manifest.json
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          ARCHIVE_NAME: ${{ steps.package.outputs.archive_name }}
+        run: |
+          $archivePath = "native/luau-host/out/release/$env:ARCHIVE_NAME"
+          gh release create $env:RELEASE_TAG `
+            $archivePath `
+            "$archivePath.manifest.json" `
+            --verify-tag `
+            --title "Luau.Unity $env:PACKAGE_VERSION" `
+            --generate-notes

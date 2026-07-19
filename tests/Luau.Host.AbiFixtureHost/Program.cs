@@ -233,7 +233,7 @@ internal static class Program
                 $"Expected '{fixtureCase.DiagnosticFragment}', received: {diagnostic}");
         }
 
-        var hostPath = GetResolverHostPath(AppContext.BaseDirectory);
+        var hostPath = GetHostPath(AppContext.BaseDirectory);
         var handle = NativeLibrary.Load(hostPath);
         try
         {
@@ -286,49 +286,13 @@ internal static class Program
 
     static void InstallFixture(string fixturePath, string isolatedDirectory)
     {
-        var resolverHostPath = GetResolverHostPath(isolatedDirectory);
-        Directory.CreateDirectory(Path.GetDirectoryName(resolverHostPath)!);
-        File.Copy(fixturePath, resolverHostPath, overwrite: true);
-
-        // Debug builds resolve a same-directory native library before the RID
-        // folder. Keep both locations byte-identical so the counter handle is
-        // always opened against the module selected by the resolver.
-        var baseHostPath = Path.Combine(
-            isolatedDirectory,
-            GetNativeFileName(HostLogicalName));
-        File.Copy(fixturePath, baseHostPath, overwrite: true);
+        var hostPath = GetHostPath(isolatedDirectory);
+        File.Copy(fixturePath, hostPath, overwrite: true);
     }
 
-    static string GetResolverHostPath(string baseDirectory)
+    static string GetHostPath(string baseDirectory)
     {
-#if DEBUG
         return Path.Combine(baseDirectory, GetNativeFileName(HostLogicalName));
-#else
-        return Path.Combine(
-            baseDirectory,
-            "runtimes",
-            GetRuntimeIdentifier(),
-            "native",
-            GetNativeFileName(HostLogicalName));
-#endif
-    }
-
-    static string GetRuntimeIdentifier()
-    {
-        var operatingSystem = OperatingSystem.IsWindows()
-            ? "win"
-            : OperatingSystem.IsMacOS()
-                ? "osx"
-                : "linux";
-        var architecture = RuntimeInformation.ProcessArchitecture switch
-        {
-            Architecture.X86 => "x86",
-            Architecture.X64 => "x64",
-            Architecture.Arm64 => "arm64",
-            var unsupported => throw new PlatformNotSupportedException(
-                $"Unsupported ABI fixture process architecture: {unsupported}"),
-        };
-        return $"{operatingSystem}-{architecture}";
     }
 
     static string GetNativeFileName(string logicalName)

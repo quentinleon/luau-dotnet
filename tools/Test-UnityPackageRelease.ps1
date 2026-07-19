@@ -6,6 +6,8 @@ param(
 
     [string] $Tag = "",
 
+    [switch] $SkipUnityConsumer,
+
     [string] $UnityPath = "",
 
     [string] $ConsumerOutputRoot = "",
@@ -439,7 +441,7 @@ if (![string]::IsNullOrWhiteSpace($Tag)) {
     if ($taggedPackage.name -cne $package.name -or $taggedPackage.version -cne $package.version) {
         throw "The exact tag has a different package identity or version."
     }
-    $taggedInstallUrl = "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#$Tag"
+    $taggedInstallUrl = "https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#$Tag"
     $packageReadme = Get-Content -LiteralPath (Join-Path $packageRoot "README.md") -Raw
     if ($packageReadme.IndexOf($taggedInstallUrl, [StringComparison]::Ordinal) -lt 0) {
         throw "Package README does not contain the exact tagged install URL: $taggedInstallUrl"
@@ -520,7 +522,11 @@ $manifest = [ordered]@{
 $manifestText = ($manifest | ConvertTo-Json -Depth 8 -Compress) + "`n"
 $utf8 = [Text.UTF8Encoding]::new($false)
 
-if (![string]::IsNullOrWhiteSpace($Tag)) {
+if ($SkipUnityConsumer -and [string]::IsNullOrWhiteSpace($Tag)) {
+    throw "-SkipUnityConsumer requires -Tag so exact-tag validation cannot be bypassed."
+}
+
+if (![string]::IsNullOrWhiteSpace($Tag) -and !$SkipUnityConsumer) {
     $consumerScript = Join-Path $PSScriptRoot "Test-UnityPackageConsumer.ps1"
     $consumerArguments = @{
         PackageReference = $taggedInstallUrl

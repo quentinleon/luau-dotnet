@@ -290,7 +290,7 @@ Assert-ExistingFile `
     (Join-Path $packageContentRoot "Runtime/Luau.xml") `
     "Referenced managed XML IntelliSense artifact"
 $packageMetadata = Get-Content -LiteralPath $resolvedPackageJsonPath -Raw | ConvertFrom-Json
-if ($packageMetadata.name -cne "com.nuskey.luau.unity") {
+if ($packageMetadata.name -cne "com.qll.luau.unity") {
     throw "The referenced package has an unexpected identity: $($packageMetadata.name)"
 }
 $sampleImportRoot = Join-Path $projectPath (
@@ -327,7 +327,7 @@ Copy-Item -LiteralPath $versionFile -Destination (
 
 $manifest = [ordered]@{
     dependencies = [ordered]@{
-        "com.nuskey.luau.unity" = $resolvedPackageReference
+        "com.qll.luau.unity" = $resolvedPackageReference
     }
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 4

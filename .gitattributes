@@ -13,4 +13,7 @@
 *.meta text eol=lf
 tests/Luau.Tests/PublicApi.approved.txt text eol=lf
 native/luau-host/include/luau_host.h text eol=lf
+native/luau-host/src/luau_host.cpp text eol=lf
+native/luau-host/src/reference_tokens.h text eol=lf
+native/luau-host/src/tracked_allocation.h text eol=lf
 native/luau-host/exports/luau_host.exports text eol=lf

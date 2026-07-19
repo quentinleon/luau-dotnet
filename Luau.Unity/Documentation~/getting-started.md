@@ -8,7 +8,7 @@ Windows x64 and Android ARM64/x86_64. Unity 6000.3.19f1 is the reviewed minimum.
 Use Package Manager's **Add package from git URL** command:
 
 ```text
-https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0
+https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#v0.2.0
 ```
 
 Then import **Getting Started** from the package's Samples tab.

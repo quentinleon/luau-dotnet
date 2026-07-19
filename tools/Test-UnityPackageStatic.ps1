@@ -331,6 +331,9 @@ foreach ($requiredAttribute in @(
     "*.xml text eol=lf",
     "tests/Luau.Tests/PublicApi.approved.txt text eol=lf",
     "native/luau-host/include/luau_host.h text eol=lf",
+    "native/luau-host/src/luau_host.cpp text eol=lf",
+    "native/luau-host/src/reference_tokens.h text eol=lf",
+    "native/luau-host/src/tracked_allocation.h text eol=lf",
     "native/luau-host/exports/luau_host.exports text eol=lf"
 )) {
     Assert-ContainsLiteral "Hash-pinned text checkout policy" $gitAttributes $requiredAttribute
@@ -367,7 +370,7 @@ Assert-SequenceEqual `
 Write-Host "PASS: Luau.Unity has the exact Stage 6 release-content top-level allowlist."
 
 $package = Read-PackageJson "package.json"
-Assert-Equal "Unity package name" $package.name "com.nuskey.luau.unity"
+Assert-Equal "Unity package name" $package.name "com.qll.luau.unity"
 Assert-Equal "Unity package version" $package.version "0.2.0"
 Assert-Equal "Unity package display name" $package.displayName "Luau.Unity"
 Assert-Equal `
@@ -377,13 +380,13 @@ Assert-Equal `
 Assert-Equal "Unity package minimum Unity version" $package.unity "6000.3"
 Assert-Equal "Unity package minimum Unity release" $package.unityRelease "19f1"
 Assert-Equal "Unity package license" $package.license "MIT"
-Assert-Equal "Unity package author" $package.author.name "Yusuke Nakada (nuskey)"
-Assert-Equal "Unity package repository" $package.repository.url "https://github.com/nuskey8/luau-dotnet.git"
+Assert-Equal "Unity package author" $package.author.name "Quantum Lion Labs"
+Assert-Equal "Unity package repository" $package.repository.url "https://github.com/Quantum-Lion-Labs/Luau-Unity.git"
 Assert-Equal "Unity package repository directory" $package.repository.directory "Luau.Unity"
-Assert-Equal "Unity package issues" $package.bugs.url "https://github.com/nuskey8/luau-dotnet/issues"
+Assert-Equal "Unity package issues" $package.bugs.url "https://github.com/Quantum-Lion-Labs/Luau-Unity/issues"
 foreach ($urlProperty in @("licensesUrl", "documentationUrl", "changelogUrl")) {
     $url = [string]$package.$urlProperty
-    if (!$url.StartsWith("https://github.com/nuskey8/luau-dotnet/", [StringComparison]::Ordinal) -or
+    if (!$url.StartsWith("https://github.com/Quantum-Lion-Labs/Luau-Unity/", [StringComparison]::Ordinal) -or
         $url.IndexOf("v0.2.0", [StringComparison]::Ordinal) -lt 0) {
         throw "Unity package $urlProperty is not pinned to the canonical v0.2.0 tree: $url"
     }
@@ -425,7 +428,7 @@ $packageReadme = Read-PackageText "README.md"
 Assert-ContainsLiteral `
     "Tagged package installation" `
     $packageReadme `
-    "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0"
+    "https://github.com/Quantum-Lion-Labs/Luau-Unity.git?path=Luau.Unity#v0.2.0"
 foreach ($contract in @(
     "LuauResultScope",
     "source-only by default",
@@ -658,12 +661,12 @@ foreach ($required in @(
 Write-Host "PASS: the managed artifact envelope is versioned, bounded before allocation, integrity checked, typed on rejection, and independently mutation tested."
 
 $artifactBaselines = @(
-    @{ Path = "Runtime/Luau.dll"; Length = 257024L; Sha256 = "A5FC81460C5EE02CFDC04EA9859F765883E32DDF25CC09D00A8CE769709609AB" },
+    @{ Path = "Runtime/Luau.dll"; Length = 257024L; Sha256 = "96A7F2095F8CB1EFC8FCE34CA1123587A05B72CB57A0FB7264FFE03770E9307A" },
     @{ Path = "Runtime/Luau.xml"; Length = 156183L; Sha256 = "4B9AA846CCE65DB5E621D4C86BA4461CA64176C9CE54A4891935771992DF3829" },
-    @{ Path = "Runtime/Luau.SourceGenerator.dll"; Length = 63488L; Sha256 = "6BE677E31ACBD752B49A8F3808A149E29302EC3073501A372B9BB3F770F33661" },
-    @{ Path = "Runtime/Plugins/win-x64/luau_host.dll"; Length = 995328L; Sha256 = "9878A9224B567D32EA8BCED03446AE32743C3DDABF5FAF3574B9097920ADEB82" },
-    @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so"; Length = 866704L; Sha256 = "E8C61ABEB71FC54EE8FBAF34ECCD4A327638D1E9DC26909535AACE89C4CE8787" },
-    @{ Path = "Runtime/Plugins/android-x64/libluau_host.so"; Length = 900512L; Sha256 = "5014AC8458B85C4D68BF3125CC4800D5B6F9546478009EB78CAFA838A90BCE2C" }
+    @{ Path = "Runtime/Luau.SourceGenerator.dll"; Length = 63488L; Sha256 = "E6EC90D4A4152CEE1D5EC5F5F48D6ACCB4DAFFEB2560183B08D0CD233101D419" },
+    @{ Path = "Runtime/Plugins/win-x64/luau_host.dll"; Length = 995328L; Sha256 = "429671AE55387F2783C70526D18CAFB68253B04EEB278B638D57ED13C724F0D0" },
+    @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so"; Length = 866704L; Sha256 = "382907D397A5B3AEED0E7F74B8E917B027A9B563B3988EE080B147B7D4CC6266" },
+    @{ Path = "Runtime/Plugins/android-x64/libluau_host.so"; Length = 900512L; Sha256 = "E21051C53411AE4B4E332D8A81BB2D96CCAC09D8F0A3AEB02835B4D4090F675D" }
 )
 foreach ($artifact in $artifactBaselines) {
     $artifactPath = Get-PackageFile $artifact.Path
@@ -1414,7 +1417,7 @@ Assert-ContainsLiteral `
 Write-Host "PASS: native ABI 2.0 header, 80-symbol allowlist, stale-safe O(1) references, checked-in plugins, and pinned upstream revision are synchronized."
 
 $integrationManifest = Read-IntegrationJson "Packages/manifest.json"
-$integrationDependency = $integrationManifest.dependencies.PSObject.Properties["com.nuskey.luau.unity"]
+$integrationDependency = $integrationManifest.dependencies.PSObject.Properties["com.qll.luau.unity"]
 if ($null -eq $integrationDependency) {
     throw "The integration project does not declare the standalone Luau.Unity package."
 }
@@ -1425,10 +1428,10 @@ Assert-Equal `
 Assert-SequenceEqual `
     "Integration-project testable package inventory" `
     @($integrationManifest.testables) `
-    @("com.nuskey.luau.unity")
+    @("com.qll.luau.unity")
 
 $integrationLock = Read-IntegrationJson "Packages/packages-lock.json"
-$integrationLockEntry = $integrationLock.dependencies.PSObject.Properties["com.nuskey.luau.unity"]
+$integrationLockEntry = $integrationLock.dependencies.PSObject.Properties["com.qll.luau.unity"]
 if ($null -eq $integrationLockEntry) {
     throw "The integration lock file does not contain the standalone Luau.Unity package."
 }
@@ -1557,7 +1560,7 @@ foreach ($required in @(
 }
 $releasePolicy = Read-RepositoryJson "tools/UnityPackageReleasePolicy.json"
 Assert-Equal "Release policy schema" ([int]$releasePolicy.schemaVersion) 1
-Assert-Equal "Release policy package" $releasePolicy.packageId "com.nuskey.luau.unity"
+Assert-Equal "Release policy package" $releasePolicy.packageId "com.qll.luau.unity"
 Assert-Equal "Release policy version" $releasePolicy.packageVersion "0.2.0"
 Assert-Equal "Release policy tag" $releasePolicy.releaseTag "v0.2.0"
 Assert-Equal "Release policy archive format" $releasePolicy.archiveFormat "ustar+gzip-stored-v1"
@@ -1602,7 +1605,10 @@ foreach ($required in @(
     "Test-UnityPackageConsumer.ps1",
     'PackageReference = $taggedInstallUrl',
     'ExpectedGitCommit = $tagCommit',
-    'UnityTimeoutMinutes = $ConsumerTimeoutMinutes'
+    'UnityTimeoutMinutes = $ConsumerTimeoutMinutes',
+    '[switch] $SkipUnityConsumer',
+    '-SkipUnityConsumer requires -Tag',
+    '!$SkipUnityConsumer'
 )) {
     Assert-ContainsLiteral "Package release validator" $releaseValidator $required
 }
@@ -1644,6 +1650,7 @@ Write-Host "PASS: operational scripts use only final package, integration-projec
 
 $managedWorkflow = Read-RepositoryText ".github/workflows/validate-managed-package.yml"
 Assert-ContainsLiteral "Managed validation workflow" $managedWorkflow "pull_request:"
+Assert-ContainsLiteral "Reusable managed validation workflow" $managedWorkflow "workflow_call:"
 Assert-ContainsLiteral "Managed validation outer timeout" $managedWorkflow "timeout-minutes: 45"
 if ([Regex]::IsMatch($managedWorkflow, '(?m)^\s+paths(?:-ignore)?:\s*$')) {
     throw "Managed package validation must remain unfiltered so every compatibility path triggers it."
@@ -1737,6 +1744,7 @@ foreach ($required in @(
 
 $nativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.yml"
 foreach ($required in @(
+    "workflow_call:",
     "pull_request:",
     "paths:",
     '".gitmodules"',
@@ -1756,13 +1764,44 @@ foreach ($required in @(
     "retention-days: 30",
     "needs: [build-windows, build-android, sanitize-and-fuzz]",
     "tools/Test-UnityPackageRelease.ps1",
-    "com.nuskey.luau.unity-0.2.0.tgz",
+    "com.qll.luau.unity-0.2.0.tgz",
     "luau-unity-upm-release-candidate"
 )) {
     Assert-ContainsLiteral "Native pull-request/security workflow" $nativeWorkflow $required
 }
 Assert-LiteralCount "Native submodule gitlink CI trigger" $nativeWorkflow '"native/luau"' 2
 Assert-NotContainsLiteral "Docs-only native workflow filtering" $nativeWorkflow '"docs/**"'
+
+$releaseWorkflow = Read-RepositoryText ".github/workflows/release.yml"
+foreach ($required in @(
+    '"v*.*.*"',
+    "Quantum-Lion-Labs/Luau-Unity",
+    "git merge-base --is-ancestor HEAD origin/main",
+    "needs: require-release-source",
+    "uses: ./.github/workflows/validate-managed-package.yml",
+    "uses: ./.github/workflows/build-luau-host.yml",
+    "needs: [validate-managed, validate-native]",
+    "contents: write",
+    'RELEASE_TAG: ${{ github.ref_name }}',
+    "-Tag `$env:RELEASE_TAG",
+    "-SkipUnityConsumer",
+    "tools/Test-UnityPackageRelease.ps1",
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "gh release create",
+    "--verify-tag",
+    "--generate-notes"
+)) {
+    Assert-ContainsLiteral "Tag-triggered release workflow" $releaseWorkflow $required
+}
+Assert-LiteralOrder "Release publication gates" $releaseWorkflow @(
+    "Require canonical repository",
+    "Require tagged commit on main",
+    "needs: [validate-managed, validate-native]",
+    "Require tag to match package version",
+    "Validate exact tag and build deterministic package",
+    "Retain published package inputs",
+    "Publish GitHub release"
+)
 
 $cmakePresets = Read-RepositoryText "native/luau-host/CMakePresets.json"
 foreach ($required in @(
@@ -1833,11 +1872,25 @@ foreach ($required in @(
 
 $windowsNativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.windows.yml"
 foreach ($required in @(
+    "Provision pinned MSVC 14.42 compatibility toolset",
+    '$reviewedComponent = "Microsoft.VisualStudio.Component.VC.14.42.17.12.x86.x64"',
+    "Microsoft.VisualStudio.Product.Enterprise",
+    '-version "[17.0,18.0)"',
+    "Microsoft Visual Studio/Installer/setup.exe",
+    '"modify"',
+    "Start-Process",
+    "-WindowStyle Hidden",
+    'if ($installerProcess.ExitCode -ne 0)',
+    '"LUAU_HOST_VS_INSTALLATION_PATH=$installationPath"',
+    '$installationPath = $env:LUAU_HOST_VS_INSTALLATION_PATH',
+    '"-DCMAKE_GENERATOR_INSTANCE=$env:LUAU_HOST_VS_INSTALLATION_PATH"',
     "Verify pinned MSVC toolchain",
     '$reviewedToolsVersion = "14.42.34433"',
-    '$reviewedCompilerVersion = "19.42.34433.0"',
+    '$reviewedCompilerVersion = [Version]"19.42.34444.0"',
+    '$reviewedLinkerVersion = [Version]"14.42.34444.0"',
+    '$actualCompilerVersion -ne $reviewedCompilerVersion',
+    '$actualLinkerVersion -ne $reviewedLinkerVersion',
     '$reviewedSdkVersion = "10.0.22621.0"',
-    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
     "Windows Kits/10",
     "Require current shipped Windows plugin",
     "Shape shipping host and external symbols",
@@ -1845,6 +1898,26 @@ foreach ($required in @(
     "native/luau-host/out/symbols/win-x64/"
 )) {
     Assert-ContainsLiteral "Windows native release artifacts" $windowsNativeWorkflow $required
+}
+Assert-LiteralOrder "Windows native pinned toolchain provisioning" $windowsNativeWorkflow @(
+    "Provision pinned MSVC 14.42 compatibility toolset",
+    "Microsoft.VisualStudio.Component.VC.14.42.17.12.x86.x64",
+    '"LUAU_HOST_VS_INSTALLATION_PATH=$installationPath"',
+    "Verify pinned MSVC toolchain",
+    '$installationPath = $env:LUAU_HOST_VS_INSTALLATION_PATH',
+    '"-DCMAKE_GENERATOR_INSTANCE=$env:LUAU_HOST_VS_INSTALLATION_PATH"'
+)
+Assert-LiteralCount "Windows native Enterprise instance discovery" $windowsNativeWorkflow "Microsoft.VisualStudio.Product.Enterprise" 1
+Assert-LiteralCount "Windows native VS 2022 version filter" $windowsNativeWorkflow '-version "[17.0,18.0)"' 1
+$nativeCmake = Read-RepositoryText "native/luau-host/CMakeLists.txt"
+foreach ($required in @(
+    'set(_luau_host_android_build_recipe "android-shipping-v1")',
+    'inputs=${LUAU_HOST_BUILD_INPUT_FINGERPRINT}',
+    'ndk=${LUAU_HOST_APPROVED_ANDROID_NDK_REVISION}',
+    'compiler=${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}',
+    '"LINKER:--build-id=0x${_luau_host_android_build_id}"'
+)) {
+    Assert-ContainsLiteral "Android native deterministic build ID" $nativeCmake $required
 }
 $androidNativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.android.yml"
 foreach ($required in @(
