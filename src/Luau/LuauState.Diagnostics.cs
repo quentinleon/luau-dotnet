@@ -1,5 +1,3 @@
-using System.Buffers;
-using System.Text;
 using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
@@ -63,16 +61,25 @@ public unsafe partial class LuauState
         }
         else if (maxUtf8Bytes is not { } byteLimit)
         {
-            if (length > int.MaxValue)
-            {
-                throw new LuauException("The Luau display string is too large for managed memory.");
-            }
-
-            formatted = Encoding.UTF8.GetString(new ReadOnlySpan<byte>(result, (int)length));
+            ReserveDecodedString(length);
+            formatted = System.Text.Encoding.UTF8.GetString(
+                new ReadOnlySpan<byte>(result, checked((int)length)));
         }
         else
         {
-            formatted = DecodeBoundedUtf8(result, length, byteLimit, out truncated);
+            var effectiveLimit = Options.MaxDecodedStringBytes is { } rootLimit
+                ? Math.Min(byteLimit, rootLimit)
+                : byteLimit;
+            var decodedLength = BoundedUtf8Decoder.GetValidPrefixLength(
+                result,
+                length,
+                effectiveLimit);
+            context.GetActiveOperation()?.ReserveDecodedBytes((ulong)decodedLength);
+            formatted = BoundedUtf8Decoder.Decode(
+                result,
+                length,
+                effectiveLimit,
+                out truncated);
         }
 
         hostOperation.CompleteAndRestore(
@@ -80,129 +87,4 @@ public unsafe partial class LuauState
         return formatted;
     }
 
-    static string DecodeBoundedUtf8(
-        byte* value,
-        ulong length,
-        int maxUtf8Bytes,
-        out bool truncated)
-    {
-        if (maxUtf8Bytes == 0)
-        {
-            truncated = length != 0;
-            return string.Empty;
-        }
-
-        var bytesToDecode = length > (ulong)maxUtf8Bytes
-            ? maxUtf8Bytes
-            : checked((int)length);
-        if (length > (ulong)bytesToDecode)
-        {
-            bytesToDecode = TrimIncompleteUtf8Sequence(value, bytesToDecode);
-        }
-
-        if (bytesToDecode == 0)
-        {
-            truncated = length != 0;
-            return string.Empty;
-        }
-
-        var characters = ArrayPool<char>.Shared.Rent(bytesToDecode);
-        try
-        {
-            var characterCount = Encoding.UTF8.GetChars(
-                new ReadOnlySpan<byte>(value, bytesToDecode),
-                characters.AsSpan());
-            var boundedCharacterCount = GetUtf8BoundedCharacterCount(
-                characters.AsSpan(0, characterCount),
-                maxUtf8Bytes);
-
-            truncated = length > (ulong)bytesToDecode || boundedCharacterCount < characterCount;
-            return new string(characters, 0, boundedCharacterCount);
-        }
-        finally
-        {
-            ArrayPool<char>.Shared.Return(characters);
-        }
-    }
-
-    static int TrimIncompleteUtf8Sequence(byte* value, int length)
-    {
-        if (length == 0)
-        {
-            return 0;
-        }
-
-        var sequenceStart = length - 1;
-        while (sequenceStart > 0 &&
-               (value[sequenceStart] & 0xc0) == 0x80 &&
-               length - sequenceStart < 4)
-        {
-            sequenceStart--;
-        }
-
-        var leadingByte = value[sequenceStart];
-        int expectedLength;
-        if ((leadingByte & 0x80) == 0)
-        {
-            expectedLength = 1;
-        }
-        else if ((leadingByte & 0xe0) == 0xc0)
-        {
-            expectedLength = 2;
-        }
-        else if ((leadingByte & 0xf0) == 0xe0)
-        {
-            expectedLength = 3;
-        }
-        else if ((leadingByte & 0xf8) == 0xf0)
-        {
-            expectedLength = 4;
-        }
-        else
-        {
-            return length;
-        }
-
-        return sequenceStart + expectedLength > length ? sequenceStart : length;
-    }
-
-    static int GetUtf8BoundedCharacterCount(ReadOnlySpan<char> value, int maxUtf8Bytes)
-    {
-        var encodedBytes = 0;
-        var index = 0;
-
-        while (index < value.Length)
-        {
-            var character = value[index];
-            int characterCount;
-            int byteCount;
-
-            if (char.IsHighSurrogate(character) &&
-                index + 1 < value.Length &&
-                char.IsLowSurrogate(value[index + 1]))
-            {
-                characterCount = 2;
-                byteCount = 4;
-            }
-            else
-            {
-                characterCount = 1;
-                byteCount = character <= '\u007f'
-                    ? 1
-                    : character <= '\u07ff'
-                        ? 2
-                        : 3;
-            }
-
-            if (encodedBytes > maxUtf8Bytes - byteCount)
-            {
-                break;
-            }
-
-            encodedBytes += byteCount;
-            index += characterCount;
-        }
-
-        return index;
-    }
 }

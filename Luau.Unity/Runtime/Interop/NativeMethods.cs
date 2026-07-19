@@ -36,14 +36,8 @@ namespace Luau.Internal.Interop
         [DllImport(__DllName, EntryPoint = "luau_host_memory_reset_failure", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostStatus luau_host_memory_reset_failure(LuauHostState* state);
 
-        [DllImport(__DllName, EntryPoint = "luau_host_memory_arm_quota_failure", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern LuauHostStatus luau_host_memory_arm_quota_failure(LuauHostState* state);
-
         [DllImport(__DllName, EntryPoint = "luau_host_main_thread", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostState* luau_host_main_thread(LuauHostState* state);
-
-        [DllImport(__DllName, EntryPoint = "luau_host_is_thread_reset", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern int luau_host_is_thread_reset(LuauHostState* state);
 
         [DllImport(__DllName, EntryPoint = "luau_host_thread_status", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostStatus luau_host_thread_status(LuauHostState* state);
@@ -65,9 +59,6 @@ namespace Luau.Internal.Interop
 
         [DllImport(__DllName, EntryPoint = "luau_host_type_name", CallingConvention = Call, ExactSpelling = true)]
         internal static extern byte* luau_host_type_name(LuauHostState* state, int type);
-
-        [DllImport(__DllName, EntryPoint = "luau_host_raw_equal", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern int luau_host_raw_equal(LuauHostState* state, int left, int right);
 
         [DllImport(__DllName, EntryPoint = "luau_host_object_length", CallingConvention = Call, ExactSpelling = true)]
         internal static extern int luau_host_object_length(LuauHostState* state, int index);
@@ -129,11 +120,8 @@ namespace Luau.Internal.Interop
         [DllImport(__DllName, EntryPoint = "luau_host_to_pointer", CallingConvention = Call, ExactSpelling = true)]
         internal static extern void* luau_host_to_pointer(LuauHostState* state, int index);
 
-        [DllImport(__DllName, EntryPoint = "luau_host_to_function", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern IntPtr luau_host_to_function(LuauHostState* state, int index);
-
-        [DllImport(__DllName, EntryPoint = "luau_host_callback_userdata", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern void* luau_host_callback_userdata(LuauHostState* state, int upvalue);
+        [DllImport(__DllName, EntryPoint = "luau_host_callback_registration_id", CallingConvention = Call, ExactSpelling = true)]
+        internal static extern ulong luau_host_callback_registration_id(LuauHostState* state);
 
         [DllImport(__DllName, EntryPoint = "luau_host_push_value", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostStatus luau_host_push_value(LuauHostState* state, int index);
@@ -250,13 +238,10 @@ namespace Luau.Internal.Interop
         internal static extern int luau_host_yield(LuauHostState* state, int resultCount);
 
         [DllImport(__DllName, EntryPoint = "luau_host_collect", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern LuauHostStatus luau_host_collect(LuauHostState* state, int operation, int data, int* result);
+        internal static extern LuauHostStatus luau_host_collect(LuauHostState* state);
 
         [DllImport(__DllName, EntryPoint = "luau_host_open_library", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostStatus luau_host_open_library(LuauHostState* state, LuauHostLibrary library, int* resultCount);
-
-        [DllImport(__DllName, EntryPoint = "luau_host_open_all_libraries", CallingConvention = Call, ExactSpelling = true)]
-        internal static extern LuauHostStatus luau_host_open_all_libraries(LuauHostState* state);
 
         [DllImport(__DllName, EntryPoint = "luau_host_sandbox_root", CallingConvention = Call, ExactSpelling = true)]
         internal static extern LuauHostStatus luau_host_sandbox_root(LuauHostState* state);

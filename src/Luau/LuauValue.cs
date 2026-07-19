@@ -5,6 +5,11 @@ using System.Runtime.InteropServices;
 
 namespace Luau;
 
+/// <summary>
+/// Represents one managed Luau value. Primitive values are self-contained;
+/// reference values borrow the lifetime of their contained wrapper and do not
+/// retain it when this struct is copied or converted.
+/// </summary>
 [StructLayout(LayoutKind.Auto)]
 public readonly struct LuauValue : IEquatable<LuauValue>
 {
@@ -18,23 +23,63 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         [FieldOffset(0)] public Vector3 VectorValue;
     }
 
+    /// <summary>Represents the singleton Luau <c>nil</c> value.</summary>
     public static readonly LuauValue Nil = default;
 
+    /// <summary>
+    /// Converts a supported managed value without requiring a Luau state.
+    /// Reference values retain their existing ownership and VM association.
+    /// </summary>
+    public static LuauValue CreateFrom<T>(T? value)
+    {
+        if (value == null) return Nil;
+
+        if (value is LuauValue luauValue) return luauValue;
+        if (value is bool boolean) return FromBoolean(boolean);
+        if (value is string text) return FromString(text);
+        if (value is Vector3 vector) return FromVector(vector);
+        if (value is LuauFunction function) return FromFunction(function);
+        if (value is LuauTable table) return FromTable(table);
+        if (value is LuauBuffer buffer) return FromBuffer(buffer);
+        if (value is LuauState state) return FromThread(state);
+        if (value is LuauUserData userData) return FromUserData(userData);
+        if (value is LuauObjectHandle objectHandle) return FromObjectHandle(objectHandle);
+
+        if (value is byte unsignedByte) return FromInteger(unsignedByte);
+        if (value is sbyte signedByte) return FromInteger(signedByte);
+        if (value is short signedShort) return FromInteger(signedShort);
+        if (value is ushort unsignedShort) return FromInteger(unsignedShort);
+        if (value is int signedInteger) return FromInteger(signedInteger);
+        if (value is uint unsignedInteger) return FromInteger(unsignedInteger);
+        if (value is long signedLong) return FromInteger(signedLong);
+        if (value is ulong unsignedLong) return FromInteger(checked((long)unsignedLong));
+        if (value is float single) return FromNumber(single);
+        if (value is double number) return FromNumber(number);
+
+        throw new ArgumentException(
+            $"Cannot convert {typeof(T).Name} to {nameof(LuauValue)}.",
+            nameof(value));
+    }
+
+    /// <summary>Creates a Luau floating-point number.</summary>
     public static LuauValue FromNumber(double value)
     {
         return new(LuauType.Number, new() { NumberValue = value }, null);
     }
 
+    /// <summary>Creates a distinct signed 64-bit Luau integer.</summary>
     public static LuauValue FromInteger(long value)
     {
         return new(LuauType.Integer, new() { IntegerValue = value }, null);
     }
 
+    /// <summary>Creates a Luau Boolean value.</summary>
     public static LuauValue FromBoolean(bool value)
     {
         return new(LuauType.Boolean, new() { BooleanValue = value }, null);
     }
 
+    /// <summary>Creates a Luau string value from a non-null managed string.</summary>
     public static LuauValue FromString(string value)
     {
         return new(LuauType.String, default, value);
@@ -45,6 +90,7 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return new(LuauType.LightUserData, new() { PointerValue = value }, null);
     }
 
+    /// <summary>Wraps existing userdata without retaining or transferring its ownership.</summary>
     public static LuauValue FromUserData(LuauUserData value)
     {
         return new(LuauType.UserData, default, value);
@@ -59,26 +105,31 @@ public readonly struct LuauValue : IEquatable<LuauValue>
             value ?? throw new ArgumentNullException(nameof(value)));
     }
 
+    /// <summary>Creates a Luau three-component vector value.</summary>
     public static LuauValue FromVector(Vector3 value)
     {
         return new(LuauType.Vector, new() { VectorValue = value }, null);
     }
 
+    /// <summary>Wraps an existing table without retaining or transferring its ownership.</summary>
     public static LuauValue FromTable(LuauTable value)
     {
         return new(LuauType.Table, default, value);
     }
 
+    /// <summary>Wraps an existing function without retaining or transferring its ownership.</summary>
     public static LuauValue FromFunction(LuauFunction value)
     {
         return new(LuauType.Function, default, value);
     }
 
+    /// <summary>Wraps an existing root or coroutine without retaining or transferring its ownership.</summary>
     public static LuauValue FromThread(LuauState value)
     {
         return new(LuauType.Thread, default, value);
     }
 
+    /// <summary>Wraps an existing buffer without retaining or transferring its ownership.</summary>
     public static LuauValue FromBuffer(LuauBuffer value)
     {
         return new(LuauType.Buffer, default, value);
@@ -87,20 +138,41 @@ public readonly struct LuauValue : IEquatable<LuauValue>
     readonly LuauType type;
     readonly ValueUnion value;
     readonly object? reference;
+    readonly bool disposeThreadIfUnpublished;
 
+    internal bool ContainsManagedReferenceWrapper => reference is LuauTable or
+        LuauFunction or
+        LuauBuffer or
+        LuauState or
+        LuauUserData or
+        LuauObjectHandle;
+
+    /// <summary>Gets the Luau VM type of this value.</summary>
     public LuauType Type => type;
 
     internal IntPtr LightUserDataPointer => type == LuauType.LightUserData
         ? value.PointerValue
         : throw new InvalidOperationException($"Cannot read {type} as light userdata.");
 
-    LuauValue(LuauType type, ValueUnion value, object? reference)
+    LuauValue(
+        LuauType type,
+        ValueUnion value,
+        object? reference,
+        bool disposeThreadIfUnpublished = false)
     {
         this.type = type;
         this.value = value;
         this.reference = reference;
+        this.disposeThreadIfUnpublished = disposeThreadIfUnpublished;
     }
 
+    internal static LuauValue FromStackThread(LuauState value, bool wasCreated) =>
+        new(LuauType.Thread, default, value, disposeThreadIfUnpublished: wasCreated);
+
+    /// <summary>
+    /// Returns the managed or Luau textual representation. Reference-valued
+    /// instances require their contained wrapper and root state to remain live.
+    /// </summary>
     public unsafe override string ToString()
     {
         return type switch
@@ -132,7 +204,61 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return $"{vector.X}, {vector.Y}, {vector.Z}";
     }
 
+    /// <summary>Gets whether this value is Luau <c>nil</c>.</summary>
     public bool IsNil => Type == LuauType.Nil;
+
+    /// <summary>
+    /// Creates an independently disposable owner when this value contains a
+    /// table, function, buffer, userdata, or object-handle reference. Primitive
+    /// values are returned unchanged. A cached thread wrapper cannot be
+    /// independently retained and is rejected.
+    /// </summary>
+    public LuauValue Retain()
+    {
+        return Type switch
+        {
+            LuauType.Table => FromTable(Read<LuauTable>().Retain()),
+            LuauType.Function => FromFunction(Read<LuauFunction>().Retain()),
+            LuauType.Buffer => FromBuffer(Read<LuauBuffer>().Retain()),
+            LuauType.UserData when reference is LuauObjectHandle handle =>
+                FromObjectHandle(handle.Retain()),
+            LuauType.UserData => FromUserData(Read<LuauUserData>().Retain()),
+            LuauType.Thread => throw new InvalidOperationException(
+                "A cached Luau thread wrapper cannot be independently retained."),
+            _ => this,
+        };
+    }
+
+    internal void DisposeOwnedReference()
+    {
+        switch (reference)
+        {
+            case LuauTable table:
+                table.Dispose();
+                break;
+            case LuauFunction function:
+                function.Dispose();
+                break;
+            case LuauBuffer buffer:
+                buffer.Dispose();
+                break;
+            case LuauUserData userData:
+                userData.Dispose();
+                break;
+            case LuauObjectHandle objectHandle:
+                objectHandle.Dispose();
+                break;
+        }
+    }
+
+    internal void DisposeUnpublishedReference()
+    {
+        DisposeOwnedReference();
+        if (disposeThreadIfUnpublished && reference is LuauState { IsMainThread: false } thread)
+        {
+            thread.Dispose();
+        }
+    }
 
     /// <summary>Reads this value as the requested managed representation.</summary>
     /// <remarks>
@@ -161,6 +287,13 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         };
     }
 
+    /// <summary>
+    /// Attempts a checked conversion to <typeparamref name="T"/> without
+    /// retaining reference wrappers or changing their ownership.
+    /// </summary>
+    /// <typeparam name="T">The requested supported managed representation.</typeparam>
+    /// <param name="result">Receives the converted value when conversion succeeds.</param>
+    /// <returns><see langword="true"/> when the conversion is valid and lossless; otherwise <see langword="false"/>.</returns>
     public bool TryRead<T>(out T result)
     {
         if (typeof(T) == typeof(LuauValue))
@@ -373,6 +506,10 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         return true;
     }
 
+    /// <summary>
+    /// Tests primitive values by value and VM-backed references by managed
+    /// wrapper identity. This does not invoke Luau equality metamethods.
+    /// </summary>
     public bool Equals(LuauValue other)
     {
         if (type != other.type) return false;
@@ -391,11 +528,13 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         };
     }
 
+    /// <summary>Tests whether <paramref name="obj"/> is an equal <see cref="LuauValue"/>.</summary>
     public override bool Equals([NotNullWhen(true)] object? obj)
     {
         return obj is LuauValue other && Equals(other);
     }
 
+    /// <summary>Returns a hash consistent with managed value-or-wrapper-identity equality.</summary>
     public override int GetHashCode()
     {
         return type switch
@@ -411,32 +550,52 @@ public readonly struct LuauValue : IEquatable<LuauValue>
         };
     }
 
+    /// <summary>Tests two values using managed <see cref="Equals(LuauValue)"/> semantics.</summary>
     public static bool operator ==(LuauValue left, LuauValue right)
     {
         return left.Equals(right);
     }
 
+    /// <summary>Tests two values for inequality using managed equality semantics.</summary>
     public static bool operator !=(LuauValue left, LuauValue right)
     {
         return !(left == right);
     }
 
+    /// <summary>Converts a double to a Luau floating-point number.</summary>
     public static implicit operator LuauValue(double value) => FromNumber(value);
+    /// <summary>Converts a byte to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(byte value) => FromInteger(value);
+    /// <summary>Converts a signed byte to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(sbyte value) => FromInteger(value);
+    /// <summary>Converts a signed 16-bit value to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(short value) => FromInteger(value);
+    /// <summary>Converts an unsigned 16-bit value to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(ushort value) => FromInteger(value);
+    /// <summary>Converts a signed 32-bit value to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(int value) => FromInteger(value);
+    /// <summary>Converts an unsigned 32-bit value to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(uint value) => FromInteger(value);
+    /// <summary>Converts a signed 64-bit value to a distinct Luau integer.</summary>
     public static implicit operator LuauValue(long value) => FromInteger(value);
+    /// <summary>Converts an unsigned 64-bit value to a Luau integer, rejecting values above <see cref="long.MaxValue"/>.</summary>
     public static implicit operator LuauValue(ulong value) => FromInteger(checked((long)value));
+    /// <summary>Converts a Boolean to a Luau Boolean value.</summary>
     public static implicit operator LuauValue(bool value) => FromBoolean(value);
+    /// <summary>Converts a non-null managed string to a Luau string value.</summary>
     public static implicit operator LuauValue(string value) => FromString(value);
+    /// <summary>Converts a three-component vector to a Luau vector value.</summary>
     public static implicit operator LuauValue(Vector3 value) => FromVector(value);
+    /// <summary>Wraps a table without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauTable value) => FromTable(value);
+    /// <summary>Wraps a function without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauFunction value) => FromFunction(value);
+    /// <summary>Wraps a root or coroutine without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauState value) => FromThread(value);
+    /// <summary>Wraps a buffer without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauBuffer value) => FromBuffer(value);
+    /// <summary>Wraps userdata without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauUserData value) => FromUserData(value);
+    /// <summary>Wraps an object capability without retaining or transferring its ownership.</summary>
     public static implicit operator LuauValue(LuauObjectHandle value) => FromObjectHandle(value);
 }

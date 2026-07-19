@@ -11,6 +11,23 @@ $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $packageRoot = Join-Path $root "Luau.Unity"
 $runtimeDir = Join-Path $packageRoot "Runtime"
 
+function Get-Sha256Bytes([byte[]] $Bytes) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($Bytes))).Replace("-", "")
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-CanonicalUtf8Bytes([string] $Path) {
+    $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+    $canonicalUtf8 = [Text.UTF8Encoding]::new($false)
+    $text = $strictUtf8.GetString([IO.File]::ReadAllBytes($Path))
+    return $canonicalUtf8.GetBytes($text.Replace("`r`n", "`n").Replace("`r", "`n"))
+}
+
 $projects = @(
     "src/Luau/Luau.csproj",
     "src/Luau.SourceGenerator/Luau.SourceGenerator.csproj"
@@ -30,6 +47,11 @@ $artifacts = @(
         FileName = "Luau.dll"
     },
     @{
+        Source = "src/Luau/bin/$Configuration/netstandard2.1/Luau.xml"
+        FileName = "Luau.xml"
+        CanonicalText = $true
+    },
+    @{
         Source = "src/Luau.SourceGenerator/bin/$Configuration/netstandard2.0/Luau.SourceGenerator.dll"
         FileName = "Luau.SourceGenerator.dll"
     }
@@ -38,9 +60,20 @@ $artifacts = @(
 foreach ($artifact in $artifacts) {
     $source = Join-Path $root $artifact.Source
     $destination = Join-Path $runtimeDir $artifact.FileName
+    $destinationMeta = "$destination.meta"
 
     if (!(Test-Path -LiteralPath $source)) {
         throw "Missing artifact: $source. Build the relevant .NET project first."
+    }
+    if (!(Test-Path -LiteralPath $destinationMeta -PathType Leaf)) {
+        throw "Missing Unity artifact metadata: $destinationMeta"
+    }
+
+    $canonicalText = $artifact.ContainsKey("CanonicalText") -and $artifact.CanonicalText
+    $sourceHash = if ($canonicalText) {
+        Get-Sha256Bytes (Get-CanonicalUtf8Bytes $source)
+    } else {
+        (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
     }
 
     if ($Check) {
@@ -48,7 +81,6 @@ foreach ($artifact in $artifacts) {
             throw "Missing Unity artifact: $destination. Refresh the managed package artifacts."
         }
 
-        $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
         $destinationHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
         if ($sourceHash -ne $destinationHash) {
             throw "Stale Unity artifact: $destination does not match $source."
@@ -57,8 +89,12 @@ foreach ($artifact in $artifacts) {
         Write-Host "Current: $destination (SHA256=$destinationHash)"
     }
     else {
-        Copy-Item -LiteralPath $source -Destination $destination -Force
-        $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+        if ($canonicalText) {
+            [IO.File]::WriteAllBytes($destination, (Get-CanonicalUtf8Bytes $source))
+        }
+        else {
+            Copy-Item -LiteralPath $source -Destination $destination -Force
+        }
         $destinationHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
         if ($sourceHash -ne $destinationHash) {
             throw "Copied Unity artifact failed SHA256 verification: $destination"

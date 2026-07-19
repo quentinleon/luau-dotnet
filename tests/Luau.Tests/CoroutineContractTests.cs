@@ -17,9 +17,9 @@ public sealed class CoroutineContractTests
             .Read<LuauState>();
         var arguments = new LuauValue[] { 21d, 2d };
 
-        LuauValue[] syncResults = syncCoroutine.Resume(arguments);
-        ValueTask<LuauValue[]> asyncOperation = asyncCoroutine.ResumeAsync(arguments);
-        LuauValue[] asyncResults = await asyncOperation;
+        using LuauResultScope syncResults = syncCoroutine.Resume(arguments);
+        ValueTask<LuauResultScope> asyncOperation = asyncCoroutine.ResumeAsync(arguments);
+        using LuauResultScope asyncResults = await asyncOperation;
 
         Assert.Equal([21, 2], arguments.Select(value => value.Read<int>()));
         Assert.Equal([23, 42], syncResults.Select(value => value.Read<int>()));

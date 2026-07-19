@@ -10,18 +10,57 @@ permissions:
 jobs:
   build:
     name: Build Windows x64 host
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           submodules: true
 
       - name: Install CMake
-        uses: jwlawson/actions-setup-cmake@v1
+        uses: jwlawson/actions-setup-cmake@d06b37b47cfd043ec794ffa3e40e0b6b5858a7ec # v1.14.2
         with:
           cmake-version: 3.29.5
+
+      - name: Verify pinned MSVC toolchain
+        shell: pwsh
+        run: |
+          $reviewedToolsVersion = "14.42.34433"
+          $reviewedCompilerVersion = "19.42.34433.0"
+          $reviewedSdkVersion = "10.0.22621.0"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          $installationPath = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if ([string]::IsNullOrWhiteSpace($installationPath)) {
+            throw "A Visual Studio installation with the x64 C++ tools was not found."
+          }
+          $compiler = Join-Path $installationPath `
+            "VC/Tools/MSVC/$reviewedToolsVersion/bin/Hostx64/x64/cl.exe"
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+            throw "Reviewed MSVC toolset $reviewedToolsVersion is not installed: $compiler"
+          }
+          $actualCompilerVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($compiler).FileVersion
+          if ($actualCompilerVersion -ne $reviewedCompilerVersion) {
+            throw "MSVC compiler version mismatch. Expected $reviewedCompilerVersion, found $actualCompilerVersion."
+          }
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits/10"
+          foreach ($requiredSdkInput in @(
+            "Include/$reviewedSdkVersion/um/Windows.h",
+            "Include/$reviewedSdkVersion/ucrt/corecrt.h",
+            "Lib/$reviewedSdkVersion/um/x64/kernel32.lib"
+          )) {
+            $requiredSdkPath = Join-Path $sdkRoot $requiredSdkInput
+            if (-not (Test-Path -LiteralPath $requiredSdkPath -PathType Leaf)) {
+              throw "Reviewed Windows SDK $reviewedSdkVersion is incomplete: $requiredSdkPath"
+            }
+          }
+          Write-Host (
+            "Verified MSVC $actualCompilerVersion from toolset $reviewedToolsVersion " +
+            "and Windows SDK $reviewedSdkVersion.")
 
       - name: Configure host
         working-directory: native/luau-host
@@ -40,7 +79,7 @@ jobs:
         run: cmake --install out/build/windows-x64 --config Release
 
       - name: Install .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 9.0.306
 
@@ -88,12 +127,21 @@ jobs:
           -Platform win-x64
           -Check
 
-      - name: Upload host
-        uses: actions/upload-artifact@v4
+      - name: Shape shipping host and external symbols
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Copy-NativeArtifactsToUnity.ps1
+          -Platform win-x64
+
+      - name: Upload unstripped host, audited shipping output, and symbols
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: luau-host-win-x64
+          name: luau-host-win-x64-release
           if-no-files-found: error
           path: |
             native/luau-host/out/install/windows-x64/luau_host.dll
             native/luau-host/out/install/windows-x64/luau_host.manifest.json
             native/luau-host/out/install/windows-x64/share/luau-host/luau_host.exports
+            native/luau-host/out/shipping/win-x64/
+            native/luau-host/out/symbols/win-x64/

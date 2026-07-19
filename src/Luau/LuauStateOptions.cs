@@ -11,6 +11,11 @@ public sealed record LuauStateOptions
     int? maxSourceBytes = 1024 * 1024;
     int? maxBytecodeBytes = 4 * 1024 * 1024;
     int? maxManagedHandleCount = 1024;
+    int? maxDecodedStringBytes = 1024 * 1024;
+    long? maxDecodedBytesPerOperation = 4L * 1024 * 1024;
+    int maxDiagnosticBytes = 16 * 1024;
+    int? maxCachedModuleCount = 256;
+    int? maxModuleDependencyDepth = 32;
     LuauExecutionOptions defaultExecutionOptions = LuauExecutionOptions.Default;
     LuauBytecodePolicy bytecodePolicy = LuauBytecodePolicy.Reject;
 
@@ -31,6 +36,11 @@ public sealed record LuauStateOptions
         MaxSourceBytes = null,
         MaxBytecodeBytes = null,
         MaxManagedHandleCount = null,
+        MaxDecodedStringBytes = null,
+        MaxDecodedBytesPerOperation = null,
+        MaxDiagnosticBytes = 16 * 1024,
+        MaxCachedModuleCount = null,
+        MaxModuleDependencyDepth = null,
         DefaultExecutionOptions = LuauExecutionOptions.Unbounded,
         BytecodePolicy = LuauBytecodePolicy.Reject,
     };
@@ -123,6 +133,111 @@ public sealed record LuauStateOptions
             }
 
             maxManagedHandleCount = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets the maximum UTF-8 byte length of one Luau string decoded into
+    /// managed memory, or <see langword="null"/> when explicitly unbounded.
+    /// Native lengths are checked before allocating the managed string.
+    /// </summary>
+    public int? MaxDecodedStringBytes
+    {
+        get => maxDecodedStringBytes;
+        init
+        {
+            if (value.HasValue && value.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxDecodedStringBytes),
+                    value,
+                    "A decoded-string limit must be greater than zero.");
+            }
+
+            maxDecodedStringBytes = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets the aggregate UTF-8 byte budget for strings decoded during one
+    /// execution, callback, module, or direct host operation, or
+    /// <see langword="null"/> when explicitly unbounded.
+    /// </summary>
+    public long? MaxDecodedBytesPerOperation
+    {
+        get => maxDecodedBytesPerOperation;
+        init
+        {
+            if (value.HasValue && value.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxDecodedBytesPerOperation),
+                    value,
+                    "An aggregate decoded-result limit must be greater than zero.");
+            }
+
+            maxDecodedBytesPerOperation = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets the maximum UTF-8 bytes decoded from a native diagnostic. Longer
+    /// diagnostics are truncated at a valid UTF-8 boundary.
+    /// </summary>
+    public int MaxDiagnosticBytes
+    {
+        get => maxDiagnosticBytes;
+        init
+        {
+            if (value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxDiagnosticBytes),
+                    value,
+                    "A diagnostic limit must be greater than zero.");
+            }
+
+            maxDiagnosticBytes = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets the maximum retained module results in this root VM's shared
+    /// module cache, or <see langword="null"/> when explicitly unbounded.
+    /// </summary>
+    public int? MaxCachedModuleCount
+    {
+        get => maxCachedModuleCount;
+        init
+        {
+            if (value.HasValue && value.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxCachedModuleCount),
+                    value,
+                    "A module-cache limit must be positive.");
+            }
+            maxCachedModuleCount = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets the maximum nested managed <c>require</c> dependency depth, or
+    /// <see langword="null"/> when explicitly unbounded.
+    /// </summary>
+    public int? MaxModuleDependencyDepth
+    {
+        get => maxModuleDependencyDepth;
+        init
+        {
+            if (value.HasValue && value.Value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaxModuleDependencyDepth),
+                    value,
+                    "A module dependency-depth limit must be positive.");
+            }
+            maxModuleDependencyDepth = value;
         }
     }
 

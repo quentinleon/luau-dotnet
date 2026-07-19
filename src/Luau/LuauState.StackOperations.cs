@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -37,8 +36,7 @@ public unsafe partial class LuauState
             throw new InvalidOperationException("The Luau stack does not contain a function and the requested arguments.");
         }
 
-        using var runner = ScriptRunner.Rent();
-        var actualResults = runner.RunToStack(operation, numOfargs);
+        var actualResults = ScriptRunner.RunToStack(operation, numOfargs);
 
         if (numOfresults < 0 || actualResults == numOfresults)
         {
@@ -198,10 +196,15 @@ public unsafe partial class LuauState
 
     internal unsafe LuauValue ToValue(int index)
     {
+        return ToValue(index, borrowedFrame: null);
+    }
+
+    internal unsafe LuauValue ToValue(int index, LuauCallFrame? borrowedFrame)
+    {
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
-        return ToValueCore(index, (LuauHostType)luau_host_type(l, index));
+        return ToValueCore(index, (LuauHostType)luau_host_type(l, index), borrowedFrame);
     }
 
     /// <summary>
@@ -213,10 +216,13 @@ public unsafe partial class LuauState
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
 
-        return ToValueCore(index, (LuauHostType)nativeType);
+        return ToValueCore(index, (LuauHostType)nativeType, borrowedFrame: null);
     }
 
-    LuauValue ToValueCore(int index, LuauHostType luauType)
+    LuauValue ToValueCore(
+        int index,
+        LuauHostType luauType,
+        LuauCallFrame? borrowedFrame)
     {
         switch (luauType)
         {
@@ -246,30 +252,38 @@ public unsafe partial class LuauState
             case LuauHostType.Table:
                 var table = new LuauTable(
                     this,
-                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau table"));
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau table"),
+                    borrowedFrame);
                 return LuauValue.FromTable(table);
             case LuauHostType.Function:
                 var function = new LuauScriptFunction(
                     this,
-                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau function"));
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau function"),
+                    borrowedFrame);
                 return LuauValue.FromFunction(function);
             case LuauHostType.Userdata:
                 if (TryReadObjectToken(index, out var objectToken))
                 {
                     return LuauValue.FromObjectHandle(
-                        RetainObjectHandleFromStack(index, objectToken));
+                        RetainObjectHandleFromStack(index, objectToken, borrowedFrame));
                 }
                 var userData = new LuauUserData(
                     this,
-                    LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"));
+                    LuauReferenceHelper.CreateReference(this, index, "retain Luau userdata"),
+                    borrowedFrame);
                 return LuauValue.FromUserData(userData);
             case LuauHostType.Thread:
-                var thread = context.GetOrCreateThread(l, luau_host_to_thread(l, index), index);
-                return LuauValue.FromThread(thread);
+                var thread = context.GetOrCreateThread(
+                    l,
+                    luau_host_to_thread(l, index),
+                    index,
+                    out var createdThread);
+                return LuauValue.FromStackThread(thread, createdThread);
             case LuauHostType.Buffer:
                 var buffer = new LuauBuffer(
                     this,
-                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau buffer"));
+                    LuauReferenceHelper.CreateReference(this, index, "retain a Luau buffer"),
+                    borrowedFrame);
                 return LuauValue.FromBuffer(buffer);
             case LuauHostType.Class:
             case LuauHostType.Object:
@@ -473,12 +487,31 @@ public unsafe partial class LuauState
             throw new InvalidOperationException($"The value at {index} cannot be converted to a string.");
         }
 
+        ReserveDecodedString(length);
+
+        return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, checked((int)length)));
+    }
+
+    void ReserveDecodedString(ulong length)
+    {
+        if (Options.MaxDecodedStringBytes is { } stringLimit && length > (ulong)stringLimit)
+        {
+            throw new LuauDecodedResultLimitException(
+                context.GetActiveOperation()?.ChunkName,
+                LuauDecodedResultLimitKind.StringBytes,
+                LuauVmContext.ToDiagnosticByteCount(length),
+                stringLimit);
+        }
         if (length > int.MaxValue)
         {
-            throw new InvalidOperationException("The Luau string is too large for a managed string.");
+            throw new LuauDecodedResultLimitException(
+                context.GetActiveOperation()?.ChunkName,
+                LuauDecodedResultLimitKind.StringBytes,
+                LuauVmContext.ToDiagnosticByteCount(length),
+                int.MaxValue);
         }
 
-        return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, (int)length));
+        context.GetActiveOperation()?.ReserveDecodedBytes(length);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -656,22 +689,13 @@ public unsafe partial class LuauState
         ThrowIfDisposed();
         if (value == null) throw new ArgumentNullException(nameof(value));
 
-        var byteCount = Encoding.UTF8.GetByteCount(value);
-        var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, byteCount));
-        try
+        using var utf8 = new Utf8BufferScope(value.AsSpan());
+        using var access = EnterNativeAccess();
+        fixed (byte* stringPtr = utf8.Bytes)
         {
-            var utf8Count = Encoding.UTF8.GetBytes(value, buffer);
-            using var access = EnterNativeAccess();
-            fixed (byte* stringPtr = buffer)
-            {
-                LuauNativeProtection.Prepare(context);
-                var status = luau_host_push_string(l, stringPtr, (ulong)utf8Count);
-                LuauNativeProtection.ThrowIfFailed(this, l, status, "push a string onto the Luau stack");
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_push_string(l, stringPtr, (ulong)utf8.Length);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "push a string onto the Luau stack");
         }
     }
 
@@ -744,47 +768,32 @@ public unsafe partial class LuauState
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
             }
 
-            var lifetimeCallbacks = new LuauHostCallbackTable
-            {
-                struct_size = (uint)sizeof(LuauHostCallbackTable),
-                version = 1,
-                userdata_destructor = Marshal.GetFunctionPointerForDelegate(
-                    LuauManagedCallbackLifetime.Destructor),
-            };
-            void* rawToken = null;
-            LuauNativeProtection.Prepare(context);
-            var tokenStatus = luau_host_userdata_create_with_destructor(
-                l,
-                (ulong)sizeof(int),
-                &lifetimeCallbacks,
-                &rawToken);
-            LuauNativeProtection.ThrowIfFailed(
-                this,
-                l,
-                tokenStatus,
-                "create a managed callback registration token");
-
-            var token = (int*)rawToken;
-            *token = 0;
-            context.AddManagedCallbackNativeReference(registrationId);
-            *token = registrationId;
-
+            var nativeReleaseToken = context.AddManagedCallbackNativeReference(registrationId);
             var callbackTable = new LuauHostCallbackTable
             {
                 struct_size = (uint)sizeof(LuauHostCallbackTable),
                 version = 1,
+                userdata = nativeReleaseToken,
+                registration_id = checked((ulong)registrationId),
                 managed_function = Marshal.GetFunctionPointerForDelegate(managedCallback.Callback),
+                userdata_destructor = Marshal.GetFunctionPointerForDelegate(
+                    LuauManagedCallbackLifetime.Destructor),
             };
             var ownerTransferred = 0;
             var errorObject = 0;
+            LuauNativeProtection.Prepare(context);
             var closureStatus = luau_host_push_callback(
-                l,
-                &callbackTable,
-                null,
-                0,
-                1,
-                &ownerTransferred,
-                &errorObject);
+                    l,
+                    &callbackTable,
+                    null,
+                    0,
+                    0,
+                    &ownerTransferred,
+                    &errorObject);
+            if (closureStatus != LuauHostStatus.Ok && ownerTransferred == 0)
+            {
+                LuauManagedCallbackLifetime.QueueRelease(nativeReleaseToken);
+            }
             LuauNativeProtection.ThrowIfFailed(
                 this,
                 l,
@@ -816,8 +825,16 @@ public unsafe partial class LuauState
     {
         using var access = EnterNativeAccess();
         var value = ToValue(-1);
-        SetTop(-2);
-        return value;
+        try
+        {
+            SetTop(-2);
+            return value;
+        }
+        catch
+        {
+            value.DisposeUnpublishedReference();
+            throw;
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -844,12 +861,26 @@ public unsafe partial class LuauState
         }
 
         var top = luau_host_stack_get_top(l);
-        for (int i = 0; i < n; i++)
+        var converted = 0;
+        try
         {
-            destination[i] = ToValue(top - i);
-        }
+            for (int i = 0; i < n; i++)
+            {
+                destination[i] = ToValue(top - i);
+                converted++;
+            }
 
-        SetTop(-n - 1);
+            SetTop(-n - 1);
+        }
+        catch
+        {
+            for (var index = converted - 1; index >= 0; index--)
+            {
+                destination[index].DisposeUnpublishedReference();
+                destination[index] = default;
+            }
+            throw;
+        }
     }
 
     internal void XMove(LuauState destination, int n)

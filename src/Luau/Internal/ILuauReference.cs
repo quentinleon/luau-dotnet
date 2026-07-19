@@ -6,6 +6,11 @@ internal interface ILuauReference : IDisposable
     LuauReferenceAccess AcquireReference();
 }
 
+internal interface ILuauCallbackBorrowedReference
+{
+    void InvalidateBorrowed();
+}
+
 internal readonly ref struct LuauReferenceAccess
 {
     readonly object? lifetimeGate;

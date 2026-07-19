@@ -21,6 +21,7 @@ namespace Luau.Unity
         [SerializeField] internal int coverageLevel;
         [SerializeField] internal ulong upstreamRevisionHash;
         [SerializeField] internal ulong hostBuildFingerprint;
+        [SerializeField] internal string sourceIdentity;
         [SerializeField] internal string sourceSha256;
         [SerializeField] internal string bytecodeSha256;
         [SerializeField] internal string provenanceId;
@@ -98,6 +99,7 @@ namespace Luau.Unity
             coverageLevel = artifact.CompileOptions.CoverageLevel;
             upstreamRevisionHash = artifact.UpstreamRevisionHash;
             hostBuildFingerprint = artifact.HostBuildFingerprint;
+            sourceIdentity = artifact.SourceIdentity;
             sourceSha256 = artifact.SourceSha256;
             bytecodeSha256 = artifact.BytecodeSha256;
             provenanceId = artifact.ProvenanceId;
@@ -115,6 +117,13 @@ namespace Luau.Unity
             if (cachedArtifact != null)
                 return cachedArtifact;
 
+            if (string.IsNullOrWhiteSpace(sourceIdentity))
+            {
+                throw new InvalidOperationException(
+                    "The serialized bytecode artifact has no source identity. " +
+                    "Reimport it with the current Luau.Unity importer.");
+            }
+
             cachedArtifact = new LuauBytecodeArtifact(
                 artifactSchemaVersion,
                 bytes,
@@ -127,6 +136,7 @@ namespace Luau.Unity
                 },
                 upstreamRevisionHash,
                 hostBuildFingerprint,
+                sourceIdentity,
                 sourceSha256,
                 bytecodeSha256,
                 provenanceId,
@@ -150,6 +160,7 @@ namespace Luau.Unity
             coverageLevel = 0;
             upstreamRevisionHash = 0;
             hostBuildFingerprint = 0;
+            sourceIdentity = string.Empty;
             sourceSha256 = string.Empty;
             bytecodeSha256 = string.Empty;
             provenanceId = string.Empty;

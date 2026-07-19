@@ -1,0 +1,71 @@
+# Luau.Unity
+
+Luau.Unity embeds the official Luau VM behind a bounded managed API for Unity.
+It supports editor-authored `.luau` assets, verified first-party bytecode, and
+untrusted source-based modding without exposing the native stack or VM handle.
+
+This package is a preview. Version `0.2.0` freezes its first release candidate
+API and native ABI, but later preview releases may still contain reviewed
+breaking changes.
+
+## Install
+
+In Package Manager, choose **Add package from git URL** and use the exact tag:
+
+```text
+https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0
+```
+
+The package ID remains `com.nuskey.luau.unity` for compatibility with the
+original nuskey package lineage. The canonical repository is maintained under
+the `nuskey8` GitHub account.
+
+## One ordinary Unity workflow
+
+Create a `.luau` file in `Assets`, assign the imported `LuauAsset`, and execute
+it through the shared bounded compiler lane. Keep the returned
+`LuauResultScope` and state in `using` declarations so disposable VM-backed
+results are released deterministically. A returned child thread is a shared
+cached `LuauState` wrapper and is disposed separately after all holders finish.
+
+```csharp
+using Luau;
+using Luau.Unity;
+using UnityEngine;
+
+public sealed class LuauExample : MonoBehaviour
+{
+    [SerializeField] LuauAsset script;
+
+    async void Start()
+    {
+        using var state = LuauUnity.CreateState();
+        using var results = await state.ExecuteAsync(script, destroyCancellationToken);
+        Debug.Log(results[0].Read<long>());
+    }
+}
+```
+
+`LuauUnity.CreateState()` supplies finite defaults and captures Unity's current
+synchronization context. Create it on the Unity thread. A root owns all child
+threads, VM-backed values, capabilities, module cache entries, and operations;
+dispose the root last.
+
+The importer is source-only by default. First-party precompile is an explicit
+project policy and still requires runtime artifact authentication. Import
+admission is separate from runtime mod-source limits.
+
+## Learn more
+
+- [Getting started](Documentation~/getting-started.md)
+- [Execution and trust lanes](Documentation~/execution-and-trust.md)
+- [Capability bindings](Documentation~/capability-bindings.md)
+- [Resource limits](Documentation~/resource-limits.md)
+- [Module trust domains](Documentation~/modules.md)
+- [Persistent artifacts](Documentation~/artifacts.md)
+- [Compiler residual risk](Documentation~/compiler-security.md)
+- [Changelog](CHANGELOG.md)
+- [Third-party notices](Third%20Party%20Notices.md)
+
+The Package Manager **Samples** tab offers two small importable examples. Only
+Windows x64 and Android ARM64/x86_64 are maintained targets.

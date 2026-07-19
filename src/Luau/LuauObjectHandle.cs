@@ -4,18 +4,27 @@ namespace Luau;
 /// An opaque, per-VM Luau userdata capability for one explicitly described
 /// managed object. The target and registry token are never exposed publicly.
 /// </summary>
-public sealed class LuauObjectHandle : ILuauReference, IDisposable
+public sealed class LuauObjectHandle : ILuauReference, ILuauCallbackBorrowedReference, IDisposable
 {
     readonly object lifetimeGate = new();
     readonly LuauObjectToken token;
     LuauState? state;
     int disposeState;
+    readonly LuauCallFrame? borrowedFrame;
 
-    internal LuauObjectHandle(LuauState state, LuauObjectToken token)
+    internal LuauObjectHandle(
+        LuauState state,
+        LuauObjectToken token,
+        LuauCallFrame? borrowedFrame = null)
     {
         this.state = state;
         this.token = token;
+        this.borrowedFrame = borrowedFrame;
+        borrowedFrame?.RegisterBorrowed(this);
     }
+
+    /// <summary>Gets whether this reference is valid only for its callback frame.</summary>
+    public bool IsBorrowed => borrowedFrame != null;
 
     /// <summary>Gets whether this managed wrapper or its owning VM is disposed.</summary>
     public bool IsDisposed
@@ -37,6 +46,7 @@ public sealed class LuauObjectHandle : ILuauReference, IDisposable
     {
         get
         {
+            borrowedFrame?.EnsureBorrowedActive();
             var currentState = Volatile.Read(ref state);
             if (Volatile.Read(ref disposeState) != 0 || currentState == null || currentState.IsDisposed)
             {
@@ -48,6 +58,14 @@ public sealed class LuauObjectHandle : ILuauReference, IDisposable
     }
 
     LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference();
+
+    /// <summary>Creates an independently disposable owner for this capability.</summary>
+    public LuauObjectHandle Retain()
+    {
+        var currentState = State;
+        currentState.Context.ObjectRegistry.RetainWrapper(token);
+        return new LuauObjectHandle(currentState, token);
+    }
 
     /// <summary>Returns the generated capability type name without exposing its target.</summary>
     public override string ToString()
@@ -81,6 +99,7 @@ public sealed class LuauObjectHandle : ILuauReference, IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>Releases the capability wrapper if its owner did not dispose it deterministically.</summary>
     ~LuauObjectHandle()
     {
         try
@@ -95,6 +114,7 @@ public sealed class LuauObjectHandle : ILuauReference, IDisposable
 
     LuauReferenceAccess AcquireReference()
     {
+        borrowedFrame?.EnsureBorrowedActive();
         var currentState = Volatile.Read(ref state);
         if (currentState == null || currentState.IsDisposed)
         {
@@ -120,6 +140,9 @@ public sealed class LuauObjectHandle : ILuauReference, IDisposable
             throw;
         }
     }
+
+
+    void ILuauCallbackBorrowedReference.InvalidateBorrowed() => Dispose();
 }
 
 /// <summary>

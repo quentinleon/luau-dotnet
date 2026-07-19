@@ -29,6 +29,21 @@ internal unsafe static class LuauReferenceHelper
         LuauNativeProtection.ThrowIfFailed(state, pointer, status, operation);
     }
 
+    public static int RetainReference(LuauState state, int reference, string operation)
+    {
+        using var access = state.EnterNativeAccess();
+        var originalTop = state.GetTop();
+        try
+        {
+            PushReference(state, reference, operation);
+            return CreateReference(state, -1, operation);
+        }
+        finally
+        {
+            state.SetTop(originalTop);
+        }
+    }
+
     public static string RefToString(LuauState state, int reference)
     {
         using var access = state.EnterNativeAccess();

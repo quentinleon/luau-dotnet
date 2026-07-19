@@ -1,4 +1,5 @@
 #include "luau_host.h"
+#include "reference_tokens.h"
 #include "tracked_allocation.h"
 
 #include <algorithm>
@@ -273,6 +274,9 @@ void test_abi_query()
     REQUIRE(info.buffer_size == sizeof(luau_host_buffer));
     REQUIRE(info.upstream_revision_hash != 0);
     REQUIRE(info.host_build_fingerprint != 0);
+    REQUIRE((info.feature_flags & LUAU_HOST_FEATURE_OPAQUE_REFERENCE_TOKENS) != 0);
+    REQUIRE((info.feature_flags & LUAU_HOST_FEATURE_DIRECT_CALLBACK_IDENTITY) != 0);
+    REQUIRE((info.feature_flags & LUAU_HOST_FEATURE_OBSERVATION_ONLY_GC_INTERRUPT) != 0);
 
     constexpr uint32_t fixedPrefixSize = static_cast<uint32_t>(offsetof(luau_host_abi_info, compile_options_size));
     alignas(luau_host_abi_info) std::array<uint8_t, sizeof(luau_host_abi_info) + 16> storage = {};
@@ -420,9 +424,10 @@ void test_concurrent_compile_reentrancy_and_determinism()
     for (size_t index = 0; index < compileCases.size(); ++index)
         baselines[index] = compile_baseline(compileCases[index]);
 
-    // Hold four near-default-limit outputs live at once. Each call receives a
-    // distinct source allocation and output record, proving that ownership is
-    // independent while native compilation is entered from multiple threads.
+    // Hold four near-default-source-limit compilation results live at once.
+    // Each call receives a distinct source allocation and output record,
+    // proving that ownership is independent while native compilation is
+    // entered from multiple threads.
     std::string nearLimitSource(1024 * 1024 - 32, ' ');
     nearLimitSource += "return 101";
     const CompileCase nearLimitCase = {std::move(nearLimitSource), optimizedOptions, true, false};
@@ -456,6 +461,28 @@ void test_concurrent_compile_reentrancy_and_determinism()
         for (size_t second = first + 1; second < threadCount; ++second)
             REQUIRE(output.data != independentOutputs[second].value.data);
     }
+
+    // A whitespace-heavy source can approach the admission limit while
+    // producing tiny bytecode. Separately retain a genuinely large bytecode
+    // result so ownership/free behavior is exercised at the output limit's
+    // meaningful scale too.
+    std::string largeOutputSource = "return {\n";
+    for (size_t index = 0; index < 32760; ++index)
+    {
+        largeOutputSource += "function() return 1 end,\n";
+    }
+    for (size_t index = 0; largeOutputSource.size() + 32 < 1024 * 1024; ++index)
+    {
+        largeOutputSource += "\"stage6-";
+        largeOutputSource += std::to_string(index);
+        largeOutputSource += "-xxxxxxxx\",\n";
+    }
+    largeOutputSource += "}\n";
+    REQUIRE(largeOutputSource.size() >= 1024 * 1024 - 64);
+    REQUIRE(largeOutputSource.size() < 1024 * 1024);
+    const CompileCase largeOutputCase = {std::move(largeOutputSource), optimizedOptions, true, false};
+    const CompileBaseline largeOutputBaseline = compile_baseline(largeOutputCase);
+    REQUIRE(largeOutputBaseline.bytes.size() >= 2 * 1024 * 1024);
 
     // Exercise thousands of mixed valid, invalid, option-varied, and larger
     // inputs. Serial output is the oracle; hashes and exact bytes must match in
@@ -519,7 +546,7 @@ void test_root_and_thread_lifecycle()
     REQUIRE(luau_host_stack_get_top(root.state) == 1);
     REQUIRE(luau_host_to_thread(root.state, -1) == child);
     REQUIRE(luau_host_thread_reset(child) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_is_thread_reset(child) != 0);
+    REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_OK);
 }
 
 void test_execution_error_containment_and_reuse()
@@ -591,7 +618,7 @@ void test_stack_tables_and_references()
     REQUIRE(luau_host_stack_set_top(root.state, 1) == LUAU_HOST_STATUS_OK);
 
     REQUIRE(luau_host_table_clone(root.state, 1) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_raw_equal(root.state, 1, 2) == 0);
+    REQUIRE(luau_host_to_pointer(root.state, 1) != luau_host_to_pointer(root.state, 2));
     REQUIRE(luau_host_stack_set_top(root.state, 1) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_table_clear(root.state, 1) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_push_string(root.state, bytes("answer"), 6) == LUAU_HOST_STATUS_OK);
@@ -692,7 +719,6 @@ void test_invalid_observer_and_stack_boundaries()
     {
         REQUIRE(luau_host_stack_abs_index(root.state, index) == 0);
         REQUIRE(luau_host_type(root.state, index) == noType);
-        REQUIRE(luau_host_raw_equal(root.state, index, index) == 0);
         REQUIRE(luau_host_object_length(root.state, index) == 0);
         REQUIRE(luau_host_to_boolean(root.state, index) == 0);
 
@@ -720,7 +746,6 @@ void test_invalid_observer_and_stack_boundaries()
         REQUIRE(luau_host_to_buffer(root.state, index, &length) == nullptr);
         REQUIRE(length == 0);
         REQUIRE(luau_host_to_pointer(root.state, index) == nullptr);
-        REQUIRE(luau_host_to_function(root.state, index) == nullptr);
         REQUIRE(luau_host_is_global(root.state, index) == 0);
 
         const uint8_t* stringOutput = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(1));
@@ -758,10 +783,7 @@ void test_invalid_observer_and_stack_boundaries()
     REQUIRE(luau_host_type_name(root.state, std::numeric_limits<int32_t>::min()) == nullptr);
     REQUIRE(luau_host_type_name(root.state, std::numeric_limits<int32_t>::max()) == nullptr);
     REQUIRE(luau_host_type_name(nullptr, 0) == nullptr);
-    REQUIRE(luau_host_callback_userdata(root.state, -1) == nullptr);
-    REQUIRE(luau_host_callback_userdata(root.state, 0) == nullptr);
-    REQUIRE(luau_host_callback_userdata(root.state, 1) == nullptr);
-    REQUIRE(luau_host_callback_userdata(root.state, 256) == nullptr);
+    REQUIRE(luau_host_callback_registration_id(root.state) == 0);
 
     REQUIRE(luau_host_stack_set_top(root.state, -2) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
     REQUIRE(luau_host_stack_set_top(root.state, std::numeric_limits<int32_t>::min()) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
@@ -841,7 +863,8 @@ void test_invalid_table_reference_and_load_boundaries()
 
     int32_t reference = 0;
     REQUIRE(luau_host_reference_create(root.state, 1, &reference) == LUAU_HOST_STATUS_OK);
-    REQUIRE(reference == firstReference);
+    REQUIRE(reference > firstReference);
+    REQUIRE(luau_host_reference_push(root.state, firstReference, &output) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
     const int32_t referenceTop = luau_host_stack_get_top(root.state);
     REQUIRE(luau_host_reference_release(root.state, reference) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_stack_get_top(root.state) == referenceTop);
@@ -879,10 +902,49 @@ void test_invalid_table_reference_and_load_boundaries()
     REQUIRE(luau_host_stack_get_top(root.state) == loadTop);
 }
 
+void test_reference_token_staleness_churn_and_exhaustion()
+{
+    Root root = create_root();
+    Root otherRoot = create_root();
+    REQUIRE(luau_host_push_integer(root.state, 42) == LUAU_HOST_STATUS_OK);
+
+    int32_t first = 0;
+    REQUIRE(luau_host_reference_create(root.state, 1, &first) == LUAU_HOST_STATUS_OK);
+    REQUIRE(first > 0);
+
+    int32_t type = -1;
+    REQUIRE(luau_host_reference_push(otherRoot.state, first, &type) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
+    REQUIRE(luau_host_reference_release(otherRoot.state, first) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
+    REQUIRE(luau_host_reference_release(root.state, first) == LUAU_HOST_STATUS_OK);
+
+    int32_t previous = first;
+    constexpr int32_t churnCount = 100'000;
+    for (int32_t iteration = 0; iteration < churnCount; ++iteration)
+    {
+        int32_t token = 0;
+        REQUIRE(luau_host_reference_create(root.state, 1, &token) == LUAU_HOST_STATUS_OK);
+        REQUIRE(token > previous);
+        REQUIRE(luau_host_reference_push(root.state, token, &type) == LUAU_HOST_STATUS_OK);
+        REQUIRE(luau_host_stack_set_top(root.state, -2) == LUAU_HOST_STATUS_OK);
+        REQUIRE(luau_host_reference_release(root.state, token) == LUAU_HOST_STATUS_OK);
+        REQUIRE(luau_host_reference_push(root.state, previous, &type) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
+        previous = token;
+    }
+
+    luau_host_internal::MonotonicReferenceTokenAllocator nearExhaustion(
+        uint64_t(std::numeric_limits<int32_t>::max()) - 1);
+    REQUIRE(nearExhaustion.allocate() == std::numeric_limits<int32_t>::max() - 1);
+    REQUIRE(nearExhaustion.allocate() == std::numeric_limits<int32_t>::max());
+    REQUIRE(nearExhaustion.allocate() == 0);
+    REQUIRE(nearExhaustion.allocate() == 0);
+}
+
 void test_invalid_execution_boundaries()
 {
     Root root = create_root();
     Root otherRoot = create_root();
+
+    REQUIRE(luau_host_collect(nullptr) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
 
     REQUIRE(luau_host_pcall(root.state, 0, 0, 0) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
     REQUIRE(luau_host_pcall(root.state, -1, 0, 0) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
@@ -927,61 +989,9 @@ void test_invalid_execution_boundaries()
     REQUIRE(luau_host_stack_get_top(child) == 0);
     REQUIRE(luau_host_thread_reset(child) == LUAU_HOST_STATUS_OK);
 
-    // lua_gc shifts the set-step-size input by 10 internally. Values beyond
-    // this boundary and setter combinations that overflow upstream signed
-    // arithmetic must be rejected before mutating collector settings.
-    constexpr int32_t gcSetGoal = LUAU_HOST_GC_SET_GOAL_PERCENT;
-    constexpr int32_t gcSetStepMultiplier = LUAU_HOST_GC_SET_STEP_MULTIPLIER_PERCENT;
-    constexpr int32_t gcSetStepSize = LUAU_HOST_GC_SET_STEP_SIZE_KIB;
-    int32_t gcResult = 123;
-    REQUIRE(
-        luau_host_collect(root.state, gcSetStepMultiplier, 0, &gcResult) ==
-        LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(gcResult == 123);
-    REQUIRE(
-        luau_host_collect(
-            root.state,
-            gcSetStepMultiplier,
-            std::numeric_limits<int32_t>::max(),
-            &gcResult) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(gcResult == 123);
-    REQUIRE(
-        luau_host_collect(
-            root.state,
-            gcSetGoal,
-            std::numeric_limits<int32_t>::max(),
-            &gcResult) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(gcResult == 123);
-    REQUIRE(
-        luau_host_collect(
-            root.state,
-            gcSetStepSize,
-            (std::numeric_limits<int32_t>::max() >> 10) + 1,
-            &gcResult) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(gcResult == 123);
-
-    int32_t previousGoal = 0;
-    REQUIRE(luau_host_collect(root.state, gcSetGoal, 1'000'000, &previousGoal) == LUAU_HOST_STATUS_OK);
-    REQUIRE(previousGoal > 0);
-    REQUIRE(
-        luau_host_collect(root.state, gcSetStepMultiplier, 3'000, &gcResult) ==
-        LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(luau_host_collect(root.state, gcSetGoal, previousGoal, &gcResult) == LUAU_HOST_STATUS_OK);
-
-    int32_t previousStepMultiplier = 0;
-    REQUIRE(
-        luau_host_collect(root.state, gcSetStepMultiplier, 100, &previousStepMultiplier) ==
-        LUAU_HOST_STATUS_OK);
-    REQUIRE(previousStepMultiplier > 0);
-    REQUIRE(
-        luau_host_collect(
-            root.state,
-            gcSetStepSize,
-            std::numeric_limits<int32_t>::max() >> 10,
-            &gcResult) == LUAU_HOST_STATUS_INVALID_ARGUMENT);
-    REQUIRE(
-        luau_host_collect(root.state, gcSetStepMultiplier, previousStepMultiplier, &gcResult) ==
-        LUAU_HOST_STATUS_OK);
+    // ABI 2 exposes only the product's full-collection operation; arbitrary
+    // collector tuning is no longer reachable through the host boundary.
+    REQUIRE(luau_host_collect(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_stack_get_top(root.state) == 1);
 }
 
@@ -1018,8 +1028,9 @@ void test_allocator_quota_and_recovery()
         REQUIRE(shortStorage[memoryInfoFixedPrefixSize] == 0xa5);
     }
 
-    REQUIRE(luau_host_memory_arm_quota_failure(root.state) == LUAU_HOST_STATUS_OK);
-    const std::vector<uint8_t> largeString(2048, static_cast<uint8_t>('x'));
+    const std::vector<uint8_t> largeString(
+        static_cast<size_t>(memoryLimit) + 1,
+        static_cast<uint8_t>('x'));
     const int32_t originalTop = luau_host_stack_get_top(root.state);
     REQUIRE(
         luau_host_push_string(root.state, largeString.data(), static_cast<uint64_t>(largeString.size())) ==
@@ -1036,7 +1047,7 @@ void test_allocator_quota_and_recovery()
     REQUIRE(luau_host_stack_set_top(root.state, originalTop) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_memory_reset_failure(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(
-        luau_host_push_string(root.state, largeString.data(), static_cast<uint64_t>(largeString.size())) ==
+        luau_host_push_string(root.state, bytes("ok"), 2) ==
         LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_stack_get_top(root.state) == originalTop + 1);
 
@@ -1051,7 +1062,6 @@ void test_allocator_quota_and_recovery()
     // host-owned allocator contract.  Failure leaves one contained error;
     // clearing it and resetting telemetry makes the same root reusable.
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_memory_arm_quota_failure(root.state) == LUAU_HOST_STATUS_OK);
     void* nativeBuffer = reinterpret_cast<void*>(static_cast<uintptr_t>(1));
     REQUIRE(
         luau_host_buffer_create(root.state, UINT64_C(2) * 1024 * 1024, &nativeBuffer) ==
@@ -1066,76 +1076,7 @@ void test_allocator_quota_and_recovery()
     REQUIRE(luau_host_stack_get_top(root.state) == 1);
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
 
-    // Upstream luau_load contains allocator failure in its own protected
-    // frame.  The host call therefore succeeds while load_status reports the
-    // ordinary load error, and the root remains usable after stack cleanup.
-    const std::string loadSource = "return [[" + std::string(1025, 'x') + "]]";
-    CompiledBuffer loadBytecode = compile_source(loadSource);
-    REQUIRE(luau_host_memory_arm_quota_failure(root.state) == LUAU_HOST_STATUS_OK);
-    luau_host_status loadStatus = LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    REQUIRE(
-        luau_host_load(
-            root.state,
-            bytes("@protected-load-oom"),
-            loadBytecode.value.data,
-            loadBytecode.value.size,
-            0,
-            &loadStatus) == LUAU_HOST_STATUS_OK);
-    REQUIRE(loadStatus == LUAU_HOST_STATUS_LUA_ERROR);
-    REQUIRE(luau_host_stack_get_top(root.state) == 1);
-
-    luau_host_memory_info loadFailure = {};
-    loadFailure.struct_size = sizeof(loadFailure);
-    REQUIRE(luau_host_memory_get(root.state, &loadFailure) == LUAU_HOST_STATUS_OK);
-    REQUIRE(loadFailure.failure == LUAU_HOST_ALLOCATOR_FAILURE_QUOTA);
-    REQUIRE(loadFailure.last_attempted_bytes > loadFailure.limit_bytes);
-
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_memory_reset_failure(root.state) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_push_integer(root.state, 7) == LUAU_HOST_STATUS_OK);
-    int32_t recoveredInteger = 0;
-    REQUIRE(luau_host_to_integer64(root.state, -1, &recoveredInteger) == 7);
-    REQUIRE(recoveredInteger != 0);
-    REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-
-    // Positive lua_settop and lua_xmove destination growth must be reserved by
-    // the host even when upstream LuauAutoStack is disabled. A failed reserve
-    // leaves one protected error, preserves the caller's values, and the root
-    // must remain safe to reuse and close.
-    const int32_t setTopBoundary = luau_host_stack_get_top(root.state);
-    REQUIRE(luau_host_memory_arm_quota_failure(root.state) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_stack_set_top(root.state, 4096) == LUAU_HOST_STATUS_MEMORY_QUOTA);
-    REQUIRE(luau_host_stack_get_top(root.state) == setTopBoundary + 1);
-    REQUIRE(luau_host_stack_set_top(root.state, setTopBoundary) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_memory_reset_failure(root.state) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_push_integer(root.state, 42) == LUAU_HOST_STATUS_OK);
-    int32_t isInteger = 0;
-    REQUIRE(luau_host_to_integer64(root.state, -1, &isInteger) == 42);
-    REQUIRE(isInteger != 0);
-
-    REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    luau_host_state* child = nullptr;
-    REQUIRE(luau_host_thread_create(root.state, &child) == LUAU_HOST_STATUS_OK);
-    REQUIRE(child != nullptr);
-    int32_t childReference = 0;
-    REQUIRE(luau_host_reference_create(root.state, -1, &childReference) == LUAU_HOST_STATUS_OK);
-    REQUIRE(childReference > 0);
-    REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    for (int32_t value = 0; value < 1024; ++value)
-        REQUIRE(luau_host_push_integer(root.state, value) == LUAU_HOST_STATUS_OK);
-
-    const int32_t moveBoundary = luau_host_stack_get_top(root.state);
-    const int32_t childBoundary = luau_host_stack_get_top(child);
-    REQUIRE(luau_host_memory_arm_quota_failure(root.state) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_stack_move(root.state, child, moveBoundary) == LUAU_HOST_STATUS_MEMORY_QUOTA);
-    REQUIRE(luau_host_stack_get_top(root.state) == moveBoundary + 1);
-    REQUIRE(luau_host_stack_get_top(child) == childBoundary);
-    REQUIRE(luau_host_stack_set_top(root.state, moveBoundary) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_to_integer64(root.state, -1, &isInteger) == 1023);
-    REQUIRE(isInteger != 0);
-    REQUIRE(luau_host_memory_reset_failure(root.state) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_reference_release(root.state, childReference) == LUAU_HOST_STATUS_OK);
 
     luau_host_state_options tiny = options;
     tiny.memory_limit_bytes = 1;
@@ -1208,10 +1149,10 @@ bool invalidCallbackReturnsTopPlusOne = false;
 
 int32_t LUAU_HOST_CALL managed_callback(luau_host_state* state)
 {
-    int* value = static_cast<int*>(luau_host_callback_userdata(state, 1));
-    if (value)
+    const uint64_t registrationId = luau_host_callback_registration_id(state);
+    if (registrationId != 0)
         ++callbackInvocations;
-    callbackPushStatus = luau_host_push_integer(state, value ? *value : -1);
+    callbackPushStatus = luau_host_push_integer(state, static_cast<int64_t>(registrationId));
     return callbackPushStatus == LUAU_HOST_STATUS_OK ? 1 : 0;
 }
 
@@ -1274,6 +1215,12 @@ int32_t LUAU_HOST_CALL continue_interrupt_poll(luau_host_state*, luau_host_inter
     return 0;
 }
 
+int32_t LUAU_HOST_CALL gc_observation_poll(luau_host_state*, luau_host_interrupt_kind kind)
+{
+    record_interrupt_kind(kind);
+    return kind == LUAU_HOST_INTERRUPT_GC ? 1 : 0;
+}
+
 int32_t LUAU_HOST_CALL nonyieldable_interrupt_poll(
     luau_host_state* state,
     luau_host_interrupt_kind kind)
@@ -1324,16 +1271,26 @@ void test_callback_and_destructor_lifetime()
     Root root = create_root();
     int callbackValue = 99;
     int callbackOwnerValue = 4321;
-    REQUIRE(luau_host_push_light_userdata(root.state, &callbackValue, 0) == LUAU_HOST_STATUS_OK);
 
     {
         luau_host_callback_table callbacks = callback_table();
+        callbacks.registration_id = 0;
+        callbacks.managed_function = managed_callback;
+        REQUIRE(
+            luau_host_push_callback(root.state, &callbacks, nullptr, 0, 0, nullptr, nullptr) ==
+            LUAU_HOST_STATUS_INVALID_ARGUMENT);
+        REQUIRE(luau_host_stack_get_top(root.state) == 0);
+    }
+
+    {
+        luau_host_callback_table callbacks = callback_table();
+        callbacks.registration_id = static_cast<uint64_t>(callbackValue);
         callbacks.userdata = &callbackOwnerValue;
         callbacks.userdata_destructor = userdata_destructor;
         callbacks.managed_function = managed_callback;
         int32_t ownerTransferred = 0;
         int32_t errorObject = 0;
-        REQUIRE(luau_host_push_callback(root.state, &callbacks, bytes("conformance_callback"), 20, 1, &ownerTransferred, &errorObject) == LUAU_HOST_STATUS_OK);
+        REQUIRE(luau_host_push_callback(root.state, &callbacks, bytes("conformance_callback"), 20, 0, &ownerTransferred, &errorObject) == LUAU_HOST_STATUS_OK);
         REQUIRE(ownerTransferred == 1);
         REQUIRE(errorObject == 0);
     }
@@ -1345,8 +1302,7 @@ void test_callback_and_destructor_lifetime()
     REQUIRE(luau_host_to_integer64(root.state, -1, &isInteger) == callbackValue);
     REQUIRE(isInteger != 0);
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    int32_t gcResult = 0;
-    REQUIRE(luau_host_collect(root.state, LUAU_HOST_GC_COLLECT, 0, &gcResult) == LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_collect(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(destructorInvocations == 1);
     REQUIRE(destructorPayload == callbackOwnerValue);
 
@@ -1540,7 +1496,7 @@ void test_callback_return_validation_and_recovery()
         REQUIRE(luau_host_stack_get_top(child) == 1);
         REQUIRE(!string_at(child, -1).empty());
         REQUIRE(luau_host_thread_reset(child) == LUAU_HOST_STATUS_OK);
-        REQUIRE(luau_host_is_thread_reset(child) != 0);
+        REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_OK);
     }
 
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
@@ -1576,10 +1532,7 @@ void test_userdata_wrapper_visibility_and_destructor_lifetime()
     expectedUserdataDestructorPointer = sized;
     userdataDestructorPhase = 1;
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    int32_t gcResult = 0;
-    REQUIRE(
-        luau_host_collect(root.state, LUAU_HOST_GC_COLLECT, 0, &gcResult) ==
-        LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_collect(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(userdataDestructorPhaseCounts[1] == 1);
     REQUIRE(userdataDestructorPointerMismatches == 0);
 
@@ -1595,9 +1548,7 @@ void test_userdata_wrapper_visibility_and_destructor_lifetime()
     expectedUserdataDestructorPointer = zeroCollected;
     userdataDestructorPhase = 2;
     REQUIRE(luau_host_stack_set_top(root.state, 0) == LUAU_HOST_STATUS_OK);
-    REQUIRE(
-        luau_host_collect(root.state, LUAU_HOST_GC_COLLECT, 0, &gcResult) ==
-        LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_collect(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(userdataDestructorPhaseCounts[2] == 1);
     REQUIRE(userdataDestructorPointerMismatches == 0);
 
@@ -1641,6 +1592,30 @@ void test_userdata_wrapper_visibility_and_destructor_lifetime()
         3);
 }
 
+void test_gc_interrupt_is_observation_only()
+{
+    reset_interrupt_kind_counts();
+    Root root = create_root();
+    REQUIRE(
+        compile_and_load(
+            root.state,
+            "local retained = {} "
+            "for i = 1, 200000 do retained[i] = {i, i + 1} end "
+            "return #retained",
+            "@gc-observation-only") == LUAU_HOST_STATUS_OK);
+
+    luau_host_callback_table callbacks = callback_table();
+    callbacks.interrupt_poll = gc_observation_poll;
+    REQUIRE(luau_host_interrupt_install(root.state, &callbacks) == LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_pcall(root.state, 0, 1, 0) == LUAU_HOST_STATUS_OK);
+    luau_host_interrupt_uninstall(root.state);
+
+    REQUIRE(gcInterruptKinds > 0);
+    REQUIRE(invalidInterruptKinds == 0);
+    REQUIRE(luau_host_thread_status(root.state) == LUAU_HOST_STATUS_OK);
+    REQUIRE(luau_host_stack_get_top(root.state) == 1);
+}
+
 void test_interrupt_yield_and_recovery()
 {
     interruptPolls = 0;
@@ -1663,7 +1638,7 @@ void test_interrupt_yield_and_recovery()
     REQUIRE(executionInterruptKinds + gcInterruptKinds == interruptPolls);
     REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_YIELDED);
     REQUIRE(luau_host_thread_reset(child) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_is_thread_reset(child) != 0);
+    REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_OK);
 
     // Installing the same poll twice must not double-count the state.  A
     // single uninstall must permit a different function pointer, matching the
@@ -1716,7 +1691,6 @@ void test_nonyieldable_interrupt_hard_unwind_and_recovery()
     REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_CANCELED);
     REQUIRE(luau_host_memory_reset_failure(root.state) == LUAU_HOST_STATUS_OK);
     REQUIRE(luau_host_thread_reset(child) == LUAU_HOST_STATUS_OK);
-    REQUIRE(luau_host_is_thread_reset(child) != 0);
     REQUIRE(luau_host_thread_status(child) == LUAU_HOST_STATUS_OK);
 }
 
@@ -1796,12 +1770,16 @@ int main()
     failures += run_test("numeric conversion finite-range validation", test_numeric_conversion_boundaries);
     failures += run_test("invalid observer and stack boundaries", test_invalid_observer_and_stack_boundaries);
     failures += run_test("invalid table, reference, and load boundaries", test_invalid_table_reference_and_load_boundaries);
+    failures += run_test(
+        "opaque reference token staleness, churn, and exhaustion",
+        test_reference_token_staleness_churn_and_exhaustion);
     failures += run_test("invalid execution and yield boundaries", test_invalid_execution_boundaries);
     failures += run_test("tracked allocator quota telemetry and recovery", test_allocator_quota_and_recovery);
     failures += run_test("failed allocator shrink retains its full charge", test_failed_shrink_retains_allocator_charge);
     failures += run_test("managed callback and userdata-destructor lifetime", test_callback_and_destructor_lifetime);
     failures += run_test("managed callback return validation and recovery", test_callback_return_validation_and_recovery);
     failures += run_test("userdata wrapper visibility and destructor lifetime", test_userdata_wrapper_visibility_and_destructor_lifetime);
+    failures += run_test("GC interrupt notifications are observation-only", test_gc_interrupt_is_observation_only);
     failures += run_test("interrupt-driven coroutine yield and reset", test_interrupt_yield_and_recovery);
     failures += run_test(
         "non-yieldable interrupt hard unwind and reset",

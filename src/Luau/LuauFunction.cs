@@ -1,20 +1,36 @@
 namespace Luau;
 
-public abstract class LuauFunction : IDisposable
+/// <summary>
+/// Represents either an owned script closure or a managed callback capability.
+/// Script closures and retained copies must be disposed before their root VM;
+/// callback-borrowed closures are valid only for their active callback frame.
+/// </summary>
+public abstract class LuauFunction : IDisposable, ILuauCallbackBorrowedReference
 {
     LuauState? state;
     int disposeState;
     readonly object lifetimeGate = new();
+    readonly LuauCallFrame? borrowedFrame;
 
-    internal LuauFunction(LuauState state)
+    internal LuauFunction(LuauState state, LuauCallFrame? borrowedFrame = null)
     {
         this.state = state ?? throw new ArgumentNullException(nameof(state));
+        this.borrowedFrame = borrowedFrame;
+        borrowedFrame?.RegisterBorrowed(this);
     }
 
+    /// <summary>Gets whether this reference is valid only for its callback frame.</summary>
+    public bool IsBorrowed => borrowedFrame != null;
+
+    /// <summary>
+    /// Gets the public owning root. Access fails after this function, its
+    /// callback frame, or its root has been disposed.
+    /// </summary>
     public LuauState State
     {
         get
         {
+            borrowedFrame?.EnsureBorrowedActive();
             lock (lifetimeGate)
             {
                 var currentState = state;
@@ -28,6 +44,7 @@ public abstract class LuauFunction : IDisposable
         }
     }
 
+    /// <summary>Gets whether this function or its owning root is disposed.</summary>
     public bool IsDisposed
     {
         get
@@ -42,14 +59,31 @@ public abstract class LuauFunction : IDisposable
         }
     }
 
+    /// <summary>
+    /// Creates an independently disposable owner for the same script closure.
+    /// Managed callback capabilities already have host-defined ownership and
+    /// cannot be retained through this operation.
+    /// </summary>
+    public LuauFunction Retain()
+    {
+        if (this is not LuauScriptFunction scriptFunction)
+        {
+            throw new InvalidOperationException(
+                "Managed callback capabilities cannot be retained as script references.");
+        }
+
+        return scriptFunction.RetainReference();
+    }
+
     private protected LuauState OwningState => state!;
 
     /// <summary>
     /// Invokes a script closure synchronously on its owning VM root.
     /// Managed callback functions are host capabilities and cannot be invoked
-    /// directly by managed callers.
+    /// directly by managed callers. Dispose the returned scope to release its
+    /// scope-owned results; dispose returned child threads separately.
     /// </summary>
-    public LuauValue[] Invoke(
+    public LuauResultScope Invoke(
         ReadOnlySpan<LuauValue> arguments = default,
         LuauExecutionOptions? executionOptions = null)
     {
@@ -64,9 +98,10 @@ public abstract class LuauFunction : IDisposable
     /// <summary>
     /// Invokes a script closure asynchronously on its owning VM root.
     /// Managed callback functions are host capabilities and cannot be invoked
-    /// directly by managed callers.
+    /// directly by managed callers. Dispose the returned scope to release its
+    /// scope-owned results; dispose returned child threads separately.
     /// </summary>
-    public ValueTask<LuauValue[]> InvokeAsync(
+    public ValueTask<LuauResultScope> InvokeAsync(
         ReadOnlyMemory<LuauValue> arguments = default,
         CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
@@ -92,6 +127,10 @@ public abstract class LuauFunction : IDisposable
 
     private protected virtual void DisposeCore() { }
 
+    /// <summary>
+    /// Releases this function owner. Disposal is idempotent and does not close
+    /// the owning VM root.
+    /// </summary>
     public void Dispose()
     {
         LuauState? owningState;
@@ -134,11 +173,13 @@ public abstract class LuauFunction : IDisposable
 
     private protected void ThrowIfDisposed()
     {
+        borrowedFrame?.EnsureBorrowedActive();
         if (IsDisposed) ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
     }
 
     private protected LuauReferenceAccess AcquireReference(int reference)
     {
+        borrowedFrame?.EnsureBorrowedActive();
         var currentState = Volatile.Read(ref state);
         if (currentState == null || currentState.IsDisposed)
         {
@@ -170,6 +211,7 @@ public abstract class LuauFunction : IDisposable
 
     private protected LuauFunctionAccess AcquireFunctionAccess()
     {
+        borrowedFrame?.EnsureBorrowedActive();
         Monitor.Enter(lifetimeGate);
         try
         {
@@ -198,6 +240,8 @@ public abstract class LuauFunction : IDisposable
         return new InvalidOperationException(
             "Managed callback functions are host capabilities that can only be invoked by Luau code.");
     }
+
+    void ILuauCallbackBorrowedReference.InvalidateBorrowed() => Dispose();
 }
 
 internal readonly ref struct LuauFunctionAccess

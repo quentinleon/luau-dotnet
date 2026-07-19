@@ -30,12 +30,17 @@ namespace Luau.Unity
         }
 
         /// <summary>
-        /// Executes an asset and allocates its result array. Source assets
+        /// Executes an asset and returns an owned result scope. Source assets
         /// compile synchronously on the calling thread; use
         /// <see cref="ExecuteAsync(LuauState,LuauAsset,CancellationToken)"/> for
         /// the ordinary bounded Unity execution lane.
         /// </summary>
-        public static LuauValue[] Execute(this LuauState state, LuauAsset asset)
+        /// <returns>
+        /// A scope that owns disposable reference results and must be disposed
+        /// before the state. Retain references that must outlive it; shared
+        /// child-thread wrappers are caller-managed and disposed separately.
+        /// </returns>
+        public static LuauResultScope Execute(this LuauState state, LuauAsset asset)
         {
             ValidateAssetExecutionArguments(state, asset);
             var assetName = asset.name;
@@ -76,7 +81,12 @@ namespace Luau.Unity
         /// execution starts on the state's configured owner scheduler.
         /// Verified artifacts bypass source compilation.
         /// </summary>
-        public static ValueTask<LuauValue[]> ExecuteAsync(
+        /// <returns>
+        /// A scope that owns disposable reference results and must be disposed
+        /// before the state. Retain references that must outlive it; shared
+        /// child-thread wrappers are caller-managed and disposed separately.
+        /// </returns>
+        public static ValueTask<LuauResultScope> ExecuteAsync(
             this LuauState state,
             LuauAsset asset,
             CancellationToken cancellationToken = default)
@@ -109,7 +119,7 @@ namespace Luau.Unity
                 asset.name);
         }
 
-        static LuauValue[] ExecuteVerified(LuauState state, LuauAsset asset)
+        static LuauResultScope ExecuteVerified(LuauState state, LuauAsset asset)
         {
             ValidateVerifiedPayloadBeforeConstruction(state, asset);
             return state.ExecuteVerifiedBytecode(asset.GetVerifiedBytecode(), asset.name);

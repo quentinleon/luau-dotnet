@@ -80,6 +80,7 @@ public static class DiagnosticDescriptors
         "LUAU005" => UnsupportedSignature,
         "LUAU006" => InvalidName,
         "LUAU007" => InvalidExposure,
+        "LUAU008" => InaccessibleMember,
         _ => throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown Luau generator diagnostic."),
     };
 
@@ -130,4 +131,9 @@ public static class DiagnosticDescriptors
         7,
         "Invalid Luau library exposure",
         "Luau library exposure value '{0}' is not supported.");
+
+    public static DiagnosticDescriptor InaccessibleMember { get; } = Create(
+        8,
+        "Luau host member must be public",
+        "Luau host member '{0}' is inaccessible: annotated fields, properties, and methods must be public.");
 }

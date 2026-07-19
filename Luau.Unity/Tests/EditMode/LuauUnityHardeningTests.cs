@@ -25,7 +25,6 @@ namespace Luau.Unity.Tests
             Assert.That(actual, Is.EqualTo(new[]
             {
                 "Luau.Unity.LuauAsset",
-                "Luau.Unity.LuauModuleMap",
                 "Luau.Unity.LuauStateExtensions",
                 "Luau.Unity.LuauUnity",
                 "Luau.Unity.LuauUnityObjectGuard",
@@ -75,7 +74,7 @@ namespace Luau.Unity.Tests
             });
             using var script = root.CreateSandboxedThread();
 
-            var results = script.DoString(
+            using var results = script.DoString(
                 "local calls = 0; " +
                 "local value = setmetatable({}, { " +
                 "__tostring = function() calls += 1; return string.rep('🐺', 10000) end }); " +
@@ -133,7 +132,7 @@ namespace Luau.Unity.Tests
             });
             using var script = root.CreateSandboxedThread();
 
-            var results = script.DoString(
+            using var results = script.DoString(
                 "local calls = 0; " +
                 "local value = setmetatable({}, { " +
                 "__tostring = function() calls += 1; return 'formatted' end }); " +
@@ -223,7 +222,7 @@ namespace Luau.Unity.Tests
                 root.Options.DefaultExecutionOptions.MaxResultCount,
                 Is.EqualTo(LuauStateOptions.Default.DefaultExecutionOptions.MaxResultCount));
 
-            var results = script.DoString(
+            using var results = script.DoString(
                 "return " +
                 "type(math) == 'table' " +
                 "and type(table) == 'table' " +
@@ -262,7 +261,7 @@ namespace Luau.Unity.Tests
             });
             using var script = root.CreateSandboxedThread();
 
-            var results = script.DoString(
+            using var results = script.DoString(
                 "local ok = pcall(function() hostAnswer = 99 end); " +
                 "return not ok, hostAnswer",
                 "@unity/protected-host-api.luau");
@@ -282,7 +281,10 @@ namespace Luau.Unity.Tests
             });
 
             var output = LuauCompiler.Compile(Encoding.UTF8.GetBytes("return 42"));
-            var artifact = LuauBytecodeArtifact.Create(output, "tests:first-party");
+            var artifact = LuauBytecodeArtifact.Create(
+                output,
+                "unity-tests/default-rejection",
+                "tests:first-party");
 
             var exception = Assert.Throws<LuauException>(() => root.ExecuteVerifiedBytecode(
                 artifact,
@@ -317,7 +319,7 @@ namespace Luau.Unity.Tests
                 });
                 using var script = root.CreateSandboxedThread();
 
-                var results = script.Execute(asset);
+                using var results = script.Execute(asset);
                 Assert.That(results, Has.Length.EqualTo(1));
                 Assert.That(results[0].Read<int>(), Is.EqualTo(42));
                 Assert.That(serialized.FindProperty("isPrecompiled"), Is.Null);
@@ -396,7 +398,7 @@ namespace Luau.Unity.Tests
             });
             using var script = root.CreateSandboxedThread();
 
-            var results = script.DoString(
+            using var results = script.DoString(
                 "local a = require('folder/module'); " +
                 "local b = require('./folder/module.luau'); " +
                 "local c = require('/folder/module'); " +

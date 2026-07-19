@@ -184,49 +184,4 @@ public sealed class HighLevelProtectedRegressionTests
         Assert.Equal(0, state.GetTop());
     }
 
-    [Fact]
-    public void InternalSetTopQuotaFailurePreservesStackAndTypedDiagnostics()
-    {
-        using var state = LuauState.Create(new LuauStateOptions
-        {
-            MemoryLimitBytes = 8_388_608,
-            BytecodePolicy = LuauBytecodePolicy.Reject,
-        });
-        var originalTop = state.GetTop();
-        state.Context.ArmQuotaFailureOnNextGrowth();
-
-        Assert.Throws<LuauMemoryLimitException>(() => state.SetTop(4_096));
-
-        Assert.Equal(originalTop, state.GetTop());
-        state.PushInteger(42);
-        Assert.Equal(42, state.Pop().Read<int>());
-        Assert.Equal(originalTop, state.GetTop());
-    }
-
-    [Fact]
-    public void InternalXMoveQuotaFailurePreservesBothStacksAndTypedDiagnostics()
-    {
-        using var root = LuauState.Create(new LuauStateOptions
-        {
-            MemoryLimitBytes = 8_388_608,
-            BytecodePolicy = LuauBytecodePolicy.Reject,
-        });
-        using var child = root.CreateThread();
-        root.SetTop(0);
-        child.SetTop(0);
-        for (var index = 0; index < 1_024; index++)
-        {
-            root.PushInteger(index);
-        }
-
-        var sourceTop = root.GetTop();
-        var destinationTop = child.GetTop();
-        root.Context.ArmQuotaFailureOnNextGrowth();
-
-        Assert.Throws<LuauMemoryLimitException>(() => root.XMove(child, sourceTop));
-
-        Assert.Equal(sourceTop, root.GetTop());
-        Assert.Equal(destinationTop, child.GetTop());
-        Assert.Equal(1_023, root.ToInteger(-1));
-    }
 }

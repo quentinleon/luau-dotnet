@@ -719,9 +719,151 @@ public partial class Api
 
         var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
 
-        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU005");
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU008");
         Assert.Contains("public", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
         Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    public static TheoryData<string, string, string> InaccessibleMembers => new()
+    {
+        { "", "private", "[LuauMember] private int Hidden;" },
+        { "", "protected", "[LuauMember] protected int Hidden;" },
+        { "", "internal", "[LuauMember] internal int Hidden;" },
+        { "", "protected internal", "[LuauMember] protected internal int Hidden;" },
+        { "", "private protected", "[LuauMember] private protected int Hidden;" },
+        { "", "private static", "[LuauMember] private static int Hidden;" },
+        { "", "private property", "[LuauMember] private int Hidden { get; set; }" },
+        { "", "protected property", "[LuauMember] protected int Hidden { get; set; }" },
+        { "", "internal property", "[LuauMember] internal int Hidden { get; set; }" },
+        { "", "private method", "[LuauMember] private int Hidden() => 1;" },
+        { "", "protected method", "[LuauMember] protected int Hidden() => 1;" },
+        { "", "internal method", "[LuauMember] internal int Hidden() => 1;" },
+        { "", "private generic method", "[LuauMember] private T Hidden<T>(T value) => value;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private", "[LuauMember] private int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "protected", "[LuauMember] protected int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "internal", "[LuauMember] internal int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "protected internal", "[LuauMember] protected internal int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private protected", "[LuauMember] private protected int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private static", "[LuauMember] private static int Hidden;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private property", "[LuauMember] private int Hidden { get; set; }" },
+        { ", Exposure = LuauLibraryExposure.Capability", "protected property", "[LuauMember] protected int Hidden { get; set; }" },
+        { ", Exposure = LuauLibraryExposure.Capability", "internal property", "[LuauMember] internal int Hidden { get; set; }" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private method", "[LuauMember] private int Hidden() => 1;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "protected method", "[LuauMember] protected int Hidden() => 1;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "internal method", "[LuauMember] internal int Hidden() => 1;" },
+        { ", Exposure = LuauLibraryExposure.Capability", "private generic method", "[LuauMember] private T Hidden<T>(T value) => value;" },
+    };
+
+    [Theory]
+    [MemberData(nameof(InaccessibleMembers))]
+    public void AnnotatedMembersMustBePublicForEveryExposure(
+        string exposure,
+        string caseName,
+        string member)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("inaccessible"{{exposure}})]
+public partial class Api
+{
+    {{member}}
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        var diagnostic = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "LUAU008");
+        Assert.Contains("Hidden", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Contains("public", diagnostic.GetMessage(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(caseName.Contains("generic", StringComparison.Ordinal),
+            member.Contains("<T>", StringComparison.Ordinal));
+        Assert.Empty(result.GeneratedSources);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(", Exposure = LuauLibraryExposure.Capability")]
+    public void PublicPropertiesMayUseOnePrivateAccessor(string exposure)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("accessors"{{exposure}})]
+public partial class Api
+{
+    [LuauMember("read-only")] public int ReadOnly { get; private set; }
+    [LuauMember("write-only")] public int WriteOnly { private get; set; }
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("ReadOnly", generated, StringComparison.Ordinal);
+        Assert.Contains("WriteOnly", generated, StringComparison.Ordinal);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(", Exposure = LuauLibraryExposure.Capability")]
+    public void AnnotatedMembersOnAnotherPartialDeclarationAreDiscovered(string exposure)
+    {
+        var source = $$"""
+using Luau;
+
+[LuauLibrary("partial"{{exposure}})]
+public partial class Api { }
+
+public partial class Api
+{
+    [LuauMember("other-part")] public int OtherPart() => 1;
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("OtherPart", generated, StringComparison.Ordinal);
+        Assert.Contains("other-part", generated, StringComparison.Ordinal);
+        AssertNoErrors(outputCompilation);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(", Exposure = LuauLibraryExposure.Capability")]
+    public void InheritedAnnotatedMembersAreNotImplicitlyExposed(string exposure)
+    {
+        var source = $$"""
+using Luau;
+
+public class BaseApi
+{
+    [LuauMember("inherited-field")] public int InheritedField;
+    [LuauMember("inherited-property")] public int InheritedProperty { get; set; }
+    [LuauMember("inherited-method")] public int InheritedMethod() => 1;
+}
+
+[LuauLibrary("derived"{{exposure}})]
+public partial class Api : BaseApi
+{
+    [LuauMember("direct")] public int Direct() => 1;
+}
+""";
+
+        var result = RunGenerator(CreateCompilation(source), out var outputCompilation);
+
+        Assert.Empty(result.Diagnostics);
+        var generated = Assert.Single(result.GeneratedSources).SourceText.ToString();
+        Assert.Contains("Direct", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("InheritedField", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("InheritedProperty", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("InheritedMethod", generated, StringComparison.Ordinal);
         AssertNoErrors(outputCompilation);
     }
 
@@ -932,6 +1074,57 @@ public partial class Api
         Assert.Empty(recovered.Result.Diagnostics);
         Assert.Contains(
             "context.Read<global::System.Int32>(0)",
+            Assert.Single(recovered.Result.GeneratedSources).SourceText.ToString(),
+            StringComparison.Ordinal);
+        AssertNoErrors(recovered.OutputCompilation);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(", Exposure = LuauLibraryExposure.Capability")]
+    public void RetainedDriverUpdatesPublicNonPublicAndPublicMemberTransitions(string exposure)
+    {
+        var publicSource = $$"""
+using Luau;
+
+[LuauLibrary("accessibility"{{exposure}})]
+public partial class Api
+{
+    [LuauMember] public int Value => 1;
+}
+""";
+        var privateSource = $$"""
+using Luau;
+
+[LuauLibrary("accessibility"{{exposure}})]
+public partial class Api
+{
+    [LuauMember] private int Value => 1;
+}
+""";
+
+        var session = new RetainedGeneratorSession(publicSource);
+
+        var initial = session.Run();
+        Assert.Empty(initial.Result.Diagnostics);
+        Assert.Contains(
+            "Value",
+            Assert.Single(initial.Result.GeneratedSources).SourceText.ToString(),
+            StringComparison.Ordinal);
+        AssertNoErrors(initial.OutputCompilation);
+
+        var inaccessible = session.Run(privateSource);
+        var diagnostic = Assert.Single(
+            inaccessible.Result.Diagnostics,
+            diagnostic => diagnostic.Id == "LUAU008");
+        Assert.Contains("Value", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Empty(inaccessible.Result.GeneratedSources);
+        AssertNoErrors(inaccessible.OutputCompilation);
+
+        var recovered = session.Run(publicSource);
+        Assert.Empty(recovered.Result.Diagnostics);
+        Assert.Contains(
+            "Value",
             Assert.Single(recovered.Result.GeneratedSources).SourceText.ToString(),
             StringComparison.Ordinal);
         AssertNoErrors(recovered.OutputCompilation);

@@ -58,7 +58,7 @@ and build fingerprint. The native binary exports only the approved
 In Unity Package Manager, choose **Add package from git URL** and enter:
 
 ```text
-https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity
+https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0
 ```
 
 Or add the package to `Packages/manifest.json`:
@@ -66,7 +66,7 @@ Or add the package to `Packages/manifest.json`:
 ```json
 {
   "dependencies": {
-    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity"
+    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0"
   }
 }
 ```
@@ -78,7 +78,7 @@ using Luau.Unity;
 using UnityEngine;
 
 using var state = LuauUnity.CreateState();
-var results = state.DoString("return 1 + 1", "@example/main.luau");
+using var results = state.DoString("return 1 + 1", "@example/main.luau");
 Debug.Log(results[0].Read<long>()); // 2
 ```
 
@@ -94,7 +94,7 @@ execution begin on the state's configured Unity owner scheduler. Verified
 artifacts bypass source compilation and retain their validator-gated trust path:
 
 ```csharp
-LuauValue[] values = await state.ExecuteAsync(asset, cancellationToken);
+using LuauResultScope values = await state.ExecuteAsync(asset, cancellationToken);
 ```
 
 Use `LuauUnity.CompileAsync` when compilation and execution are deliberately
@@ -113,7 +113,7 @@ switch (compilation.Kind)
     case LuauCompileResultKind.Success:
         // This code resumed on the Unity synchronization context captured by
         // LuauUnity.CreateState, so execution starts on the VM owner.
-        var values = await state.ExecuteCompilerOutputAsync(
+        using var values = await state.ExecuteCompilerOutputAsync(
             compilation.Output!,
             "@mods/example/main.luau".AsMemory(),
             cancellationToken);
@@ -252,7 +252,7 @@ using var child = root.CreateSandboxedThread();
 using var doorHandle = root.CreateHandle(doorController);
 child["door"] = doorHandle;
 
-LuauValue[] results = await child.ExecuteAsync(asset, cancellationToken);
+using LuauResultScope results = await child.ExecuteAsync(asset, cancellationToken);
 ```
 
 Capabilities are opaque, per-root, descriptor-specific, and quota bounded by
@@ -277,10 +277,19 @@ state["clamp"] = state.CreateFunction("clamp", context =>
 });
 ```
 
-`LuauCallContext` is callback-scoped and generation checked. Its argument indexes
+`LuauCallContext` is callback-scoped and generation checked. Table, function,
+buffer, userdata, and object-handle arguments read from it are borrowed and fail
+after callback invalidation; call `Retain()` to create an independently
+disposable owner. A `LuauState` thread argument is instead the VM's shared
+cached wrapper and remains valid after the callback. Its argument indexes
 are zero-based. It exposes typed `Read<T>`, typed `Return<T>`, cancellation, and
 diagnostics—not a native handle, registry index, or mutable stack top. Retaining
 it after callback completion fails deterministically.
+
+`Return<T>` pushes reference wrappers without transferring or disposing their
+managed ownership. This also applies to generated library returns: keep
+persistent wrappers live, and dispose temporary owned wrappers according to the
+host lifetime that created them.
 
 For async callbacks, arguments are read and results are returned only while the
 VM is safely suspended. The context remains generation checked across the
@@ -291,7 +300,7 @@ managed await and respects the root's continuation scheduler.
 Script results are represented by `LuauValue`:
 
 ```csharp
-var results = state.DoString("return 42, 'ready', true");
+using var results = state.DoString("return 42, 'ready', true");
 
 long answer = results[0].Read<long>();
 string status = results[1].Read<string>();
@@ -313,8 +322,12 @@ bool ready = results[2].Read<bool>();
 | thread | `LuauState` |
 | buffer | `LuauBuffer` |
 
-VM-backed objects are root-owned references and must be disposed. Primitive
-values are copied. `LuauBuffer.ToArray()`, `Read(...)`, and `Write(...)` copy
+Allocating operations return a disposable `LuauResultScope` that owns table,
+function, buffer, userdata, and object-handle results. Primitive values are
+copied. A thread result is the VM's shared cached `LuauState`; dispose it
+separately only after all holders are finished. Retain another wrapper only when
+it must outlive the scope, and dispose the retained owner later.
+`LuauBuffer.ToArray()`, `Read(...)`, and `Write(...)` copy
 through bounded operations; no borrowed view of native buffer memory is exposed
 across VM actions, collection, wrapper disposal, or root disposal.
 
@@ -323,17 +336,17 @@ Use the synchronous form when the closure cannot reach an asynchronous host
 callback, and the asynchronous form otherwise:
 
 ```csharp
-using var function = state.DoString("return function(a, b) return a + b end")[0]
-    .Read<LuauFunction>();
+using var closureResults = state.DoString("return function(a, b) return a + b end");
+using var function = closureResults[0].Read<LuauFunction>().Retain();
 
-var immediate = function.Invoke([20, 22]);
-var asynchronous = await function.InvokeAsync([20, 22]);
+using var immediate = function.Invoke([20, 22]);
+using var asynchronous = await function.InvokeAsync([20, 22]);
 Debug.Log(immediate[0].Read<long>()); // 42
 ```
 
 Managed callback functions are host capabilities callable by Luau, not arbitrary
 C# delegates, so host invocation is restricted to script closures. For child
-coroutines, `Resume(arguments)` allocates its result array and `ResumeInto`
+coroutines, `Resume(arguments)` returns an owned result scope and `ResumeInto`
 writes into caller-owned memory; the async forms follow the same naming rule.
 `GetStatus()` reports the managed child lifecycle (`Suspended`, `Running`, or
 `Dead`) and rejects root-state use. `LuauTable.Length` is Luau's raw sequence
@@ -388,7 +401,7 @@ if (compilation.Kind == LuauCompileResultKind.Canceled)
 if (compilation.Kind == LuauCompileResultKind.InfrastructureFailure)
     throw compilation.InfrastructureException!;
 
-var results = await state.ExecuteCompilerOutputAsync(
+using var results = await state.ExecuteCompilerOutputAsync(
     compilation.Output!,
     "@mods/example/main.luau".AsMemory(),
     cancellationToken);
@@ -447,6 +460,22 @@ The map copies its source and aliases, canonicalizes equivalent IDs such as
 product filesystem or global asset resolver. The host owns package I/O and
 namespace policy outside the VM.
 
+When a compiled same-process bundle is useful, keep the same trust domain and
+route it through Unity's existing bounded lane:
+
+```csharp
+var bundle = await LuauUnity.CompileModuleBundleAsync(
+    moduleMap,
+    cancellationToken: destroyCancellationToken);
+using var bundledState = LuauUnity.CreateState(new LuauUnityOptions
+{
+    ConfigureHostApis = state => state.OpenRequireLibrary(bundle),
+});
+```
+
+The immutable bundle is a resolver capability, not a persistent artifact or a
+grant of bytecode trust.
+
 ## Bytecode Trust Lanes
 
 Raw host-supplied bytecode is not a public loading surface. Untrusted mods enter
@@ -487,6 +516,7 @@ identity, and host-defined provenance metadata:
 var output = LuauCompiler.Compile(firstPartySource);
 var artifact = LuauBytecodeArtifact.Create(
     output,
+    "unity-asset-guid:" + assetGuid,
     "nervbox:first-party/v1",
     Encoding.UTF8.GetBytes(assetGuid));
 ```
@@ -544,12 +574,12 @@ package bytecode. The built-in `LuauModuleMap` also remains deliberately
 source-only; a future first-party artifact module graph should use a separately
 named trust path.
 
-Future caches should key artifacts by source hash, compile options, artifact
-schema, upstream revision, and host fingerprint, then re-enter through
-`LoadVerifiedBytecode`. They must never recreate a `LuauCompilerOutput` from
-cached raw bytes. See the
-[background compilation plan](docs/plans/cross-platform-background-compilation.md)
-for the cross-platform worker design.
+Future caches should key artifacts by stable source identity, source hash,
+compile options, artifact schema, upstream revision, and host fingerprint, then
+re-enter through `LoadVerifiedBytecode`. They must never recreate a
+`LuauCompilerOutput` from cached raw bytes. The package's tracked
+[compiler security note](Luau.Unity/Documentation~/compiler-security.md)
+documents the bounded worker design and accepted in-process residual risk.
 
 ## Repository Validation
 
@@ -566,6 +596,7 @@ powershell -ExecutionPolicy Bypass -File tools/Copy-DotNetArtifactsToUnity.ps1 -
 
 # Static package, assembly-reference, and source-only policy checks used by CI.
 powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageStatic.ps1
+powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageRelease.ps1
 
 # After building/installing every maintained native preset, refresh/check the
 # three Unity plugins without replacing their importer metadata.
@@ -576,6 +607,10 @@ powershell -ExecutionPolicy Bypass -File tools/Copy-NativeArtifactsToUnity.ps1 -
 # the native plugin, and execute a representative script.
 powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageConsumer.ps1
 
+# After creating/pushing the release tag, validate and run the generated
+# consumer against that exact remote package tree and its imported samples.
+powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageRelease.ps1 -Tag v0.2.0
+
 # Unity integration-project compile and package EditMode tests.
 Push-Location tests/Luau.Unity.Integration
 ucp compile
@@ -584,8 +619,9 @@ Pop-Location
 ```
 
 Native plugins are built separately with the CMake presets under
-`native/luau-host`. Managed refresh copies only `Luau.dll` and
-`Luau.SourceGenerator.dll`; the package already owns its interop source.
+`native/luau-host`. Managed refresh copies only `Luau.dll`, its `Luau.xml`
+IntelliSense file, and `Luau.SourceGenerator.dll`; the package already owns its
+interop source.
 
 See the [maintainer guide](docs/maintainer-guide.md) for authority boundaries,
 operation semantics, and validation recipes.

@@ -12,12 +12,12 @@ namespace Luau;
 internal static unsafe class LuauNativeProtection
 {
     internal const uint ExpectedAbiMagic = 0x4841554cU;
-    internal const ushort ExpectedAbiMajor = 1;
+    internal const ushort ExpectedAbiMajor = 2;
     internal const ushort MinimumAbiMinor = 0;
     internal const uint ExpectedAbiRecordSize = 112;
-    internal const uint ExpectedFeatureFlags = 0x1ffU;
+    internal const uint ExpectedFeatureFlags = 0xfffU;
     internal const ulong ExpectedUpstreamRevisionHash = 0xc45f010aabf167acUL;
-    internal const ulong ExpectedHostBuildFingerprint = 0x106bf44141c27552UL;
+    internal const ulong ExpectedHostBuildFingerprint = 0xe22f181ac247f52aUL;
     internal const int AbiQueryOk = (int)LuauHostStatus.Ok;
     internal const int AbiQueryInvalidArgument = (int)LuauHostStatus.InvalidArgument;
 
@@ -61,7 +61,10 @@ internal static unsafe class LuauNativeProtection
             or LuauHostStatus.SystemOutOfMemory
             or LuauHostStatus.Canceled)
         {
-            nativeMessage = ReadProtectedError(pointer, operation);
+            nativeMessage = ReadProtectedError(
+                pointer,
+                operation,
+                state.Options.MaxDiagnosticBytes);
         }
 
         var hardStop = activeOperation?.GetHardStopException();
@@ -114,6 +117,10 @@ internal static unsafe class LuauNativeProtection
             throw new PlatformNotSupportedException(
                 $"The Luau host does not support the requested operation to {operation}.");
         }
+        if (status == LuauHostStatus.ResourceExhausted)
+        {
+            throw new LuauReferenceLimitException();
+        }
 
         nativeMessage ??= $"The Luau host failed with status {(int)status} while attempting to {operation}.";
         throw new LuauException(
@@ -128,7 +135,10 @@ internal static unsafe class LuauNativeProtection
             (IntPtr)luau_host_to_light_userdata(pointer, -1) == token;
     }
 
-    static string ReadProtectedError(LuauHostState* pointer, string operation)
+    static string ReadProtectedError(
+        LuauHostState* pointer,
+        string operation,
+        int maxDiagnosticBytes)
     {
         try
         {
@@ -139,9 +149,12 @@ internal static unsafe class LuauNativeProtection
             {
                 ulong length = 0;
                 var value = luau_host_to_string_view(pointer, -1, &length);
-                if (value != null && length <= int.MaxValue)
+                if (value != null)
                 {
-                    return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(value, (int)length));
+                    return BoundedUtf8Decoder.DecodeDiagnostic(
+                        value,
+                        length,
+                        maxDiagnosticBytes);
                 }
             }
 
@@ -289,12 +302,12 @@ internal sealed unsafe class LuauNativeAbiVerifier
                 $"expected 0x{LuauNativeProtection.ExpectedAbiMagic:x8}. {context}");
         }
         if (info.abi_major != LuauNativeProtection.ExpectedAbiMajor ||
-            info.abi_minor < LuauNativeProtection.MinimumAbiMinor)
+            info.abi_minor != LuauNativeProtection.MinimumAbiMinor)
         {
             throw new PlatformNotSupportedException(
                 $"The native Luau host ABI is {info.abi_major}.{info.abi_minor}; " +
-                $"expected {LuauNativeProtection.ExpectedAbiMajor}.{LuauNativeProtection.MinimumAbiMinor} " +
-                $"or a compatible newer minor. {context}");
+                $"expected the exact ABI {LuauNativeProtection.ExpectedAbiMajor}.{LuauNativeProtection.MinimumAbiMinor}. " +
+                $"Managed/native compatibility is exact for this build. {context}");
         }
 
         ValidateSize("pointer", info.pointer_size, sizeof(void*), context);

@@ -13,14 +13,15 @@ permissions:
 jobs:
   validate:
     name: Test managed source and shipped artifacts
-    runs-on: windows-latest
+    runs-on: windows-2022
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 9.0.306
 
@@ -29,6 +30,26 @@ jobs:
 
       - name: Run managed tests
         run: dotnet test Luau.slnx --no-restore --configuration Release
+
+      - name: Run bounded artifact parser fuzz smoke
+        run: >-
+          dotnet run
+          --project fuzz/Luau.ArtifactFuzz/Luau.ArtifactFuzz.csproj
+          --no-restore
+          --configuration Release
+          --
+          --smoke
+          --iterations 25000
+          --seed 0x6a09e667f3bcc909
+
+      - name: Retain artifact parser reproducers
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: luau-artifact-fuzz-reproducers
+          if-no-files-found: ignore
+          retention-days: 30
+          path: artifacts/artifact-fuzz-reproducers/
 
       - name: Prove managed harness native selection
         shell: pwsh
@@ -49,3 +70,9 @@ jobs:
         run: >-
           powershell -ExecutionPolicy Bypass
           -File tools/Test-UnityPackageStatic.ps1
+
+      - name: Validate deterministic release package
+        shell: pwsh
+        run: >-
+          powershell -ExecutionPolicy Bypass
+          -File tools/Test-UnityPackageRelease.ps1

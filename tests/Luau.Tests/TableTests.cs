@@ -29,6 +29,163 @@ public sealed class TableTests
     }
 
     [Fact]
+    public void TableConstructionUsesRawLastWriteSemantics()
+    {
+        using var state = LuauState.Create();
+        KeyValuePair<LuauValue, LuauValue>[] entries =
+        [
+            new("same", 1),
+            new("same", 2),
+        ];
+
+        using var fromSpan = state.CreateTable(entries.AsSpan());
+        using var fromSequence = state.CreateTable(entries.AsEnumerable());
+
+        Assert.Equal(2, fromSpan.RawGet("same").Read<int>());
+        Assert.Equal(2, fromSequence.RawGet("same").Read<int>());
+        Assert.Equal(1, fromSpan.EntryCount);
+        Assert.Equal(1, fromSequence.EntryCount);
+    }
+
+    [Fact]
+    public void AddUsesRawDuplicateSemanticsAndRejectsNilValues()
+    {
+        using var state = LuauState.Create();
+        state.OpenBaseLibrary();
+        using var results = state.DoString(
+            "return setmetatable({}, { __index = function() return 99 end })");
+        var table = results.Read<LuauTable>(0);
+
+        // A value supplied only by __index is not a raw duplicate.
+        table.Add("answer", 42);
+        Assert.Equal(42, table.RawGet("answer").Read<int>());
+        Assert.Throws<ArgumentException>(() => table.Add("answer", 43));
+        Assert.Throws<ArgumentException>(() => table.Add("nilValue", LuauValue.Nil));
+        Assert.Equal(1, table.EntryCount);
+    }
+
+    [Fact]
+    public void DictionaryKeysRejectNilNanAndDisposedReferences()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+        var nil = LuauValue.Nil;
+        var nan = LuauValue.FromNumber(double.NaN);
+
+        Assert.Throws<ArgumentException>(() => _ = table[nil]);
+        Assert.Throws<ArgumentException>(() => table[nil] = 1);
+        Assert.Throws<ArgumentException>(() => table.Add(nil, 1));
+        Assert.Throws<ArgumentException>(() => table.ContainsKey(nil));
+        Assert.Throws<ArgumentException>(() => table.TryGetValue(nil, out _));
+        Assert.Throws<ArgumentException>(() => table.Remove(nil));
+        Assert.Throws<ArgumentException>(() => table.RawGet(nil));
+        Assert.Throws<ArgumentException>(() => table.RawSet(nil, 1));
+
+        Assert.Throws<ArgumentException>(() => _ = table[nan]);
+        Assert.Throws<ArgumentException>(() => table[nan] = 1);
+        Assert.Throws<ArgumentException>(() => table.Add(nan, 1));
+        Assert.Throws<ArgumentException>(() => table.ContainsKey(nan));
+        Assert.Throws<ArgumentException>(() => table.TryGetValue(nan, out _));
+        Assert.Throws<ArgumentException>(() => table.Remove(nan));
+        Assert.Throws<ArgumentException>(() => table.RawGet(nan));
+        Assert.Throws<ArgumentException>(() => table.RawSet(nan, 1));
+
+        var keyTable = state.CreateTable();
+        var disposedKey = LuauValue.FromTable(keyTable);
+        keyTable.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => _ = table[disposedKey]);
+        Assert.Throws<ObjectDisposedException>(() => table[disposedKey] = 1);
+        Assert.Throws<ObjectDisposedException>(() => table.Add(disposedKey, 1));
+        Assert.Throws<ObjectDisposedException>(() => table.ContainsKey(disposedKey));
+        Assert.Throws<ObjectDisposedException>(() => table.TryGetValue(disposedKey, out _));
+        Assert.Throws<ObjectDisposedException>(() => table.Remove(disposedKey));
+        Assert.Throws<ObjectDisposedException>(() => table.RawGet(disposedKey));
+        Assert.Throws<ObjectDisposedException>(() => table.RawSet(disposedKey, 1));
+    }
+
+    [Fact]
+    public void RemoveReportsRawExistenceAndNilAssignmentRemoves()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+
+        Assert.False(table.Remove("missing"));
+        table.Add("present", 1);
+        Assert.True(table.Remove("present"));
+        Assert.False(table.Remove("present"));
+
+        table.RawSet("raw", 2);
+        table.RawSet("raw", LuauValue.Nil);
+        Assert.False(table.ContainsKey("raw"));
+        Assert.Equal(0, table.EntryCount);
+    }
+
+    [Fact]
+    public void RawAndMetamethodAwareOperationsRemainDistinct()
+    {
+        using var state = LuauState.Create();
+        state.OpenBaseLibrary();
+        using var results = state.DoString(
+            "local backing = {}; " +
+            "local value = setmetatable({}, { " +
+            "__index = function(_, key) return backing[key] or 42 end, " +
+            "__newindex = function(_, key, item) backing['seen_' .. key] = item end }); " +
+            "return value, backing");
+        var table = results.Read<LuauTable>(0);
+        var backing = results.Read<LuauTable>(1);
+
+        Assert.Equal(42, table["missing"].Read<int>());
+        Assert.True(table.RawGet("missing").IsNil);
+        Assert.False(table.ContainsKey("missing"));
+        Assert.False(table.TryGetValue("missing", out var missing));
+        Assert.True(missing.IsNil);
+
+        table["value"] = 7;
+        Assert.True(table.RawGet("value").IsNil);
+        Assert.Equal(7, backing.RawGet("seen_value").Read<int>());
+
+        table.RawSet("value", 8);
+        Assert.Equal(8, table["value"].Read<int>());
+        Assert.Equal(1, table.EntryCount);
+    }
+
+    [Fact]
+    public void EntryCountCountsAllRawEntriesAndIsIndependentFromLength()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+        table.Add(1d, "sequence");
+        table.Add(100d, "sparse");
+        table.Add("named", true);
+
+        Assert.Equal(3, table.EntryCount);
+        Assert.Equal(1, table.Length);
+        Assert.True(table.Remove("named"));
+        Assert.Equal(2, table.EntryCount);
+    }
+
+    [Fact]
+    public void MutationDuringEnumerationHasLiveUnspecifiedVisitationButStateRecovers()
+    {
+        using var state = LuauState.Create();
+        using var table = state.CreateTable();
+        table.Add("first", 1);
+        table.Add("second", 2);
+        using var enumerator = table.GetEnumerator();
+
+        Assert.True(enumerator.MoveNext());
+        Assert.True(table.Remove(enumerator.Current.Key));
+        var moves = 0;
+        while (enumerator.MoveNext())
+        {
+            Assert.True(++moves <= 2, "A mutated live enumeration must still terminate.");
+        }
+        Assert.False(enumerator.MoveNext());
+        Assert.Equal(1, table.EntryCount);
+        Assert.Equal(9, Assert.Single(state.DoString("return 4 + 5")).Read<int>());
+    }
+
+    [Fact]
     public void ContainsKey()
     {
         using var state = LuauState.Create();

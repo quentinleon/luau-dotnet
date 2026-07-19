@@ -21,12 +21,18 @@ namespace Luau.Unity.Editor
         [SerializeField]
         string firstPartyProvenanceId = string.Empty;
 
+        [SerializeField]
+        int maxImportedSourceBytes = LuauAssetImportSettings.DefaultMaxImportedSourceBytes;
+
         internal LuauAssetImportPolicy ImportPolicy =>
             importPolicy == LuauAssetImportPolicy.AllowFirstPartyPrecompile
                 ? LuauAssetImportPolicy.AllowFirstPartyPrecompile
                 : LuauAssetImportPolicy.SourceOnly;
         internal string FirstPartyProvenanceId =>
             (firstPartyProvenanceId ?? string.Empty).Trim();
+        internal int MaxImportedSourceBytes => maxImportedSourceBytes > 0
+            ? maxImportedSourceBytes
+            : LuauAssetImportSettings.DefaultMaxImportedSourceBytes;
 
         internal bool SetImportPolicy(LuauAssetImportPolicy value, bool save)
         {
@@ -53,13 +59,42 @@ namespace Luau.Unity.Editor
                 Save(true);
             return true;
         }
+
+        internal bool SetMaxImportedSourceBytes(int value, bool save)
+        {
+            if (value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    "The imported source byte limit must be positive.");
+            }
+
+            if (maxImportedSourceBytes == value)
+                return false;
+
+            maxImportedSourceBytes = value;
+            if (save)
+                Save(true);
+            return true;
+        }
     }
 
     /// <summary>Project-wide policy for importing <c>.luau</c> assets.</summary>
     public static class LuauAssetImportSettings
     {
+        /// <summary>The finite default maximum size of one imported Luau source file.</summary>
+        public const int DefaultMaxImportedSourceBytes = 1024 * 1024;
+
         public static LuauAssetImportPolicy ImportPolicy =>
             LuauUnityProjectSettingsData.instance.ImportPolicy;
+
+        /// <summary>
+        /// Gets the maximum admitted UTF-8 byte length of one <c>.luau</c> asset.
+        /// This editor limit does not replace runtime limits for streamed mod source.
+        /// </summary>
+        public static int MaxImportedSourceBytes =>
+            LuauUnityProjectSettingsData.instance.MaxImportedSourceBytes;
 
         /// <summary>
         /// Gets the public provenance scheme or publisher label embedded in
@@ -85,6 +120,17 @@ namespace Luau.Unity.Editor
                 ReimportLuauAssets();
         }
 
+        /// <summary>Sets the finite maximum UTF-8 byte length of one imported source asset.</summary>
+        public static void SetMaxImportedSourceBytes(int maxSourceBytes)
+        {
+            if (LuauUnityProjectSettingsData.instance.SetMaxImportedSourceBytes(
+                maxSourceBytes,
+                save: true))
+            {
+                ReimportLuauAssets();
+            }
+        }
+
         internal static void SetImportPolicyForTests(LuauAssetImportPolicy importPolicy)
         {
             LuauUnityProjectSettingsData.instance.SetImportPolicy(importPolicy, save: false);
@@ -93,6 +139,13 @@ namespace Luau.Unity.Editor
         internal static void SetFirstPartyProvenanceIdForTests(string provenanceId)
         {
             LuauUnityProjectSettingsData.instance.SetFirstPartyProvenanceId(provenanceId, save: false);
+        }
+
+        internal static void SetMaxImportedSourceBytesForTests(int maxSourceBytes)
+        {
+            LuauUnityProjectSettingsData.instance.SetMaxImportedSourceBytes(
+                maxSourceBytes,
+                save: false);
         }
 
         static void ReimportLuauAssets()
@@ -113,7 +166,7 @@ namespace Luau.Unity.Editor
                 label = "Luau.Unity",
                 keywords = new HashSet<string>
                 {
-                    "Luau", "source", "bytecode", "precompile", "mods",
+                    "Luau", "source", "bytecode", "precompile", "mods", "limit", "UTF-8",
                 },
                 guiHandler = _ => DrawSettings(),
             };
@@ -121,6 +174,20 @@ namespace Luau.Unity.Editor
 
         static void DrawSettings()
         {
+            var currentMaxSourceBytes = MaxImportedSourceBytes;
+            var nextMaxSourceBytes = EditorGUILayout.IntField(
+                new GUIContent(
+                    "Maximum source bytes",
+                    "Finite Editor import admission limit. Runtime mod-source limits are configured separately."),
+                currentMaxSourceBytes);
+            if (nextMaxSourceBytes != currentMaxSourceBytes)
+            {
+                if (nextMaxSourceBytes > 0)
+                    SetMaxImportedSourceBytes(nextMaxSourceBytes);
+                else
+                    EditorGUILayout.HelpBox("Maximum source bytes must be positive.", MessageType.Error);
+            }
+
             var current = ImportPolicy;
             var next = (LuauAssetImportPolicy)EditorGUILayout.EnumPopup("Asset import policy", current);
             if (next != current)

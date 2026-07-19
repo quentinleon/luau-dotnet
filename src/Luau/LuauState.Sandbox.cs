@@ -125,7 +125,7 @@ public unsafe partial class LuauState
         var status = luau_host_sandbox_thread(l);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "sandbox a child thread");
 
-        var guardResults = DoStringForRequire(
+        using var guardResults = DoStringForRequire(
             SandboxGuardSource,
             SandboxGuardChunkName,
             options: null);
@@ -135,6 +135,7 @@ public unsafe partial class LuauState
             throw new LuauException("Unable to create the protected-global sandbox guard.");
         }
 
+        guardResults.Detach(0);
         using (guard)
         {
             var originalTop = luau_host_stack_get_top(l);

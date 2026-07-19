@@ -30,7 +30,7 @@ public sealed class LuauValueTests
     {
         using var state = LuauState.Create();
 
-        Assert.Throws<ArgumentException>(() => state.CreateFrom(new UnsupportedStruct(1)));
+        Assert.Throws<ArgumentException>(() => LuauValue.CreateFrom(new UnsupportedStruct(1)));
     }
 
     readonly record struct UnsupportedStruct(int Value);

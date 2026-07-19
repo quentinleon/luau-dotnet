@@ -68,6 +68,7 @@ public sealed class BytecodeCapabilityTests
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint,
+            "tests/persistent-artifact.luau",
             output.SourceSha256,
             output.BytecodeSha256,
             "first-party/build-manifest",
@@ -94,6 +95,7 @@ public sealed class BytecodeCapabilityTests
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint,
+            "tests/wrong-schema.luau",
             output.SourceSha256,
             output.BytecodeSha256,
             "tests/wrong-schema"));
@@ -104,6 +106,7 @@ public sealed class BytecodeCapabilityTests
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint,
+            "tests/compiler-diagnostic.luau",
             output.SourceSha256,
             output.BytecodeSha256,
             "tests/compiler-diagnostic"));
@@ -119,6 +122,7 @@ public sealed class BytecodeCapabilityTests
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint + 1,
+            "tests/wrong-runtime.luau",
             output.SourceSha256,
             output.BytecodeSha256,
             "tests/wrong-runtime");
@@ -140,7 +144,10 @@ public sealed class BytecodeCapabilityTests
     public async Task PreCanceledArtifactExecutionSkipsProvenanceValidation()
     {
         var output = LuauCompiler.Compile("return 7"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/pre-canceled");
+        var artifact = LuauBytecodeArtifact.Create(
+            output,
+            "tests/pre-canceled.luau",
+            "tests/pre-canceled");
         var validator = new CountingValidator(accept: true);
         using var state = LuauState.Create(new LuauStateOptions
         {

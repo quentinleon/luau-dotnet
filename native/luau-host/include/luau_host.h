@@ -56,6 +56,7 @@ enum
     LUAU_HOST_STATUS_UNSUPPORTED = 8,
     LUAU_HOST_STATUS_YIELDED = 9,
     LUAU_HOST_STATUS_BREAK = 10,
+    LUAU_HOST_STATUS_RESOURCE_EXHAUSTED = 11,
 };
 
 typedef int32_t luau_host_allocator_failure;
@@ -90,25 +91,10 @@ enum
     LUAU_HOST_LIBRARY_INTEGER = 11,
 };
 
-typedef int32_t luau_host_gc_operation;
-enum
-{
-    LUAU_HOST_GC_STOP = 0,
-    LUAU_HOST_GC_RESTART = 1,
-    LUAU_HOST_GC_COLLECT = 2,
-    LUAU_HOST_GC_COUNT_KIB = 3,
-    LUAU_HOST_GC_COUNT_REMAINDER_BYTES = 4,
-    LUAU_HOST_GC_IS_RUNNING = 5,
-    LUAU_HOST_GC_STEP_KIB = 6,
-    LUAU_HOST_GC_SET_GOAL_PERCENT = 7,
-    LUAU_HOST_GC_SET_STEP_MULTIPLIER_PERCENT = 8,
-    LUAU_HOST_GC_SET_STEP_SIZE_KIB = 9,
-};
-
 enum
 {
     LUAU_HOST_ABI_MAGIC = 0x4841554cU,
-    LUAU_HOST_ABI_MAJOR = 1,
+    LUAU_HOST_ABI_MAJOR = 2,
     LUAU_HOST_ABI_MINOR = 0,
     LUAU_HOST_CALLBACK_TABLE_VERSION = 1,
     LUAU_HOST_COMPILE_OPTIONS_VERSION = 1,
@@ -129,6 +115,9 @@ enum
     LUAU_HOST_FEATURE_TERMINAL_RESET = 1U << 6,
     LUAU_HOST_FEATURE_INTEGER_VALUES = 1U << 7,
     LUAU_HOST_FEATURE_SANDBOX = 1U << 8,
+    LUAU_HOST_FEATURE_OPAQUE_REFERENCE_TOKENS = 1U << 9,
+    LUAU_HOST_FEATURE_DIRECT_CALLBACK_IDENTITY = 1U << 10,
+    LUAU_HOST_FEATURE_OBSERVATION_ONLY_GC_INTERRUPT = 1U << 11,
 };
 
 enum
@@ -293,19 +282,16 @@ LUAU_HOST_API void LUAU_HOST_CALL luau_host_state_close(luau_host_state* root);
  * retained by the host allocator. A failed shrinking realloc remains charged at
  * its prior size until a later successful realloc or free; platform allocator
  * metadata and capacity rounding are outside these counters.
- * reset_failure clears allocator failure telemetry and sticky cancellation;
- * arm_quota_failure makes the next growing VM allocation fail deterministically. */
+ * reset_failure clears allocator failure telemetry and sticky cancellation. */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_memory_get(
     luau_host_state* state,
     luau_host_memory_info* output);
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_memory_reset_failure(luau_host_state* state);
-LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_memory_arm_quota_failure(luau_host_state* state);
 
 /* No-fail lifecycle observers; stack-neutral. main_thread returns the borrowed
  * root handle. thread_status maps native status and sticky interruption to a
  * stable host status. */
 LUAU_HOST_API luau_host_state* LUAU_HOST_CALL luau_host_main_thread(luau_host_state* state);
-LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_is_thread_reset(luau_host_state* state);
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_thread_status(luau_host_state* state);
 
 /* Protected child creation. output is required and initialized null. Success
@@ -326,14 +312,13 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_thread_reset(luau_host_s
 /* No-fail, allocation-free, stack-neutral observers. abs_index maps an ordinary
  * relative/absolute index, get_top returns the value count, type returns the
  * handshake type tag, type_name returns a process-lifetime static UTF-8 name,
- * raw_equal/object_length do not invoke metamethods; object_length reports the
+ * object_length does not invoke metamethods and reports the
  * caller-requested payload size for destructor userdata. is_yieldable observes
  * only the current thread. Invalid indices return 0/null/a neutral tag. */
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_stack_abs_index(luau_host_state* state, int32_t index);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_stack_get_top(luau_host_state* state);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_type(luau_host_state* state, int32_t index);
 LUAU_HOST_API const uint8_t* LUAU_HOST_CALL luau_host_type_name(luau_host_state* state, int32_t type);
-LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_raw_equal(luau_host_state* state, int32_t left, int32_t right);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_object_length(luau_host_state* state, int32_t index);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_is_yieldable(luau_host_state* state);
 
@@ -367,8 +352,7 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_stack_check(
  * must be copied immediately. String/userdata/buffer pointers remain borrowed
  * only while the exact value is reachable and its root is open; any call that
  * can mutate the stack or collect may end that lifetime. to_pointer is an
- * identity token, not caller-owned storage. to_function is a non-owning code
- * pointer whose delegate/module must outlive every possible native call. */
+ * identity token, not caller-owned storage. */
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_to_boolean(luau_host_state* state, int32_t index);
 LUAU_HOST_API double LUAU_HOST_CALL luau_host_to_number(luau_host_state* state, int32_t index, int32_t* is_number);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_to_integer32(luau_host_state* state, int32_t index, int32_t* is_integer);
@@ -387,13 +371,11 @@ LUAU_HOST_API void* LUAU_HOST_CALL luau_host_to_buffer(
     int32_t index,
     uint64_t* length);
 LUAU_HOST_API const void* LUAU_HOST_CALL luau_host_to_pointer(luau_host_state* state, int32_t index);
-LUAU_HOST_API luau_host_managed_function LUAU_HOST_CALL luau_host_to_function(luau_host_state* state, int32_t index);
 
-/* No-fail, stack-neutral managed-callback observer. Valid only synchronously
- * inside a host-created managed function. upvalue is one-based
- * over caller upvalues (the hidden host metadata is never exposed); returns a
- * borrowed userdata payload pointer or null. */
-LUAU_HOST_API void* LUAU_HOST_CALL luau_host_callback_userdata(luau_host_state* state, int32_t upvalue);
+/* No-fail, allocation-free, stack-neutral managed-callback observer. Valid
+ * only synchronously inside a host-created managed function. Returns the
+ * callback table's copied nonzero registration_id, or zero outside that frame. */
+LUAU_HOST_API uint64_t LUAU_HOST_CALL luau_host_callback_registration_id(luau_host_state* state);
 
 /* Protected pushes. Success appends exactly one value; push_value duplicates
  * an existing ordinary index. push_string borrows an explicit byte span and
@@ -423,12 +405,17 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_push_thread(
 
 /* Protected callback closure creation. Consumes upvalue_count values and
  * pushes one closure. debug_name is borrowed for this call and copied by the
- * host. All callbacks support at most 254 caller upvalues because the host adds
- * one hidden metadata/lifetime upvalue. managed_function code must remain
+ * host. registration_id must be nonzero and is copied into hidden metadata;
+ * callers can recover it only from callback_registration_id while executing
+ * that closure. All callbacks support at most 254 caller upvalues because the
+ * host adds one hidden metadata/lifetime upvalue. managed_function code must remain
  * callable until closure collection or root close. When userdata and
  * userdata_destructor are both set, the host retains that owner for the same
  * lifetime and invokes the destructor exactly once with callback-table userdata
- * as its argument. owner_transferred is set once native userdata owns it, even
+ * as its argument. Destructors are GC/close notifications: they may only
+ * release or enqueue that opaque token and must not call this host, block,
+ * allocate substantially, access Unity APIs, or unwind. owner_transferred is
+ * set once native userdata owns it, even
  * if later closure allocation fails; otherwise the caller remains responsible.
  * The table and debug-name bytes are copied, not borrowed. Success consumes
  * upvalue_count values and pushes one closure (net 1-upvalue_count). On protected
@@ -448,7 +435,9 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_push_callback(
  * callback function pointer; when the value is collected/root closes, it calls
  * userdata_destructor with the newly allocated payload pointer (callback-table
  * userdata is ignored). Destructor code must remain callable for that lifetime
- * and must not unwind/reenter lifecycle. Non-argument failure restores entry
+ * and may only release or enqueue the opaque token stored in that payload; it
+ * must not call this host, block, allocate substantially, access Unity APIs,
+ * unwind, or reenter lifecycle. Non-argument failure restores entry
  * top and appends exactly one error (+1); output is null. */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_userdata_create(
     luau_host_state* state,
@@ -524,12 +513,16 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_global_set(
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_global_push(luau_host_state* state);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_is_global(luau_host_state* state, int32_t index);
 
-/* Root-registry references are host-owned integers. reference output is required.
- * create is stack-neutral and retains a copy of index; push appends that value
- * (+1); release is stack-neutral and invalidates the handle. References are
+/* Root-registry references use opaque positive process-unique int32 tokens.
+ * reference output is required. create is stack-neutral and retains a copy of
+ * index. Tokens increase monotonically and are never reused in the process.
+ * Once all positive int32 values have been issued, create returns
+ * RESOURCE_EXHAUSTED and leaves reference at -1. push appends the retained value
+ * (+1); release is stack-neutral and invalidates the token. References are
  * root-scoped, must be released at most once, and become invalid at root close.
- * Protected failure appends exactly one error without consuming caller values;
- * precondition/stale-reference rejection is neutral. */
+ * Validation is an O(1) live-token lookup and never scans the VM registry free
+ * list. Protected failure appends exactly one error without consuming caller
+ * values; precondition/stale-token rejection is neutral. */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_reference_create(
     luau_host_state* state,
     int32_t index,
@@ -602,30 +595,21 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_resume_error(
     luau_host_state* from);
 LUAU_HOST_API int32_t LUAU_HOST_CALL luau_host_yield(luau_host_state* state, int32_t result_count);
 
-/* Protected, stack-neutral explicit GC operation. STOP/RESTART/COLLECT ignore
- * data; COUNT_KIB, COUNT_REMAINDER_BYTES, and IS_RUNNING report their named
- * value; STEP_KIB requires nonnegative data; setters require nonnegative data,
- * STEP_MULTIPLIER requires nonzero, and combinations that overflow approved
- * Luau signed GC arithmetic are rejected. Setters return the previous value.
- * Non-argument failure restores entry top then appends one error (+1). */
-LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_collect(
-    luau_host_state* state,
-    luau_host_gc_operation operation,
-    int32_t data,
-    int32_t* result);
+/* Protected full collection. This is the only exposed collector control.
+ * Success is stack-neutral. Failure restores the entry top then appends one
+ * error (+1). GC interrupt notifications are observation-only regardless of
+ * their poll return value and can never yield, throw, or cancel collection. */
+LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_collect(luau_host_state* state);
 
 /* Protected library and sandbox operations. open_library accepts only the
  * reviewed enum and appends exactly result_count values (the approved libraries
- * currently return one table). open_all registers all approved globals and is
- * top-neutral. sandbox_root freezes libraries/globals and is top-neutral;
+ * currently return one table). sandbox_root freezes libraries/globals and is top-neutral;
  * sandbox_thread replaces that thread's global table and is top-neutral.
- * Non-argument failure restores entry top then appends exactly one error (+1).
- * open_all is a temporary trusted compatibility operation. */
+ * Non-argument failure restores entry top then appends exactly one error (+1). */
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_open_library(
     luau_host_state* state,
     luau_host_library library,
     int32_t* result_count);
-LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_open_all_libraries(luau_host_state* state);
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_sandbox_root(luau_host_state* state);
 LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_sandbox_thread(luau_host_state* state);
 
@@ -634,9 +618,10 @@ LUAU_HOST_API luau_host_status LUAU_HOST_CALL luau_host_sandbox_thread(luau_host
  * future entries and drains callbacks that already entered the host gate before
  * returning without busy-waiting. The poll code/delegate must stay callable
  * from successful install through completed uninstall/root close. Polls are
- * stack-neutral unless they call documented callback-safe APIs; nonzero
- * requests yield when possible or
- * a sticky CANCELED hard stop otherwise. Each root owns its poll pointer, so
+ * stack-neutral unless they call documented callback-safe APIs. For EXECUTION,
+ * zero continues and nonzero requests yield when possible or a sticky CANCELED
+ * hard stop otherwise. GC notifications are observation-only: their return
+ * value is ignored and they cannot alter VM control flow. Each root owns its poll pointer, so
  * independent roots may install different functions concurrently. Uninstall must
  * not be called by the poll itself. Poll callbacks must never unwind or reenter
  * lifecycle. */

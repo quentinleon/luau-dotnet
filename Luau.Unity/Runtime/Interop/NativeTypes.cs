@@ -49,6 +49,7 @@ namespace Luau.Internal.Interop
         Unsupported = 8,
         Yielded = 9,
         Break = 10,
+        ResourceExhausted = 11,
     }
 
     internal enum LuauHostAllocatorFailure : int
@@ -92,6 +93,9 @@ namespace Luau.Internal.Interop
         TerminalReset = 1U << 6,
         IntegerValues = 1U << 7,
         Sandbox = 1U << 8,
+        OpaqueReferenceTokens = 1U << 9,
+        DirectCallbackIdentity = 1U << 10,
+        ObservationOnlyGcInterrupt = 1U << 11,
     }
 
     [Flags]

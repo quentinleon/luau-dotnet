@@ -60,6 +60,35 @@ namespace Luau.Unity.Tests
         }
 
         [Test]
+        public void SharedFacadeCompilesModuleBundleThroughThePackageOwnedLane()
+        {
+            var providerCalls = 0;
+            using var providerOverride = LuauUnity.OverrideAssetCompilationProviderForTests(
+                (source, options, cancellationToken) =>
+                {
+                    Interlocked.Increment(ref providerCalls);
+                    return new ValueTask<LuauCompileResult>(
+                        LuauCompileResult.Success(LuauCompiler.Compile(source.Span, options)));
+                });
+            var map = new LuauModuleMap(new Dictionary<string, byte[]>
+            {
+                ["shared/answer"] = Encoding.UTF8.GetBytes("return 42"),
+                ["shared/name"] = Encoding.UTF8.GetBytes("return 'Luau'"),
+            });
+
+            var bundle = LuauUnity.CompileModuleBundleAsync(map)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+
+            Assert.That(bundle.Count, Is.EqualTo(2));
+            Assert.That(bundle.TotalBytecodeBytes, Is.GreaterThan(0));
+            Assert.That(providerCalls, Is.EqualTo(2));
+            Assert.Throws<ArgumentNullException>(() =>
+                LuauUnity.CompileModuleBundleAsync(null));
+        }
+
+        [Test]
         public void EditorReloadHookDrainsSharedLaneAndRejectsAdmissionUntilReset()
         {
             var source = Encoding.UTF8.GetBytes("return 42");
@@ -160,7 +189,7 @@ namespace Luau.Unity.Tests
                 Assert.That(execution.IsCompleted, Is.False);
 
                 scheduler.RunNext();
-                var results = execution.GetAwaiter().GetResult();
+                using var results = execution.GetAwaiter().GetResult();
 
                 Assert.That(results, Has.Length.EqualTo(1));
                 Assert.That(results[0].Read<int>(), Is.EqualTo(42));
@@ -271,7 +300,10 @@ namespace Luau.Unity.Tests
             var asset = CreateVerifiedAsset(
                 "@unity/verified-bypass.luau",
                 "return 42",
-                LuauBytecodeArtifact.Create(output, "tests:first-party"));
+                LuauBytecodeArtifact.Create(
+                    output,
+                    "unity-tests/verified-provider-bypass",
+                    "tests:first-party"));
             using var state = LuauState.Create(new LuauStateOptions
             {
                 BytecodePolicy = LuauBytecodePolicy.RequireValidator,
@@ -287,7 +319,7 @@ namespace Luau.Unity.Tests
 
             try
             {
-                var results = state.ExecuteAsync(asset).AsTask().GetAwaiter().GetResult();
+                using var results = state.ExecuteAsync(asset).AsTask().GetAwaiter().GetResult();
 
                 Assert.That(results, Has.Length.EqualTo(1));
                 Assert.That(results[0].Read<int>(), Is.EqualTo(42));
@@ -306,7 +338,10 @@ namespace Luau.Unity.Tests
             var asset = CreateVerifiedAsset(
                 "@unity/rejected-verified.luau",
                 "return 42",
-                LuauBytecodeArtifact.Create(output, "tests:untrusted"));
+                LuauBytecodeArtifact.Create(
+                    output,
+                    "unity-tests/rejected-verified-provider",
+                    "tests:untrusted"));
             using var state = LuauState.Create();
             var providerCalls = 0;
             using var providerOverride = LuauUnity.OverrideAssetCompilationProviderForTests(
@@ -344,7 +379,7 @@ namespace Luau.Unity.Tests
                 },
             });
             var output = LuauCompiler.Compile(Encoding.UTF8.GetBytes("return 42"));
-            Task<LuauValue[]> execution = null;
+            Task<LuauResultScope> execution = null;
 
             Task.Run(() =>
             {
@@ -362,7 +397,7 @@ namespace Luau.Unity.Tests
             Assert.That(execution.IsCompleted, Is.False);
 
             scheduler.RunNext();
-            var results = execution.GetAwaiter().GetResult();
+            using var results = execution.GetAwaiter().GetResult();
 
             Assert.That(results, Has.Length.EqualTo(1));
             Assert.That(results[0].Read<int>(), Is.EqualTo(42));
@@ -623,7 +658,7 @@ namespace Luau.Unity.Tests
 
             try
             {
-                var allocating = state.ExecuteAsync(asset).AsTask().GetAwaiter().GetResult();
+                using var allocating = state.ExecuteAsync(asset).AsTask().GetAwaiter().GetResult();
                 var destination = new LuauValue[2];
                 var count = state.ExecuteIntoAsync(asset, destination)
                     .AsTask()

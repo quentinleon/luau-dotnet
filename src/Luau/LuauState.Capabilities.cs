@@ -28,6 +28,11 @@ public static class LuauObjectExtensions
     }
 }
 
+/// <summary>
+/// Owns one official Luau VM root or a coroutine retained by that root. Root
+/// disposal cancels active operations and invalidates every child and VM-backed
+/// wrapper. Hosts must dispose root states deterministically.
+/// </summary>
 public partial class LuauState
 {
     /// <summary>
@@ -345,7 +350,10 @@ public partial class LuauState
         return true;
     }
 
-    internal LuauObjectHandle RetainObjectHandleFromStack(int index, LuauObjectToken token)
+    internal LuauObjectHandle RetainObjectHandleFromStack(
+        int index,
+        LuauObjectToken token,
+        LuauCallFrame? borrowedFrame = null)
     {
         var rootState = GetMainThread();
         context.ObjectRegistry.RetainFromStack(
@@ -354,6 +362,6 @@ public partial class LuauState
                 this,
                 index,
                 "retain a managed Luau object capability"));
-        return new LuauObjectHandle(rootState, token);
+        return new LuauObjectHandle(rootState, token, borrowedFrame);
     }
 }

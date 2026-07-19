@@ -4,7 +4,10 @@ using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
-internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauFunction(state), ILuauReference
+internal sealed class LuauScriptFunction(
+    LuauState state,
+    int reference,
+    LuauCallFrame? borrowedFrame = null) : LuauFunction(state, borrowedFrame), ILuauReference
 {
     int reference = reference;
     public int Reference => Volatile.Read(ref reference);
@@ -13,7 +16,7 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
     private protected override LuauState ResolvePublicState(LuauState owningState) =>
         owningState.GetMainThread();
 
-    internal LuauValue[] InvokeWithArguments(
+    internal LuauResultScope InvokeWithArguments(
         ReadOnlySpan<LuauValue> arguments,
         LuauExecutionOptions? executionOptions)
     {
@@ -24,7 +27,6 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
             options: executionOptions,
             cancellationToken: default,
             isAsync: false);
-        using var runner = ScriptRunner.Rent();
 
         var baseTop = state.GetTop();
         try
@@ -41,10 +43,21 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
             throw;
         }
 
-        return runner.Run(operation, state, arguments.Length);
+        return ScriptRunner.Run(operation, state, arguments.Length);
     }
 
-    internal async ValueTask<LuauValue[]> InvokeWithArgumentsAsync(
+    internal LuauFunction RetainReference()
+    {
+        using var access = AcquireReference(Reference);
+        return new LuauScriptFunction(
+            access.State,
+            LuauReferenceHelper.RetainReference(
+                access.State,
+                access.Reference,
+                "retain a Luau function"));
+    }
+
+    internal async ValueTask<LuauResultScope> InvokeWithArgumentsAsync(
         ReadOnlyMemory<LuauValue> arguments,
         CancellationToken cancellationToken,
         LuauExecutionOptions? executionOptions)
@@ -56,7 +69,6 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
             options: executionOptions,
             cancellationToken,
             isAsync: true);
-        using var runner = ScriptRunner.Rent();
 
         var baseTop = state.GetTop();
         try
@@ -73,7 +85,7 @@ internal sealed class LuauScriptFunction(LuauState state, int reference) : LuauF
             throw;
         }
 
-        return await runner.RunAsync(operation, state, arguments.Length).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, state, arguments.Length).ConfigureAwait(false);
     }
 
     public override string ToString()

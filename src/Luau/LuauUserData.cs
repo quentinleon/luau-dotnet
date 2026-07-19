@@ -2,13 +2,23 @@ using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
-public unsafe sealed class LuauUserData : ILuauReference, IDisposable
+/// <summary>
+/// Represents opaque Luau userdata through a generation-checked VM reference.
+/// Dispose owned instances deterministically; callback-borrowed instances
+/// expire when their callback frame closes unless retained.
+/// </summary>
+public unsafe sealed class LuauUserData : ILuauReference, ILuauCallbackBorrowedReference, IDisposable
 {
     LuauState? state;
     int reference;
     int disposeState;
     readonly object lifetimeGate = new();
+    readonly LuauCallFrame? borrowedFrame;
 
+    /// <summary>Gets whether this reference is valid only for its callback frame.</summary>
+    public bool IsBorrowed => borrowedFrame != null;
+
+    /// <summary>Gets whether this wrapper, its callback frame, or its owning state is no longer usable.</summary>
     public bool IsDisposed
     {
         get
@@ -25,6 +35,7 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     LuauReferenceAccess ILuauReference.AcquireReference() => AcquireReference();
 
+    /// <summary>Gets the native byte size of the userdata payload.</summary>
     public int Size
     {
         get
@@ -45,18 +56,34 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
         }
     }
 
-    internal LuauUserData(LuauState state, int reference)
+    internal LuauUserData(LuauState state, int reference, LuauCallFrame? borrowedFrame = null)
     {
         this.state = state;
         this.reference = reference;
+        this.borrowedFrame = borrowedFrame;
+        borrowedFrame?.RegisterBorrowed(this);
     }
 
+    /// <summary>Creates an independently disposable owner for this same userdata.</summary>
+    public LuauUserData Retain()
+    {
+        using var access = AcquireReference();
+        return new LuauUserData(
+            access.State,
+            LuauReferenceHelper.RetainReference(
+                access.State,
+                access.Reference,
+                "retain Luau userdata"));
+    }
+
+    /// <summary>Returns the Luau textual representation of this userdata.</summary>
     public override string ToString()
     {
         using var access = AcquireReference();
         return LuauReferenceHelper.RefToString(access.State, access.Reference);
     }
 
+    /// <summary>Releases this wrapper's owned VM reference. The operation is idempotent.</summary>
     public void Dispose()
     {
         DisposeCore();
@@ -84,6 +111,7 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
         }
     }
 
+    /// <summary>Releases the VM reference if the owner was not disposed deterministically.</summary>
     ~LuauUserData()
     {
         try
@@ -98,6 +126,7 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
 
     LuauReferenceAccess AcquireReference()
     {
+        borrowedFrame?.EnsureBorrowedActive();
         var currentState = Volatile.Read(ref state);
         if (currentState == null || currentState.IsDisposed)
         {
@@ -127,4 +156,7 @@ public unsafe sealed class LuauUserData : ILuauReference, IDisposable
             throw;
         }
     }
+
+
+    void ILuauCallbackBorrowedReference.InvalidateBorrowed() => DisposeCore();
 }

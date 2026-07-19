@@ -147,7 +147,7 @@ public sealed class HardeningRuntimeTests
         });
         var stackTop = state.GetTop();
         var output = LuauCompiler.Compile("return 1"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/oversized");
+        var artifact = LuauBytecodeArtifact.Create(output, chunkName, "tests/oversized");
 
         var exception = Assert.Throws<LuauLoadLimitException>(() =>
             state.LoadVerifiedBytecode(artifact, chunkName));
@@ -165,7 +165,7 @@ public sealed class HardeningRuntimeTests
     {
         const string chunkName = "@mods/rejected-bytecode.luau";
         var output = LuauCompiler.Compile("return 41"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/default-policy");
+        var artifact = LuauBytecodeArtifact.Create(output, chunkName, "tests/default-policy");
         using var state = LuauState.Create();
         var stackTop = state.GetTop();
 
@@ -279,7 +279,11 @@ public sealed class HardeningRuntimeTests
         const string chunkName = "@mods/validator-rejected.luau";
         var validator = new RecordingValidator(accept: false);
         var output = LuauCompiler.Compile("return 1"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/rejected", [1, 2, 3]);
+        var artifact = LuauBytecodeArtifact.Create(
+            output,
+            chunkName,
+            "tests/rejected",
+            [1, 2, 3]);
         using var state = LuauState.Create(new LuauStateOptions
         {
             BytecodePolicy = LuauBytecodePolicy.RequireValidator,
@@ -304,7 +308,7 @@ public sealed class HardeningRuntimeTests
         const string chunkName = "@mods/validator-accepted.luau";
         var validator = new RecordingValidator(accept: true);
         var output = LuauCompiler.Compile("return 123"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/accepted");
+        var artifact = LuauBytecodeArtifact.Create(output, chunkName, "tests/accepted");
         using var state = LuauState.Create(new LuauStateOptions
         {
             BytecodePolicy = LuauBytecodePolicy.RequireValidator,
@@ -356,6 +360,7 @@ public sealed class HardeningRuntimeTests
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint,
+            "tests/tampered.luau",
             output.SourceSha256,
             output.BytecodeSha256,
             "tests/tampered"));

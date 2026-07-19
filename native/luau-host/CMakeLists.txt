@@ -5,6 +5,8 @@ project(luau_host LANGUAGES C CXX)
 include(CTest)
 
 option(LUAU_HOST_BUILD_TESTS "Build the native luau_host conformance executable" ON)
+option(LUAU_HOST_ENABLE_SANITIZERS "Instrument the host and pinned Luau sources with ASan/UBSan" OFF)
+option(LUAU_HOST_BUILD_FUZZERS "Build libFuzzer compiler and ABI harnesses" OFF)
 set(LUAU_HOST_UPSTREAM_REVISION "6e9b580e2e24643214caf0f4bbbb3db911ca30f3")
 set(
     LUAU_HOST_BUILD_CONFIGURATION
@@ -14,6 +16,7 @@ set(
 )
 
 set(LUAU_HOST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+get_filename_component(LUAU_REPOSITORY_ROOT "${LUAU_HOST_ROOT}/../.." REALPATH)
 get_filename_component(
     LUAU_UPSTREAM_ROOT
     "${CMAKE_CURRENT_SOURCE_DIR}/../luau"
@@ -103,8 +106,12 @@ set_property(
     PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${LUAU_HOST_ROOT}/include/luau_host.h"
         "${LUAU_HOST_ROOT}/src/luau_host.cpp"
+        "${LUAU_HOST_ROOT}/src/reference_tokens.h"
         "${LUAU_HOST_ROOT}/src/tracked_allocation.h"
         "${LUAU_HOST_ROOT}/exports/luau_host.exports"
+        "${LUAU_HOST_ROOT}/cmake/AuditCompatibility.cmake"
+        "${LUAU_REPOSITORY_ROOT}/Luau.Unity/Runtime/Interop/NativeMethods.cs"
+        "${LUAU_REPOSITORY_ROOT}/src/Luau/Internal/LuauNativeProtection.cs"
         "${_luau_host_git_head_path}"
         ${_luau_host_upstream_provenance_inputs}
 )
@@ -114,12 +121,13 @@ set_property(
 # produce the same compatibility fingerprint on every machine.
 file(SHA256 "${LUAU_HOST_ROOT}/include/luau_host.h" _luau_host_header_hash)
 file(SHA256 "${LUAU_HOST_ROOT}/src/luau_host.cpp" _luau_host_source_hash)
+file(SHA256 "${LUAU_HOST_ROOT}/src/reference_tokens.h" _luau_host_reference_tokens_hash)
 file(SHA256 "${LUAU_HOST_ROOT}/src/tracked_allocation.h" _luau_host_allocator_hash)
 file(SHA256 "${LUAU_HOST_ROOT}/exports/luau_host.exports" _luau_host_exports_hash)
 string(
     SHA256
     LUAU_HOST_BUILD_INPUT_FINGERPRINT
-    "abi=1.0;upstream=${_luau_host_actual_upstream_revision};header=${_luau_host_header_hash};source=${_luau_host_source_hash};allocator=${_luau_host_allocator_hash};exports=${_luau_host_exports_hash}"
+    "abi=2.0;upstream=${_luau_host_actual_upstream_revision};header=${_luau_host_header_hash};source=${_luau_host_source_hash};references=${_luau_host_reference_tokens_hash};allocator=${_luau_host_allocator_hash};exports=${_luau_host_exports_hash}"
 )
 
 # These values must be established before upstream creates its static targets.
@@ -129,6 +137,22 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+if(LUAU_HOST_ENABLE_SANITIZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" OR MSVC)
+        message(FATAL_ERROR "LUAU_HOST_ENABLE_SANITIZERS requires Clang or GCC with ASan/UBSan support")
+    endif()
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+    add_link_options(-fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+
+if(MSVC)
+    # Release packages remain stripped of symbols, while native CI retains a
+    # full external PDB for crash/security investigation. /Brepro removes
+    # timestamp/GUID variance from objects, and PDBALTPATH below prevents the
+    # package DLL from embedding a build-machine absolute path.
+    add_compile_options(/Zi /Brepro)
+endif()
 
 set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -147,6 +171,7 @@ add_library(
     luau_host
     SHARED
     src/luau_host.cpp
+    src/reference_tokens.h
     src/tracked_allocation.h
 )
 
@@ -201,6 +226,25 @@ set_target_properties(
 
 if(MSVC)
     target_compile_options(luau_host PRIVATE /W4 /WX /permissive- /EHsc)
+    target_link_options(
+        luau_host
+        PRIVATE
+            /DEBUG:FULL
+            /Brepro
+            "/PDBALTPATH:luau_host.pdb"
+    )
+    set_target_properties(luau_host PROPERTIES PDB_NAME "luau_host")
+    # LINK treats an existing program PDB as both input and output, incrementing
+    # its age and changing the PE reproducibility record on an otherwise
+    # identical relink. Start every link with a fresh external PDB so clean and
+    # incremental release builds converge while preserving exact DLL/PDB
+    # identity for retained symbols.
+    add_custom_command(
+        TARGET luau_host
+        PRE_LINK
+        COMMAND "${CMAKE_COMMAND}" -E rm -f "$<TARGET_PDB_FILE:luau_host>"
+        VERBATIM
+    )
 else()
     target_compile_options(luau_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -230,6 +274,25 @@ endif()
 
 set(LUAU_HOST_EXPORT_ALLOWLIST "${LUAU_HOST_ROOT}/exports/luau_host.exports")
 set(LUAU_HOST_EXPORT_AUDIT_SCRIPT "${LUAU_HOST_ROOT}/cmake/AuditExports.cmake")
+set(LUAU_HOST_COMPATIBILITY_AUDIT_SCRIPT "${LUAU_HOST_ROOT}/cmake/AuditCompatibility.cmake")
+set(LUAU_HOST_MANAGED_INTEROP "${LUAU_REPOSITORY_ROOT}/Luau.Unity/Runtime/Interop/NativeMethods.cs")
+set(LUAU_HOST_MANAGED_PROTECTION "${LUAU_REPOSITORY_ROOT}/src/Luau/Internal/LuauNativeProtection.cs")
+
+execute_process(
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DHEADER=${LUAU_HOST_ROOT}/include/luau_host.h"
+        "-DALLOWLIST=${LUAU_HOST_EXPORT_ALLOWLIST}"
+        "-DINTEROP=${LUAU_HOST_MANAGED_INTEROP}"
+        "-DMANAGED_PROTECTION=${LUAU_HOST_MANAGED_PROTECTION}"
+        -P "${LUAU_HOST_COMPATIBILITY_AUDIT_SCRIPT}"
+    RESULT_VARIABLE _luau_host_compatibility_result
+    OUTPUT_VARIABLE _luau_host_compatibility_output
+    ERROR_VARIABLE _luau_host_compatibility_error
+)
+if(NOT _luau_host_compatibility_result EQUAL 0)
+    message(FATAL_ERROR "luau_host compatibility audit failed:\n${_luau_host_compatibility_output}${_luau_host_compatibility_error}")
+endif()
 
 if(MSVC)
     get_filename_component(LUAU_HOST_MSVC_TOOL_DIRECTORY "${CMAKE_LINKER}" DIRECTORY)
@@ -250,6 +313,27 @@ else()
 endif()
 
 if(NOT LUAU_HOST_EXPORT_TOOL_KIND STREQUAL "UNSUPPORTED")
+    add_custom_command(
+        TARGET luau_host
+        POST_BUILD
+        COMMAND
+            "${CMAKE_COMMAND}"
+            "-DBINARY=$<TARGET_FILE:luau_host>"
+            "-DALLOWLIST=${LUAU_HOST_EXPORT_ALLOWLIST}"
+            "-DEXPORT_TOOL=${LUAU_HOST_EXPORT_TOOL}"
+            "-DEXPORT_TOOL_KIND=${LUAU_HOST_EXPORT_TOOL_KIND}"
+            -P "${LUAU_HOST_EXPORT_AUDIT_SCRIPT}"
+        COMMAND
+            "${CMAKE_COMMAND}"
+            "-DHEADER=${LUAU_HOST_ROOT}/include/luau_host.h"
+            "-DALLOWLIST=${LUAU_HOST_EXPORT_ALLOWLIST}"
+            "-DINTEROP=${LUAU_HOST_MANAGED_INTEROP}"
+            "-DMANAGED_PROTECTION=${LUAU_HOST_MANAGED_PROTECTION}"
+            -P "${LUAU_HOST_COMPATIBILITY_AUDIT_SCRIPT}"
+        COMMENT "Auditing luau_host exports and exact managed/native compatibility"
+        VERBATIM
+    )
+
     add_custom_target(
         luau_host_export_audit
         COMMAND
@@ -264,6 +348,20 @@ if(NOT LUAU_HOST_EXPORT_TOOL_KIND STREQUAL "UNSUPPORTED")
         VERBATIM
     )
 endif()
+
+add_custom_target(
+    luau_host_compatibility_audit
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DHEADER=${LUAU_HOST_ROOT}/include/luau_host.h"
+        "-DALLOWLIST=${LUAU_HOST_EXPORT_ALLOWLIST}"
+        "-DINTEROP=${LUAU_HOST_MANAGED_INTEROP}"
+        "-DMANAGED_PROTECTION=${LUAU_HOST_MANAGED_PROTECTION}"
+        -P "${LUAU_HOST_COMPATIBILITY_AUDIT_SCRIPT}"
+    DEPENDS luau_host
+    COMMENT "Auditing exact luau_host managed/native compatibility"
+    VERBATIM
+)
 
 # Compile the public contract as C11 independently of the C++ implementation.
 # This is an object target by design: no platform executable or runtime is
@@ -375,6 +473,57 @@ if(LUAU_HOST_BUILD_TESTS)
     add_custom_target(
         luau_host_invalid_abi_fixtures
         DEPENDS ${_luau_host_invalid_abi_targets}
+    )
+endif()
+
+if(LUAU_HOST_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR MSVC)
+        message(FATAL_ERROR "LUAU_HOST_BUILD_FUZZERS requires Clang libFuzzer support")
+    endif()
+
+    foreach(_luau_host_fuzzer IN ITEMS compiler abi)
+        add_executable(
+            "luau_host_${_luau_host_fuzzer}_fuzzer"
+            "tests/luau_host_${_luau_host_fuzzer}_fuzzer.cpp"
+        )
+        target_compile_features("luau_host_${_luau_host_fuzzer}_fuzzer" PRIVATE cxx_std_17)
+        target_link_libraries("luau_host_${_luau_host_fuzzer}_fuzzer" PRIVATE luau_host)
+        target_compile_options(
+            "luau_host_${_luau_host_fuzzer}_fuzzer"
+            PRIVATE
+                -fsanitize=fuzzer
+                -Wall
+                -Wextra
+                -Wpedantic
+                -Werror
+        )
+        target_link_options("luau_host_${_luau_host_fuzzer}_fuzzer" PRIVATE -fsanitize=fuzzer)
+    endforeach()
+
+    set(_luau_host_fuzz_artifacts "${CMAKE_CURRENT_BINARY_DIR}/fuzz-artifacts")
+    add_custom_target(
+        luau_host_fuzz_smoke
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_luau_host_fuzz_artifacts}/compiler"
+        COMMAND
+            "$<TARGET_FILE:luau_host_compiler_fuzzer>"
+            -runs=5000
+            -max_len=65536
+            -timeout=5
+            -rss_limit_mb=2048
+            "-artifact_prefix=${_luau_host_fuzz_artifacts}/compiler/"
+            "${LUAU_HOST_ROOT}/fuzz/corpus/compiler"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_luau_host_fuzz_artifacts}/abi"
+        COMMAND
+            "$<TARGET_FILE:luau_host_abi_fuzzer>"
+            -runs=10000
+            -max_len=4096
+            -timeout=5
+            -rss_limit_mb=2048
+            "-artifact_prefix=${_luau_host_fuzz_artifacts}/abi/"
+            "${LUAU_HOST_ROOT}/fuzz/corpus/abi"
+        DEPENDS luau_host_compiler_fuzzer luau_host_abi_fuzzer
+        USES_TERMINAL
+        VERBATIM
     )
 endif()
 

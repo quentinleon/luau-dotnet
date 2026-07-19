@@ -40,7 +40,7 @@ internal static class LuauBytecodeHash
     internal static bool EqualsSha256(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
-    static string ToLowerHex(ReadOnlySpan<byte> value)
+    internal static string ToLowerHex(ReadOnlySpan<byte> value)
     {
         const string alphabet = "0123456789abcdef";
         var result = new char[value.Length * 2];
@@ -52,4 +52,25 @@ internal static class LuauBytecodeHash
 
         return new string(result);
     }
+
+    internal static void WriteHex(string value, Span<byte> destination)
+    {
+        if (!IsSha256(value) || destination.Length < 32)
+        {
+            throw new ArgumentException("A complete SHA-256 destination is required.", nameof(value));
+        }
+
+        for (var index = 0; index < 32; index++)
+        {
+            destination[index] = (byte)((Hex(value[index * 2]) << 4) | Hex(value[(index * 2) + 1]));
+        }
+    }
+
+    static int Hex(char value) => value switch
+    {
+        >= '0' and <= '9' => value - '0',
+        >= 'a' and <= 'f' => value - 'a' + 10,
+        >= 'A' and <= 'F' => value - 'A' + 10,
+        _ => throw new ArgumentException("Invalid hexadecimal character."),
+    };
 }

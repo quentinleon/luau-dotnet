@@ -13,7 +13,7 @@ namespace Luau.Unity.Tests
     public sealed class LuauUnityPublicApiTests
     {
         const string ApprovedApiSha256 =
-            "835c137e18e804c96fc86220019caab7c1378ebb557d871c03218bf1de12da2b";
+            "5918500aa9d9ec052e02606634530620de3f5f5f47e6b83d1b8901554de87692";
 
         [Test]
         public void RuntimePublicAndProtectedApiMatchesApprovedInventory()
@@ -41,12 +41,12 @@ namespace Luau.Unity.Tests
 
             Assert.That(actual, Is.EqualTo(new[]
             {
-                "Execute(Luau.LuauState,Luau.Unity.LuauAsset)->Luau.LuauValue[]",
-                "ExecuteAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<Luau.LuauValue[]>",
+                "Execute(Luau.LuauState,Luau.Unity.LuauAsset)->Luau.LuauResultScope",
+                "ExecuteAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<Luau.LuauResultScope>",
                 "ExecuteInto(Luau.LuauState,Luau.Unity.LuauAsset,System.Span<Luau.LuauValue>)->System.Int32",
                 "ExecuteIntoAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Memory<Luau.LuauValue>,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<System.Int32>",
                 "ExecuteIntoWithCompilationServiceAsync(Luau.LuauState,Luau.Unity.LuauAsset,Luau.ILuauCompilationService,System.Memory<Luau.LuauValue>,Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)->System.Threading.Tasks.ValueTask<System.Int32>",
-                "ExecuteWithCompilationServiceAsync(Luau.LuauState,Luau.Unity.LuauAsset,Luau.ILuauCompilationService,Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)->System.Threading.Tasks.ValueTask<Luau.LuauValue[]>",
+                "ExecuteWithCompilationServiceAsync(Luau.LuauState,Luau.Unity.LuauAsset,Luau.ILuauCompilationService,Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)->System.Threading.Tasks.ValueTask<Luau.LuauResultScope>",
             }));
         }
 

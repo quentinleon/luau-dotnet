@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using Luau.Internal;
 
 namespace Luau;
@@ -26,10 +27,38 @@ public sealed class LuauBytecodeArtifact
         LuauCompileOptions compileOptions,
         ulong upstreamRevisionHash,
         ulong hostBuildFingerprint,
+        string sourceIdentity,
         string sourceSha256,
         string bytecodeSha256,
         string provenanceId,
         ReadOnlySpan<byte> provenanceData = default)
+        : this(
+            schemaVersion,
+            bytecode,
+            compileOptions,
+            upstreamRevisionHash,
+            hostBuildFingerprint,
+            sourceIdentity,
+            sourceSha256,
+            bytecodeSha256,
+            provenanceId,
+            provenanceData,
+            LuauArtifactLimits.Default)
+    {
+    }
+
+    internal LuauBytecodeArtifact(
+        int schemaVersion,
+        ReadOnlySpan<byte> bytecode,
+        LuauCompileOptions compileOptions,
+        ulong upstreamRevisionHash,
+        ulong hostBuildFingerprint,
+        string sourceIdentity,
+        string sourceSha256,
+        string bytecodeSha256,
+        string provenanceId,
+        ReadOnlySpan<byte> provenanceData,
+        LuauArtifactLimits limits)
     {
         if (schemaVersion != CurrentSchemaVersion)
         {
@@ -47,6 +76,10 @@ public sealed class LuauBytecodeArtifact
         {
             throw new ArgumentNullException(nameof(compileOptions));
         }
+        if (string.IsNullOrWhiteSpace(sourceIdentity))
+        {
+            throw new ArgumentException("A source identity is required.", nameof(sourceIdentity));
+        }
         if (!LuauBytecodeHash.IsSha256(sourceSha256))
         {
             throw new ArgumentException("The source hash must be a 64-character SHA-256 value.", nameof(sourceSha256));
@@ -60,6 +93,16 @@ public sealed class LuauBytecodeArtifact
             throw new ArgumentException("A provenance identifier is required.", nameof(provenanceId));
         }
 
+        var sourceIdentityBytes = GetStrictUtf8ByteCount(sourceIdentity, nameof(sourceIdentity));
+        var provenanceIdBytes = GetStrictUtf8ByteCount(provenanceId, nameof(provenanceId));
+
+        ValidateAdmission(
+            bytecode.Length,
+            sourceIdentityBytes,
+            provenanceIdBytes,
+            provenanceData.Length,
+            limits);
+
         this.bytecode = bytecode.ToArray();
         var actualBytecodeHash = LuauBytecodeHash.Sha256(this.bytecode);
         if (!LuauBytecodeHash.EqualsSha256(actualBytecodeHash, bytecodeSha256))
@@ -72,6 +115,7 @@ public sealed class LuauBytecodeArtifact
         CompileOptions = compileOptions with { };
         UpstreamRevisionHash = upstreamRevisionHash;
         HostBuildFingerprint = hostBuildFingerprint;
+        SourceIdentity = sourceIdentity;
         SourceSha256 = sourceSha256.ToLowerInvariant();
         BytecodeSha256 = actualBytecodeHash;
         ProvenanceId = provenanceId;
@@ -92,6 +136,9 @@ public sealed class LuauBytecodeArtifact
     /// <summary>Gets the claimed exact native host build identity.</summary>
     public ulong HostBuildFingerprint { get; }
 
+    /// <summary>Gets the host-defined stable identity of the admitted source.</summary>
+    public string SourceIdentity { get; }
+
     /// <summary>Gets the claimed lowercase source SHA-256 hash.</summary>
     public string SourceSha256 { get; }
 
@@ -107,6 +154,7 @@ public sealed class LuauBytecodeArtifact
     /// </summary>
     public static LuauBytecodeArtifact Create(
         LuauCompilerOutput output,
+        string sourceIdentity,
         string provenanceId,
         ReadOnlySpan<byte> provenanceData = default)
     {
@@ -115,16 +163,46 @@ public sealed class LuauBytecodeArtifact
             throw new ArgumentNullException(nameof(output));
         }
 
+        return Create(
+            output,
+            sourceIdentity,
+            provenanceId,
+            provenanceData,
+            LuauArtifactLimits.Default);
+    }
+
+    /// <summary>
+    /// Creates a persistent envelope after applying explicit construction
+    /// limits before any payload is cloned.
+    /// </summary>
+    public static LuauBytecodeArtifact Create(
+        LuauCompilerOutput output,
+        string sourceIdentity,
+        string provenanceId,
+        ReadOnlySpan<byte> provenanceData,
+        LuauArtifactLimits limits)
+    {
+        if (output == null)
+        {
+            throw new ArgumentNullException(nameof(output));
+        }
+        if (limits == null)
+        {
+            throw new ArgumentNullException(nameof(limits));
+        }
+
         return new LuauBytecodeArtifact(
             CurrentSchemaVersion,
             output.Bytecode,
             output.CompileOptions,
             output.UpstreamRevisionHash,
             output.HostBuildFingerprint,
+            sourceIdentity,
             output.SourceSha256,
             output.BytecodeSha256,
             provenanceId,
-            provenanceData);
+            provenanceData,
+            limits);
     }
 
     /// <summary>Returns a defensive copy of the bytecode.</summary>
@@ -147,4 +225,52 @@ public sealed class LuauBytecodeArtifact
     }
 
     internal ReadOnlySpan<byte> Bytecode => bytecode;
+    internal ReadOnlySpan<byte> ProvenanceData => provenanceData;
+
+    internal static void ValidateAdmission(
+        int bytecodeBytes,
+        int sourceIdentityBytes,
+        int provenanceIdBytes,
+        int provenanceBytes,
+        LuauArtifactLimits limits)
+    {
+        if (limits == null) throw new ArgumentNullException(nameof(limits));
+        LuauBytecodeArtifactCodec.CheckLimit(
+            "bytecode",
+            bytecodeBytes,
+            limits.MaxBytecodeBytes);
+        LuauBytecodeArtifactCodec.CheckLimit(
+            "sourceIdentity",
+            sourceIdentityBytes,
+            limits.MaxSourceIdentityBytes);
+        LuauBytecodeArtifactCodec.CheckLimit(
+            "provenanceId",
+            provenanceIdBytes,
+            limits.MaxProvenanceIdBytes);
+        LuauBytecodeArtifactCodec.CheckLimit(
+            "provenanceData",
+            provenanceBytes,
+            limits.MaxProvenanceBytes);
+        LuauBytecodeArtifactCodec.CheckEnvelopeLimit(
+            sourceIdentityBytes,
+            provenanceIdBytes,
+            provenanceBytes,
+            bytecodeBytes,
+            limits.MaxEnvelopeBytes);
+    }
+
+    static int GetStrictUtf8ByteCount(string value, string parameterName)
+    {
+        try
+        {
+            return new UTF8Encoding(false, true).GetByteCount(value);
+        }
+        catch (EncoderFallbackException exception)
+        {
+            throw new ArgumentException(
+                "The identity must contain valid Unicode text.",
+                parameterName,
+                exception);
+        }
+    }
 }

@@ -7,12 +7,12 @@ namespace Luau.ConsumerContract;
 /// </summary>
 public static class PublicConsumerProbe
 {
-    public static (LuauValue[] Synchronous, ValueTask<LuauValue[]> Asynchronous) BindResumeArrays(
+    public static (LuauResultScope Synchronous, ValueTask<LuauResultScope> Asynchronous) BindResumeScopes(
         LuauState coroutine,
         LuauValue[] arguments)
     {
-        LuauValue[] synchronous = coroutine.Resume(arguments);
-        ValueTask<LuauValue[]> asynchronous = coroutine.ResumeAsync(arguments);
+        LuauResultScope synchronous = coroutine.Resume(arguments);
+        ValueTask<LuauResultScope> asynchronous = coroutine.ResumeAsync(arguments);
         return (synchronous, asynchronous);
     }
 

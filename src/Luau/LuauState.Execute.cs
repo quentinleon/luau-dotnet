@@ -9,15 +9,21 @@ partial class LuauState
 {
     /// <summary>
     /// Executes opaque output produced by this process's compiler and returns
-    /// all results under the state's normal execution limits.
+    /// all results under the state's normal execution limits. Dispose the
+    /// returned scope to release its scope-owned results; dispose returned
+    /// child thread wrappers separately.
     /// </summary>
-    public LuauValue[] ExecuteCompilerOutput(
+    public LuauResultScope ExecuteCompilerOutput(
         LuauCompilerOutput output,
         ReadOnlySpan<char> chunkName = default,
         LuauExecutionOptions? executionOptions = null) =>
         ExecuteCompilerOutputCore(output, default, chunkName, executionOptions, hasDestination: false).Results!;
 
-    /// <summary>Executes compiler output into a caller-owned result span.</summary>
+    /// <summary>
+    /// Executes compiler output into a caller-owned result span. The caller
+    /// owns and must dispose any reference wrappers written to the span. Slots
+    /// that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public int ExecuteCompilerOutputInto(
         LuauCompilerOutput output,
         Span<LuauValue> destination,
@@ -25,8 +31,11 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null) =>
         ExecuteCompilerOutputCore(output, destination, chunkName, executionOptions, hasDestination: true).Count;
 
-    /// <summary>Asynchronously executes compiler output and returns all results.</summary>
-    public async ValueTask<LuauValue[]> ExecuteCompilerOutputAsync(
+    /// <summary>
+    /// Asynchronously executes compiler output. Dispose the returned scope to
+    /// release its scope-owned results; dispose child threads separately.
+    /// </summary>
+    public async ValueTask<LuauResultScope> ExecuteCompilerOutputAsync(
         LuauCompilerOutput output,
         ReadOnlyMemory<char> chunkName = default,
         CancellationToken cancellationToken = default,
@@ -35,12 +44,15 @@ partial class LuauState
         ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
         ValidateCompilerOutputArgument(output, chunkName.Span);
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(output.Bytecode, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
-    /// <summary>Asynchronously executes compiler output into caller-owned memory.</summary>
+    /// <summary>
+    /// Asynchronously executes compiler output into caller-owned memory. The
+    /// caller owns reference wrappers written to the destination. Slots that
+    /// receive results must not already contain managed reference wrappers.
+    /// </summary>
     public async ValueTask<int> ExecuteCompilerOutputIntoAsync(
         LuauCompilerOutput output,
         Memory<LuauValue> destination,
@@ -51,22 +63,27 @@ partial class LuauState
         ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
         ValidateCompilerOutputArgument(output, chunkName.Span);
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(output.Bytecode, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Validates and executes a persistent artifact, returning all results.
     /// The chunk name is diagnostic and is never part of provenance validation.
+    /// Dispose the returned scope to release its scope-owned results; dispose
+    /// returned child thread wrappers separately.
     /// </summary>
-    public LuauValue[] ExecuteVerifiedBytecode(
+    public LuauResultScope ExecuteVerifiedBytecode(
         LuauBytecodeArtifact artifact,
         ReadOnlySpan<char> chunkName = default,
         LuauExecutionOptions? executionOptions = null) =>
         ExecuteVerifiedBytecodeCore(artifact, default, chunkName, executionOptions, hasDestination: false).Results!;
 
-    /// <summary>Validates and executes an artifact into a caller-owned span.</summary>
+    /// <summary>
+    /// Validates and executes an artifact into a caller-owned span. The caller
+    /// owns and must dispose any reference wrappers written to the span. Slots
+    /// that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public int ExecuteVerifiedBytecodeInto(
         LuauBytecodeArtifact artifact,
         Span<LuauValue> destination,
@@ -74,8 +91,12 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null) =>
         ExecuteVerifiedBytecodeCore(artifact, destination, chunkName, executionOptions, hasDestination: true).Count;
 
-    /// <summary>Asynchronously validates and executes a persistent artifact.</summary>
-    public async ValueTask<LuauValue[]> ExecuteVerifiedBytecodeAsync(
+    /// <summary>
+    /// Asynchronously validates and executes a persistent artifact. Dispose the
+    /// returned scope to release its scope-owned results; dispose returned
+    /// child thread wrappers separately.
+    /// </summary>
+    public async ValueTask<LuauResultScope> ExecuteVerifiedBytecodeAsync(
         LuauBytecodeArtifact artifact,
         ReadOnlyMemory<char> chunkName = default,
         CancellationToken cancellationToken = default,
@@ -84,13 +105,14 @@ partial class LuauState
         ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
         ValidateArtifactArgument(artifact, chunkName.Span);
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Asynchronously validates and executes an artifact into caller-owned memory.
+    /// Asynchronously validates and executes an artifact into caller-owned
+    /// memory. The caller owns reference wrappers written to the destination.
+    /// Slots that receive results must not already contain managed reference wrappers.
     /// </summary>
     public async ValueTask<int> ExecuteVerifiedBytecodeIntoAsync(
         LuauBytecodeArtifact artifact,
@@ -102,12 +124,11 @@ partial class LuauState
         ThrowIfAsyncExecutionCannotStart(chunkName.Span, cancellationToken);
         ValidateArtifactArgument(artifact, chunkName.Span);
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName.Span);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
     }
 
-    (LuauValue[]? Results, int Count) ExecuteCompilerOutputCore(
+    (LuauResultScope? Results, int Count) ExecuteCompilerOutputCore(
         LuauCompilerOutput output,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName,
@@ -116,14 +137,13 @@ partial class LuauState
     {
         ValidateCompilerOutputArgument(output, chunkName);
         using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(output.Bytecode, chunkName);
         return hasDestination
-            ? (null, runner.Run(operation, this, 0, destination))
-            : (runner.Run(operation, this, 0), 0);
+            ? (null, ScriptRunner.Run(operation, this, 0, destination))
+            : (ScriptRunner.Run(operation, this, 0), 0);
     }
 
-    (LuauValue[]? Results, int Count) ExecuteVerifiedBytecodeCore(
+    (LuauResultScope? Results, int Count) ExecuteVerifiedBytecodeCore(
         LuauBytecodeArtifact artifact,
         Span<LuauValue> destination,
         ReadOnlySpan<char> chunkName,
@@ -132,11 +152,10 @@ partial class LuauState
     {
         ValidateArtifactArgument(artifact, chunkName);
         using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         LoadAcceptedBytecodeInternal(artifact.Bytecode, chunkName);
         return hasDestination
-            ? (null, runner.Run(operation, this, 0, destination))
-            : (runner.Run(operation, this, 0), 0);
+            ? (null, ScriptRunner.Run(operation, this, 0, destination))
+            : (ScriptRunner.Run(operation, this, 0), 0);
     }
 
     void ValidateCompilerOutputArgument(LuauCompilerOutput output, ReadOnlySpan<char> chunkName)
@@ -172,18 +191,27 @@ partial class LuauState
         }
     }
 
-    public LuauValue[] DoString(
+    /// <summary>
+    /// Compiles and executes UTF-16 source synchronously. Dispose the returned
+    /// scope and dispose any returned child thread wrappers separately.
+    /// </summary>
+    public LuauResultScope DoString(
         ReadOnlySpan<char> source,
         ReadOnlySpan<char> chunkName = default,
         LuauCompileOptions? options = null,
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, source, chunkName, options);
-        return runner.Run(operation, this, 0);
+        return ScriptRunner.Run(operation, this, 0);
     }
 
+    /// <summary>
+    /// Compiles and executes UTF-16 source synchronously into caller-owned
+    /// storage. The caller owns and must dispose any reference wrappers written
+    /// to <paramref name="destination"/>. Slots that receive results must not
+    /// already contain managed reference wrappers.
+    /// </summary>
     public int DoStringInto(
         ReadOnlySpan<char> source,
         Span<LuauValue> destination,
@@ -192,11 +220,15 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(chunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, source, chunkName, options);
-        return runner.Run(operation, this, 0, destination);
+        return ScriptRunner.Run(operation, this, 0, destination);
     }
 
+    /// <summary>
+    /// Asynchronously compiles and executes string source into caller-owned
+    /// storage. The caller owns reference wrappers written to the destination.
+    /// Slots that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public ValueTask<int> DoStringIntoAsync(
         string source,
         Memory<LuauValue> destination,
@@ -214,6 +246,11 @@ partial class LuauState
             executionOptions);
     }
 
+    /// <summary>
+    /// Asynchronously compiles and executes UTF-16 source into caller-owned
+    /// storage. The caller owns reference wrappers written to the destination.
+    /// Slots that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public async ValueTask<int> DoStringIntoAsync(
         ReadOnlyMemory<char> source,
         Memory<LuauValue> destination,
@@ -223,12 +260,15 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, source.Span, chunkName.Span, options);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
     }
 
-    public ValueTask<LuauValue[]> DoStringAsync(
+    /// <summary>
+    /// Asynchronously compiles and executes string source. Dispose the returned
+    /// scope to release its scope-owned results; dispose child threads separately.
+    /// </summary>
+    public ValueTask<LuauResultScope> DoStringAsync(
         string source,
         string chunkName = "",
         LuauCompileOptions? options = null,
@@ -243,7 +283,11 @@ partial class LuauState
             executionOptions);
     }
 
-    public async ValueTask<LuauValue[]> DoStringAsync(
+    /// <summary>
+    /// Asynchronously compiles and executes UTF-16 source. Dispose the returned
+    /// scope to release its scope-owned results; dispose child threads separately.
+    /// </summary>
+    public async ValueTask<LuauResultScope> DoStringAsync(
         ReadOnlyMemory<char> source,
         ReadOnlyMemory<char> chunkName = default,
         LuauCompileOptions? options = null,
@@ -251,23 +295,31 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(chunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, source.Span, chunkName.Span, options);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
-    public LuauValue[] DoString(
+    /// <summary>
+    /// Compiles and executes UTF-8 source synchronously. Dispose the returned
+    /// scope and dispose any returned child thread wrappers separately.
+    /// </summary>
+    public LuauResultScope DoString(
         ReadOnlySpan<byte> utf8Source,
         ReadOnlySpan<byte> utf8ChunkName = default,
         LuauCompileOptions? options = null,
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(utf8ChunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, utf8Source, utf8ChunkName, options);
-        return runner.Run(operation, this, 0);
+        return ScriptRunner.Run(operation, this, 0);
     }
 
+    /// <summary>
+    /// Compiles and executes UTF-8 source synchronously into caller-owned
+    /// storage. The caller owns and must dispose any reference wrappers written
+    /// to <paramref name="destination"/>. Slots that receive results must not
+    /// already contain managed reference wrappers.
+    /// </summary>
     public int DoStringInto(
         ReadOnlySpan<byte> utf8Source,
         Span<LuauValue> destination,
@@ -276,11 +328,15 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(utf8ChunkName, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, utf8Source, utf8ChunkName, options);
-        return runner.Run(operation, this, 0, destination);
+        return ScriptRunner.Run(operation, this, 0, destination);
     }
 
+    /// <summary>
+    /// Asynchronously compiles and executes UTF-8 source into caller-owned
+    /// storage. The caller owns reference wrappers written to the destination.
+    /// Slots that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public async ValueTask<int> DoStringIntoAsync(
         ReadOnlyMemory<byte> utf8Source,
         Memory<LuauValue> destination,
@@ -290,12 +346,15 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(utf8ChunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, utf8Source.Span, utf8ChunkName.Span, options);
-        return await runner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0, destination).ConfigureAwait(false);
     }
 
-    public async ValueTask<LuauValue[]> DoStringAsync(
+    /// <summary>
+    /// Asynchronously compiles and executes UTF-8 source. Dispose the returned
+    /// scope to release its scope-owned results; dispose child threads separately.
+    /// </summary>
+    public async ValueTask<LuauResultScope> DoStringAsync(
         ReadOnlyMemory<byte> utf8Source,
         ReadOnlyMemory<byte> utf8ChunkName = default,
         LuauCompileOptions? options = null,
@@ -303,12 +362,11 @@ partial class LuauState
         LuauExecutionOptions? executionOptions = null)
     {
         using var operation = BeginOperation(utf8ChunkName.Span, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         CompileAndLoadString(this, utf8Source.Span, utf8ChunkName.Span, options);
-        return await runner.RunAsync(operation, this, 0).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, 0).ConfigureAwait(false);
     }
 
-    internal unsafe LuauValue[] DoStringForRequire(
+    internal unsafe LuauResultScope DoStringForRequire(
         ReadOnlySpan<byte> utf8Source,
         ReadOnlySpan<byte> utf8ChunkName,
         LuauCompileOptions? options)
@@ -320,7 +378,7 @@ partial class LuauState
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
-    internal unsafe LuauValue[] DoCompilerOutputForRequire(
+    internal unsafe LuauResultScope DoCompilerOutputForRequire(
         LuauCompilerOutput output,
         ReadOnlySpan<byte> utf8ChunkName)
     {
@@ -337,7 +395,7 @@ partial class LuauState
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
-    internal unsafe LuauValue[] DoVerifiedBytecodeForRequire(
+    internal unsafe LuauResultScope DoVerifiedBytecodeForRequire(
         LuauBytecodeArtifact artifact,
         ReadOnlySpan<byte> utf8ChunkName)
     {
@@ -354,7 +412,7 @@ partial class LuauState
         return ExecuteLoadedForRequire(baseTop, DecodeChunkName(utf8ChunkName));
     }
 
-    unsafe LuauValue[] ExecuteLoadedForRequire(int baseTop, string? chunkName)
+    unsafe LuauResultScope ExecuteLoadedForRequire(int baseTop, string? chunkName)
     {
         using var nestedOperation = BeginNestedOperationIfNeeded(chunkName);
         using var stack = new LuauStackBoundary(this, baseTop);
@@ -376,13 +434,25 @@ partial class LuauState
         }
 
         var results = new LuauValue[resultCount];
-        for (var i = resultCount - 1; i >= 0; i--)
+        try
         {
-            results[i] = Pop();
+            for (var i = resultCount - 1; i >= 0; i--)
+            {
+                results[i] = Pop();
+            }
+        }
+        catch
+        {
+            for (var index = results.Length - 1; index >= 0; index--)
+            {
+                results[index].DisposeUnpublishedReference();
+                results[index] = default;
+            }
+            throw;
         }
 
         stack.Complete();
-        return results;
+        return new LuauResultScope(results);
     }
 
     static void CompileAndLoadString(
@@ -418,25 +488,9 @@ partial class LuauState
     {
         var sourceByteCount = Encoding.UTF8.GetByteCount(source);
         state.ValidateSourceSize(sourceByteCount, DecodeChunkName(chunkName));
-
-        var sourceBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, sourceByteCount));
-        var chunkByteCount = Encoding.UTF8.GetByteCount(chunkName);
-        var chunkBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, chunkByteCount));
-        try
-        {
-            var encodedSourceCount = Encoding.UTF8.GetBytes(source, sourceBuffer);
-            var encodedChunkCount = Encoding.UTF8.GetBytes(chunkName, chunkBuffer);
-            CompileAndLoadString(
-                state,
-                sourceBuffer.AsSpan(0, encodedSourceCount),
-                chunkBuffer.AsSpan(0, encodedChunkCount),
-                options);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(sourceBuffer);
-            ArrayPool<byte>.Shared.Return(chunkBuffer);
-        }
+        using var sourceUtf8 = new Utf8BufferScope(source, sourceByteCount);
+        using var chunkUtf8 = new Utf8BufferScope(chunkName);
+        CompileAndLoadString(state, sourceUtf8.Bytes, chunkUtf8.Bytes, options);
     }
 
     static void ThrowIfCompilationStopped(LuauState state)
@@ -449,22 +503,27 @@ partial class LuauState
     }
 
     /// <summary>
-    /// Resumes this child coroutine with caller-owned arguments and returns a
-    /// newly allocated result array. Argument arrays are never result destinations.
+    /// Resumes this child coroutine with caller-owned arguments. The returned
+    /// scope owns its disposable wrapper results and must be disposed. Returned
+    /// child threads are caller-managed cached wrappers and must be disposed
+    /// separately. Argument storage is never reused as a result destination.
     /// </summary>
-    public LuauValue[] Resume(
+    public LuauResultScope Resume(
         ReadOnlySpan<LuauValue> arguments = default,
         LuauExecutionOptions? executionOptions = null)
     {
         EnsureCoroutine();
         var hasFunction = HasInitialCoroutineFunction();
         using var operation = BeginOperation((string?)null, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         PushArguments(arguments);
-        return runner.Run(operation, this, arguments.Length, hasFunction);
+        return ScriptRunner.Run(operation, this, arguments.Length, hasFunction);
     }
 
-    /// <summary>Resumes this child coroutine into a caller-owned result span.</summary>
+    /// <summary>
+    /// Resumes this child coroutine into a caller-owned result span. The caller
+    /// owns and must dispose any reference wrappers written to the span. Slots
+    /// that receive results must not already contain managed reference wrappers.
+    /// </summary>
     public int ResumeInto(
         Span<LuauValue> destination,
         LuauExecutionOptions? executionOptions = null)
@@ -474,7 +533,9 @@ partial class LuauState
 
     /// <summary>
     /// Resumes this child coroutine with arguments and writes results into a
-    /// distinct caller-owned span.
+    /// distinct caller-owned span. The caller owns and must dispose any
+    /// reference wrappers written to the span. Slots that receive results must
+    /// not already contain managed reference wrappers.
     /// </summary>
     public int ResumeInto(
         ReadOnlySpan<LuauValue> arguments,
@@ -484,16 +545,15 @@ partial class LuauState
         EnsureCoroutine();
         var hasFunction = HasInitialCoroutineFunction();
         using var operation = BeginOperation((string?)null, executionOptions, default, isAsync: false);
-        using var runner = ScriptRunner.Rent();
         PushArguments(arguments);
-        return runner.Run(operation, this, arguments.Length, destination, hasFunction);
+        return ScriptRunner.Run(operation, this, arguments.Length, destination, hasFunction);
     }
 
     /// <summary>
-    /// Asynchronously resumes this child coroutine and returns a newly
-    /// allocated result array.
+    /// Asynchronously resumes this child coroutine. Dispose the returned scope;
+    /// returned child thread wrappers are caller-managed and disposed separately.
     /// </summary>
-    public async ValueTask<LuauValue[]> ResumeAsync(
+    public async ValueTask<LuauResultScope> ResumeAsync(
         ReadOnlyMemory<LuauValue> arguments = default,
         CancellationToken cancellationToken = default,
         LuauExecutionOptions? executionOptions = null)
@@ -501,16 +561,19 @@ partial class LuauState
         EnsureCoroutine();
         var hasFunction = HasInitialCoroutineFunction();
         using var operation = BeginOperation((string?)null, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         for (var i = 0; i < arguments.Length; i++)
         {
             Push(arguments.Span[i]);
         }
 
-        return await runner.RunAsync(operation, this, arguments.Length, hasFunction).ConfigureAwait(false);
+        return await ScriptRunner.RunAsync(operation, this, arguments.Length, hasFunction).ConfigureAwait(false);
     }
 
-    /// <summary>Asynchronously resumes into caller-owned result memory.</summary>
+    /// <summary>
+    /// Asynchronously resumes into caller-owned result memory. The caller owns
+    /// reference wrappers written to the destination. Slots that receive
+    /// results must not already contain managed reference wrappers.
+    /// </summary>
     public ValueTask<int> ResumeIntoAsync(
         Memory<LuauValue> destination,
         CancellationToken cancellationToken = default,
@@ -525,7 +588,9 @@ partial class LuauState
 
     /// <summary>
     /// Asynchronously resumes with arguments and writes results into distinct
-    /// caller-owned memory.
+    /// caller-owned memory. The caller owns and must dispose reference wrappers
+    /// written to the destination. Slots that receive results must not already
+    /// contain managed reference wrappers.
     /// </summary>
     public async ValueTask<int> ResumeIntoAsync(
         ReadOnlyMemory<LuauValue> arguments,
@@ -536,13 +601,12 @@ partial class LuauState
         EnsureCoroutine();
         var hasFunction = HasInitialCoroutineFunction();
         using var operation = BeginOperation((string?)null, executionOptions, cancellationToken, isAsync: true);
-        using var runner = ScriptRunner.Rent();
         for (var i = 0; i < arguments.Length; i++)
         {
             Push(arguments.Span[i]);
         }
 
-        return await runner.RunAsync(
+        return await ScriptRunner.RunAsync(
             operation,
             this,
             arguments.Length,

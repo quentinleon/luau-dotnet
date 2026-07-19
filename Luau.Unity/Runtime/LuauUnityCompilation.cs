@@ -87,6 +87,28 @@ namespace Luau.Unity
         }
 
         /// <summary>
+        /// Compiles an immutable source module map into an all-or-nothing,
+        /// same-process bundle through Unity's shared bounded compilation lane.
+        /// The returned bundle is a resolver capability, not persistent trusted
+        /// bytecode; install it explicitly with <see cref="LuauState.OpenRequireLibrary"/>.
+        /// </summary>
+        public static ValueTask<LuauModuleBundle> CompileModuleBundleAsync(
+            LuauModuleMap moduleMap,
+            LuauCompileOptions options = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (moduleMap == null)
+            {
+                throw new ArgumentNullException(nameof(moduleMap));
+            }
+
+            return moduleMap.CompileModuleBundleAsync(
+                SharedModuleCompilationService.Instance,
+                options,
+                cancellationToken);
+        }
+
+        /// <summary>
         /// Creates the recommended finite compilation policy for the current
         /// maintained Unity platform. Use this when constructing an advanced,
         /// caller-owned <see cref="LuauThreadedCompilationService"/>.
@@ -220,6 +242,30 @@ namespace Luau.Unity
                     assetCompilationProvider = previous;
                     Volatile.Write(ref disposed, 1);
                 }
+            }
+        }
+
+        sealed class SharedModuleCompilationService : ILuauCompilationService
+        {
+            internal static SharedModuleCompilationService Instance { get; } =
+                new SharedModuleCompilationService();
+
+            SharedModuleCompilationService()
+            {
+            }
+
+            public ValueTask<LuauCompileResult> CompileAsync(
+                ReadOnlyMemory<byte> utf8Source,
+                LuauCompileOptions options = null,
+                CancellationToken cancellationToken = default)
+            {
+                return CompileAssetSourceAsync(utf8Source, options, cancellationToken);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                // This adapter never owns the package-wide service lifetime.
+                return default;
             }
         }
 

@@ -18,9 +18,16 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
     int managedResourcesDisposeState;
     int coroutineStatus;
 
+    /// <summary>Gets whether this wrapper or its VM root has been disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref disposeState) != 0 || context.IsDisposed;
+
+    /// <summary>Gets whether this wrapper owns the VM root rather than a child coroutine.</summary>
     public bool IsMainThread => isMainThread;
+
+    /// <summary>Gets the immutable options snapshot applied when the root was created.</summary>
     public LuauStateOptions Options => context.Options;
+
+    /// <summary>Gets the root allocator's current, peak, and configured-limit byte counts.</summary>
     public LuauMemoryUsageSnapshot MemoryUsage => context.MemoryUsage;
 
     LuauReferenceAccess ILuauReference.AcquireReference()
@@ -45,11 +52,19 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         disposables.Remove(disposable);
     }
 
+    /// <summary>Creates a root VM with finite safe defaults. The caller owns the returned state.</summary>
     public static LuauState Create()
     {
         return Create(LuauStateOptions.Default);
     }
 
+    /// <summary>
+    /// Creates a root VM from a validated snapshot of <paramref name="options"/>.
+    /// The caller owns the returned state and must dispose it.
+    /// </summary>
+    /// <param name="options">Resource, trust, and execution policy for the new root.</param>
+    /// <exception cref="LuauMemoryLimitException">The configured allocator ceiling prevents VM creation.</exception>
+    /// <exception cref="PlatformNotSupportedException">The native host ABI is unavailable or incompatible.</exception>
     public static LuauState Create(LuauStateOptions options)
     {
         return Create(options, LuauNativeProtection.AbiVerifier);
@@ -169,6 +184,41 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         }
     }
 
+    internal static LuauState GetCachedState(LuauHostState* l, LuauVmContext context)
+    {
+        if (l == null)
+        {
+            ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
+        }
+        if (context.TryGetOwnedState(l, out var state))
+        {
+            return state;
+        }
+
+        var main = luau_host_main_thread(l);
+        if (!context.TryGetOwnedState(main, out var root))
+        {
+            ThrowHelper.ThrowInvalidOperationException("The Luau VM is not owned by a managed LuauState");
+        }
+
+        using var access = context.EnterNativeAccess(root);
+        var originalTop = luau_host_stack_get_top(l);
+        try
+        {
+            var ignoredIsMainThread = 0;
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_push_thread(l, &ignoredIsMainThread);
+            LuauNativeProtection.ThrowIfFailed(root, l, status, "retain the current Luau thread");
+            return context.GetOrCreateThread(l, l, -1);
+        }
+        finally
+        {
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_stack_set_top(l, originalTop);
+            LuauNativeProtection.ThrowIfFailed(root, l, status, "restore the callback stack");
+        }
+    }
+
     internal static LuauState CreateStateInternal(LuauHostState* l)
     {
         return CreateStateInternal(l, LuauStateOptions.Default);
@@ -259,12 +309,17 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         }
     }
 
+    /// <summary>
+    /// Gets the root wrapper that owns this coroutine. On a root state, returns
+    /// this instance. The returned root is not a newly retained owner.
+    /// </summary>
     public LuauState GetMainThread()
     {
         ThrowIfDisposed();
         return GetRoot();
     }
 
+    /// <summary>Returns the Luau textual representation of this root or coroutine.</summary>
     public override unsafe string ToString()
     {
         ThrowIfDisposed();
@@ -272,6 +327,11 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         return LuauReferenceHelper.RefToString(this, reference);
     }
 
+    /// <summary>
+    /// Releases this wrapper. Disposing a root cancels active operations and
+    /// invalidates all child threads and VM-backed values; disposing a child
+    /// releases only that coroutine wrapper.
+    /// </summary>
     public void Dispose()
     {
         DisposeCore();
@@ -304,6 +364,7 @@ public unsafe partial class LuauState : IDisposable, ILuauReference
         }
     }
 
+    /// <summary>Releases the native state if its owner did not dispose it deterministically.</summary>
     ~LuauState()
     {
         try

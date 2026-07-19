@@ -279,6 +279,15 @@ public sealed class LuauLibraryGenerator : IIncrementalGenerator
         List<LuauGeneratorDiagnostic> diagnostics,
         Location location)
     {
+        if (symbol.DeclaredAccessibility != Accessibility.Public)
+        {
+            diagnostics.ReportDiagnostic(
+                DiagnosticDescriptors.InaccessibleMember,
+                location,
+                symbol.Name);
+            return null;
+        }
+
         if (exposure == LuauLibraryExposureKind.Capability && symbol.IsStatic)
         {
             ReportUnsupported(

@@ -11,7 +11,7 @@ public sealed unsafe class NativeAbiHandshakeTests
         Assert.Equal(LuauNativeProtection.ExpectedAbiRecordSize, info.struct_size);
         Assert.Equal(LuauNativeProtection.ExpectedAbiMagic, info.magic);
         Assert.Equal(LuauNativeProtection.ExpectedAbiMajor, info.abi_major);
-        Assert.True(info.abi_minor >= LuauNativeProtection.MinimumAbiMinor);
+        Assert.Equal(LuauNativeProtection.MinimumAbiMinor, info.abi_minor);
         Assert.Equal(
             LuauNativeProtection.ExpectedFeatureFlags,
             info.feature_flags & LuauNativeProtection.ExpectedFeatureFlags);

@@ -55,11 +55,11 @@ public sealed class IntegerValueTests
     {
         using var state = LuauState.Create();
 
-        Assert.Equal(LuauType.Integer, state.CreateFrom(42).Type);
-        Assert.Equal(LuauType.Integer, state.CreateFrom(uint.MaxValue).Type);
-        Assert.Equal(LuauType.Integer, state.CreateFrom(long.MinValue).Type);
-        Assert.Equal(LuauType.Number, state.CreateFrom(42d).Type);
-        Assert.Throws<OverflowException>(() => state.CreateFrom(ulong.MaxValue));
+        Assert.Equal(LuauType.Integer, LuauValue.CreateFrom(42).Type);
+        Assert.Equal(LuauType.Integer, LuauValue.CreateFrom(uint.MaxValue).Type);
+        Assert.Equal(LuauType.Integer, LuauValue.CreateFrom(long.MinValue).Type);
+        Assert.Equal(LuauType.Number, LuauValue.CreateFrom(42d).Type);
+        Assert.Throws<OverflowException>(() => LuauValue.CreateFrom(ulong.MaxValue));
     }
 
     [Fact]

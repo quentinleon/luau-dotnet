@@ -390,6 +390,83 @@ public sealed class LuauResultLimitException : LuauException
     }
 }
 
+/// <summary>Identifies which managed string-decoding budget was exceeded.</summary>
+public enum LuauDecodedResultLimitKind
+{
+    /// <summary>One native UTF-8 string exceeded the per-string limit.</summary>
+    StringBytes = 0,
+
+    /// <summary>Decoded strings exceeded the aggregate operation budget.</summary>
+    OperationBytes = 1,
+}
+
+/// <summary>
+/// Thrown before allocating a managed string when native UTF-8 data exceeds a
+/// configured per-string or aggregate decoding budget.
+/// </summary>
+public sealed class LuauDecodedResultLimitException : LuauLimitException
+{
+    /// <summary>Initializes a decoded-result limit failure.</summary>
+    public LuauDecodedResultLimitException(
+        string? chunkName,
+        LuauDecodedResultLimitKind limitKind,
+        long actualBytes,
+        long limitBytes)
+        : base(CreateMessage(chunkName, limitKind, actualBytes, limitBytes), chunkName, limitBytes)
+    {
+        if (limitKind < LuauDecodedResultLimitKind.StringBytes ||
+            limitKind > LuauDecodedResultLimitKind.OperationBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limitKind), limitKind, "Unknown decoded-result limit.");
+        }
+        if (actualBytes <= limitBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(actualBytes),
+                actualBytes,
+                "The observed decoded byte count must exceed the configured limit.");
+        }
+
+        LimitKind = limitKind;
+        ActualBytes = actualBytes;
+    }
+
+    /// <summary>Gets the decoding budget that was exceeded.</summary>
+    public LuauDecodedResultLimitKind LimitKind { get; }
+
+    /// <summary>Gets the observed UTF-8 byte count.</summary>
+    public long ActualBytes { get; }
+
+    static string CreateMessage(
+        string? chunkName,
+        LuauDecodedResultLimitKind limitKind,
+        long actualBytes,
+        long limitBytes)
+    {
+        var label = limitKind == LuauDecodedResultLimitKind.StringBytes
+            ? "Decoded string size"
+            : "Aggregate decoded result size";
+        return LuauDiagnosticMessages.WithChunk(
+            $"{label} of {actualBytes.ToString(CultureInfo.InvariantCulture)} bytes exceeds the configured " +
+            $"{limitBytes.ToString(CultureInfo.InvariantCulture)}-byte limit.",
+            chunkName);
+    }
+}
+
+/// <summary>
+/// Reports exhaustion of the process-wide opaque native reference-token space.
+/// Tokens are intentionally never reused, so the process must be restarted
+/// before new reference-valued wrappers can be created.
+/// </summary>
+public sealed class LuauReferenceLimitException : LuauException
+{
+    /// <summary>Initializes a native reference-token exhaustion failure.</summary>
+    public LuauReferenceLimitException()
+        : base("The Luau host exhausted its process-wide opaque reference-token space.")
+    {
+    }
+}
+
 /// <summary>
 /// Thrown when cancellation stops Luau execution. It derives from
 /// <see cref="OperationCanceledException"/> so tasks retain normal .NET

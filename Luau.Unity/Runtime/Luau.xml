@@ -1,0 +1,2852 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Luau</name>
+    </assembly>
+    <members>
+        <member name="T:Luau.LuauLibraryExposure">
+            <summary>Chooses how a generated Luau host API grants authority.</summary>
+        </member>
+        <member name="F:Luau.LuauLibraryExposure.Global">
+            <summary>Generates a root-registered global host library.</summary>
+        </member>
+        <member name="F:Luau.LuauLibraryExposure.Capability">
+            <summary>Generates an opaque, per-object capability descriptor.</summary>
+        </member>
+        <member name="T:Luau.LuauLibraryAttribute">
+            <summary>Marks a partial class for reflection-free Luau host API generation.</summary>
+        </member>
+        <member name="M:Luau.LuauLibraryAttribute.#ctor(System.String)">
+            <summary>Marks a partial class for reflection-free Luau host API generation.</summary>
+        </member>
+        <member name="P:Luau.LuauLibraryAttribute.Exposure">
+            <summary>
+            Gets or sets whether the class is a global library or an object
+            capability. One annotated class cannot implicitly grant both surfaces.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauMemberAttribute">
+            <summary>
+            Marks a member for reflection-free exposure through its containing
+            generated Luau library. Returning a managed reference wrapper pushes it to
+            Luau without transferring or disposing the library's ownership.
+            </summary>
+            <param name="name">The Luau-visible member name, or <see langword="null"/> to use the managed member name.</param>
+        </member>
+        <member name="M:Luau.LuauMemberAttribute.#ctor(System.String)">
+            <summary>
+            Marks a member for reflection-free exposure through its containing
+            generated Luau library. Returning a managed reference wrapper pushes it to
+            Luau without transferring or disposing the library's ownership.
+            </summary>
+            <param name="name">The Luau-visible member name, or <see langword="null"/> to use the managed member name.</param>
+        </member>
+        <member name="T:Luau.FromLuauStateAttribute">
+            <summary>
+            Marks a generated host callback parameter that receives the current
+            callback-scoped <see cref="T:Luau.LuauCallContext"/> instead of a script argument.
+            </summary>
+        </member>
+        <member name="T:Luau.ILuauCompilationService">
+            <summary>
+            Compiles owned snapshots of UTF-8 Luau source without requiring the caller
+            to run the compiler on its current thread.
+            </summary>
+        </member>
+        <member name="M:Luau.ILuauCompilationService.CompileAsync(System.ReadOnlyMemory{System.Byte},Luau.LuauCompileOptions,System.Threading.CancellationToken)">
+            <summary>
+            Compiles a snapshot of <paramref name="utf8Source"/> using the supplied
+            options. Source diagnostics, cancellation, and infrastructure failures
+            are represented by the returned result.
+            </summary>
+            <exception cref="T:Luau.LuauCompilationLimitException">
+            The request cannot be admitted within a configured source or queue
+            limit.
+            </exception>
+            <exception cref="T:System.ObjectDisposedException">
+            The service has stopped accepting work.
+            </exception>
+        </member>
+        <member name="T:Luau.ILuauContinuationScheduler">
+            <summary>
+            Dispatches asynchronous Luau execution continuations to a host-owned
+            execution context.
+            </summary>
+            <remarks>
+            Unity hosts should normally use <see cref="T:Luau.LuauSynchronizationContextScheduler"/>
+            captured on the Unity main thread. Implementations must deliver each
+            successfully posted continuation exactly once.
+            </remarks>
+        </member>
+        <member name="M:Luau.ILuauContinuationScheduler.CheckAccess">
+            <summary>
+            Gets whether the caller is already running on this scheduler's target
+            execution context.
+            </summary>
+        </member>
+        <member name="M:Luau.ILuauContinuationScheduler.Post(System.Action)">
+            <summary>
+            Posts a continuation to the target execution context.
+            </summary>
+            <exception cref="T:System.ArgumentNullException">
+            <paramref name="continuation"/> is <see langword="null"/>.
+            </exception>
+        </member>
+        <member name="T:Luau.ILuauLibrary">
+            <summary>Registers an explicitly generated host library with a Luau state.</summary>
+        </member>
+        <member name="M:Luau.ILuauLibrary.RegisterTo(Luau.LuauState)">
+            <summary>
+            Registers this library with <paramref name="state"/>. The state owns
+            the resulting VM registrations; disposing the library does not revoke
+            authority already granted to that state.
+            </summary>
+            <param name="state">The live root state that receives the library.</param>
+        </member>
+        <member name="T:Luau.BoundedUtf8Decoder">
+            <summary>
+            Central UTF-8 decoder for native diagnostics and deliberately truncated
+            display text. It never reads beyond the configured bound and never ends a
+            truncation in the middle of a UTF-8 sequence.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauContinuationDispatcher">
+            <summary>
+            Converts the host-facing fire-and-forget scheduler contract into awaitable
+            operations while keeping exceptions inside the originating execution.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauNativeProtection">
+            <summary>
+            Verifies and translates the native protected-call ABI. The native bridge
+            owns Luau's setjmp/longjmp boundary; managed callers only receive statuses.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauNativeAbiVerifier">
+            <summary>
+            Performs the process-wide host ABI handshake. The test-visible descriptor
+            mirrors the fixed C record without exposing the internal interop assembly.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauStackBoundary">
+            <summary>
+            Owns restoration of one synchronous managed/native stack boundary.
+            </summary>
+        </member>
+        <member name="T:Luau.Utf8BufferScope">
+            <summary>
+            Owns one pooled UTF-8 encoding or byte snapshot and optionally appends the
+            NUL terminator required by native name APIs. The terminator is excluded
+            from <see cref="P:Luau.Utf8BufferScope.Bytes"/> and included in <see cref="P:Luau.Utf8BufferScope.NullTerminatedBytes"/>.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauArtifactLimits">
+            <summary>Bounds artifact construction, encoding, and parsing.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.Default">
+            <summary>Gets the finite limits used by default.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.UnsafeUnbounded">
+            <summary>Gets an explicitly unsafe, unbounded artifact profile.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.MaxEnvelopeBytes">
+            <summary>Gets the maximum complete encoded envelope size.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.MaxBytecodeBytes">
+            <summary>Gets the maximum bytecode payload size.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.MaxProvenanceBytes">
+            <summary>Gets the maximum opaque provenance payload size.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.MaxProvenanceIdBytes">
+            <summary>Gets the maximum UTF-8 provenance identifier size.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactLimits.MaxSourceIdentityBytes">
+            <summary>Gets the maximum UTF-8 source identity size.</summary>
+        </member>
+        <member name="T:Luau.LuauArtifactFailureKind">
+            <summary>Identifies why an artifact envelope was rejected.</summary>
+        </member>
+        <member name="F:Luau.LuauArtifactFailureKind.Malformed">
+            <summary>The envelope is truncated, malformed, or has trailing bytes.</summary>
+        </member>
+        <member name="F:Luau.LuauArtifactFailureKind.UnsupportedVersion">
+            <summary>The format or artifact schema is unsupported.</summary>
+        </member>
+        <member name="F:Luau.LuauArtifactFailureKind.LimitExceeded">
+            <summary>A declared or observed field exceeds a configured limit.</summary>
+        </member>
+        <member name="F:Luau.LuauArtifactFailureKind.IntegrityMismatch">
+            <summary>The envelope or bytecode integrity hash does not match.</summary>
+        </member>
+        <member name="F:Luau.LuauArtifactFailureKind.RuntimeIdentityMismatch">
+            <summary>The compiler or host ABI identity does not match this build.</summary>
+        </member>
+        <member name="T:Luau.LuauArtifactException">
+            <summary>Reports a typed artifact construction or codec failure.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactException.FailureKind">
+            <summary>Gets the rejection category.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactException.FieldName">
+            <summary>Gets the rejected field name, when applicable.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactException.Actual">
+            <summary>Gets the observed byte count, when applicable.</summary>
+        </member>
+        <member name="P:Luau.LuauArtifactException.Limit">
+            <summary>Gets the configured byte limit, when applicable.</summary>
+        </member>
+        <member name="T:Luau.LuauBuffer">
+            <summary>
+            Represents a mutable Luau byte buffer through a generation-checked VM
+            reference. Dispose owned instances deterministically; callback-borrowed
+            instances expire when their callback frame closes unless retained.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauBuffer.IsBorrowed">
+            <summary>Gets whether this reference is valid only for its callback frame.</summary>
+        </member>
+        <member name="P:Luau.LuauBuffer.IsDisposed">
+            <summary>Gets whether this wrapper, its callback frame, or its owning state is no longer usable.</summary>
+        </member>
+        <member name="P:Luau.LuauBuffer.Length">
+            <summary>Gets the current byte length of the VM buffer.</summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.Retain">
+            <summary>Creates an independently disposable owner for this same buffer.</summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.ToString">
+            <summary>Returns the Luau textual representation of this buffer.</summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.ToArray">
+            <summary>
+            Copies the entire buffer into a managed array while the native buffer is
+            protected by its lifetime and VM serialization gates.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.Read(System.Int32,System.Span{System.Byte})">
+            <summary>
+            Copies bytes from this buffer into <paramref name="destination"/>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.Write(System.Int32,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Copies <paramref name="source"/> into this buffer.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.Dispose">
+            <summary>Releases this wrapper's owned VM reference. The operation is idempotent.</summary>
+        </member>
+        <member name="M:Luau.LuauBuffer.Finalize">
+            <summary>Releases the VM reference if the owner was not disposed deterministically.</summary>
+        </member>
+        <member name="T:Luau.LuauBytecodeArtifact">
+            <summary>
+            Persistent precompiled bytecode plus build identity and provenance claims.
+            Metadata is not proof of trust; a state validator must establish provenance.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauBytecodeArtifact.CurrentSchemaVersion">
+            <summary>Gets the persistent envelope schema supported by this build.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.#ctor(System.Int32,System.ReadOnlySpan{System.Byte},Luau.LuauCompileOptions,System.UInt64,System.UInt64,System.String,System.String,System.String,System.String,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Rehydrates a persistent artifact from serialized data. All buffers are
+            copied and schema/hash integrity is checked, but provenance remains an
+            untrusted claim until an <see cref="T:Luau.ILuauBytecodeValidator"/> accepts it.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.SchemaVersion">
+            <summary>Gets the persistent envelope schema.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.BytecodeLength">
+            <summary>Gets the bytecode payload length.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.CompileOptions">
+            <summary>Gets the immutable compiler-option snapshot.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.UpstreamRevisionHash">
+            <summary>Gets the claimed upstream Luau revision identity.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.HostBuildFingerprint">
+            <summary>Gets the claimed exact native host build identity.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.SourceIdentity">
+            <summary>Gets the host-defined stable identity of the admitted source.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.SourceSha256">
+            <summary>Gets the claimed lowercase source SHA-256 hash.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.BytecodeSha256">
+            <summary>Gets the verified lowercase bytecode SHA-256 hash.</summary>
+        </member>
+        <member name="P:Luau.LuauBytecodeArtifact.ProvenanceId">
+            <summary>Gets the host-defined provenance identifier.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.Create(Luau.LuauCompilerOutput,System.String,System.String,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Creates a persistent envelope from opaque compiler output. The supplied
+            provenance still requires validation when loaded.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.Create(Luau.LuauCompilerOutput,System.String,System.String,System.ReadOnlySpan{System.Byte},Luau.LuauArtifactLimits)">
+            <summary>
+            Creates a persistent envelope after applying explicit construction
+            limits before any payload is cloned.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.ToBytecodeArray">
+            <summary>Returns a defensive copy of the bytecode.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.GetProvenanceData">
+            <summary>Returns a defensive copy of opaque provenance data.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifact.CopyBytecodeTo(System.Buffers.IBufferWriter{System.Byte})">
+            <summary>Copies the bytecode to a caller-owned writer.</summary>
+        </member>
+        <member name="T:Luau.LuauBytecodeArtifactCodec">
+            <summary>
+            Reads and writes the bounded binary envelope for persistent bytecode.
+            Successful parsing verifies integrity but never grants compiler-output trust;
+            the returned artifact still requires the state's provenance validator.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauBytecodeArtifactCodec.CurrentFormatVersion">
+            <summary>Gets the current binary envelope version.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifactCodec.Write(Luau.LuauBytecodeArtifact,Luau.LuauArtifactLimits)">
+            <summary>Encodes an artifact into a newly allocated bounded byte array.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifactCodec.Write(Luau.LuauBytecodeArtifact,System.Buffers.IBufferWriter{System.Byte},Luau.LuauArtifactLimits)">
+            <summary>Encodes an artifact into a caller-owned buffer writer.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifactCodec.Write(Luau.LuauBytecodeArtifact,System.IO.Stream,Luau.LuauArtifactLimits)">
+            <summary>Encodes an artifact to a writable stream.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifactCodec.Parse(System.ReadOnlySpan{System.Byte},Luau.LuauArtifactLimits)">
+            <summary>Parses and integrity-checks one complete artifact envelope.</summary>
+        </member>
+        <member name="M:Luau.LuauBytecodeArtifactCodec.Parse(System.IO.Stream,Luau.LuauArtifactLimits)">
+            <summary>Reads one bounded artifact envelope from a stream.</summary>
+        </member>
+        <member name="T:Luau.LuauBytecodePolicy">
+            <summary>
+            Controls whether persistent bytecode artifacts may enter the native loader.
+            Same-process <see cref="T:Luau.LuauCompilerOutput"/> uses a separate capability.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauBytecodePolicy.Reject">
+            <summary>
+            Rejects all persistent precompiled bytecode artifacts.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauBytecodePolicy.RequireValidator">
+            <summary>
+            Allows a persistent bytecode artifact only when the configured
+            <see cref="T:Luau.ILuauBytecodeValidator"/> accepts it.
+            </summary>
+        </member>
+        <member name="T:Luau.ILuauBytecodeValidator">
+            <summary>
+            Establishes the provenance of a persistent artifact before native loading.
+            Artifact identity and hashes are claims and are not sufficient by themselves.
+            </summary>
+            <remarks>
+            This interface uses spans and a direct interface call so validation does
+            not require delegate generation or reflection under IL2CPP/AOT. Validators
+            should be deterministic and should not invoke the target Luau VM.
+            </remarks>
+        </member>
+        <member name="M:Luau.ILuauBytecodeValidator.IsValid(Luau.LuauBytecodeArtifact,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Returns whether the artifact and its exact bytecode payload are trusted.
+            </summary>
+            <param name="artifact">The immutable persistent artifact envelope.</param>
+            <param name="bytecode">The complete bytecode payload without copying.</param>
+        </member>
+        <member name="T:Luau.LuauCallContext">
+            <summary>
+            Provides callback-scoped access to Luau arguments and return values.
+            </summary>
+            <remarks>
+            A context is valid only while its callback is running. Retaining and using
+            it after the callback completes throws <see cref="T:System.InvalidOperationException"/>.
+            </remarks>
+        </member>
+        <member name="P:Luau.LuauCallContext.ArgumentCount">
+            <summary>Gets the number of arguments supplied by Luau.</summary>
+        </member>
+        <member name="P:Luau.LuauCallContext.State">
+            <summary>Gets the managed state that owns this callback.</summary>
+        </member>
+        <member name="P:Luau.LuauCallContext.CancellationToken">
+            <summary>Gets the cancellation token for the current operation.</summary>
+        </member>
+        <member name="P:Luau.LuauCallContext.CallbackName">
+            <summary>Gets the diagnostic callback name, when one was supplied.</summary>
+        </member>
+        <member name="M:Luau.LuauCallContext.Read``1(System.Int32)">
+            <summary>Reads a zero-based callback argument using managed conversion rules.</summary>
+        </member>
+        <member name="M:Luau.LuauCallContext.Return``1(``0)">
+            <summary>
+            Adds one managed value to the callback's ordered return values. Pushing
+            a reference wrapper does not transfer or dispose its managed ownership;
+            the callback or library must keep persistent wrappers live and dispose
+            owned wrappers when they are no longer needed.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauCallContext.ToDisplayString(System.Int32,System.Int32,System.Boolean@)">
+            <summary>
+            Formats a zero-based callback argument without allowing unbounded output.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauCompilationException">
+            <summary>Reports a source diagnostic produced by the Luau compiler.</summary>
+        </member>
+        <member name="M:Luau.LuauCompilationException.#ctor(System.String)">
+            <summary>Initializes an exception with the compiler diagnostic.</summary>
+        </member>
+        <member name="M:Luau.LuauCompilationException.#ctor(System.String,System.String,System.Exception)">
+            <summary>
+            Initializes an exception with compiler diagnostic and chunk context.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauCompilationLimitKind">
+            <summary>Identifies a compilation-service resource dimension.</summary>
+        </member>
+        <member name="F:Luau.LuauCompilationLimitKind.SourceBytesPerRequest">
+            <summary>UTF-8 source bytes in one request.</summary>
+        </member>
+        <member name="F:Luau.LuauCompilationLimitKind.QueuedRequestCount">
+            <summary>Admitted requests that have not completed.</summary>
+        </member>
+        <member name="F:Luau.LuauCompilationLimitKind.QueuedSourceBytes">
+            <summary>Aggregate source bytes for admitted, incomplete requests.</summary>
+        </member>
+        <member name="F:Luau.LuauCompilationLimitKind.BytecodeBytesPerResult">
+            <summary>Bytecode bytes in one compiler result.</summary>
+        </member>
+        <member name="T:Luau.LuauCompilationLimitException">
+            <summary>
+            Reports a request rejected by a finite compilation-service resource bound.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauCompilationLimitException.#ctor(Luau.LuauCompilationLimitKind,System.Int64,System.Int64)">
+            <summary>Initializes a compilation-service limit failure.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilationLimitException.LimitKind">
+            <summary>Gets the resource dimension that rejected the request.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilationLimitException.Actual">
+            <summary>Gets the observed count or byte size.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilationLimitException.Limit">
+            <summary>Gets the configured maximum count or byte size.</summary>
+        </member>
+        <member name="T:Luau.LuauCompilationShutdownException">
+            <summary>
+            Reports that compiler workers, admitted-request publication, or active
+            native calls did not drain within the finite disposal period. Workers
+            remain un-aborted and continue draining. A later disposal attempt waits for
+            the same shutdown again and can complete after the workers exit.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauCompilationShutdownException.#ctor(System.TimeSpan,System.Int32)">
+            <summary>Initializes an incomplete-shutdown report.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilationShutdownException.Timeout">
+            <summary>Gets the configured drain timeout.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilationShutdownException.ActiveRequestCount">
+            <summary>
+            Gets the active native-call count observed at timeout. A zero value can
+            mean worker exit or cancellation-registration cleanup remained pending.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauCompileOptions">
+            <summary>
+            Selects official Luau compiler levels. Instances are immutable and are
+            copied at operation boundaries so later caller activity cannot change an
+            in-flight compilation.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauCompileOptions.Default">
+            <summary>Gets the production default compiler levels.</summary>
+        </member>
+        <member name="P:Luau.LuauCompileOptions.OptimizationLevel">
+            <summary>Gets the compiler optimization level (0 through 2).</summary>
+        </member>
+        <member name="P:Luau.LuauCompileOptions.DebugLevel">
+            <summary>Gets the compiler debug-information level (0 through 2).</summary>
+        </member>
+        <member name="P:Luau.LuauCompileOptions.TypeInfoLevel">
+            <summary>Gets the compiler type-information level (0 or 1).</summary>
+        </member>
+        <member name="P:Luau.LuauCompileOptions.CoverageLevel">
+            <summary>
+            Gets the coverage instrumentation level. Production compilation does
+            not instrument coverage by default; tooling must opt in explicitly.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauCompiler">
+            <summary>
+            Provides the expert, synchronous entry point to the official native Luau
+            compiler. This type does not grant persistent-artifact trust; callers that
+            accept untrusted input should use a bounded <see cref="T:Luau.ILuauCompilationService"/>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauCompiler.Compile(System.ReadOnlySpan{System.Byte},Luau.LuauCompileOptions)">
+            <summary>
+            Expert synchronous tooling path that compiles an owned snapshot of
+            trusted UTF-8 source into opaque, loadable output.
+            </summary>
+            <remarks>
+            This method does not impose a finite source or output admission limit.
+            Ordinary Unity content and streamed or otherwise untrusted mods should
+            use <see cref="T:Luau.ILuauCompilationService"/> and its shared bounded lane.
+            </remarks>
+            <exception cref="T:Luau.LuauCompilationException">
+            The compiler reports a source diagnostic or no loadable output.
+            </exception>
+        </member>
+        <member name="T:Luau.LuauCompileResultKind">
+            <summary>Identifies the outcome of a compilation-service request.</summary>
+        </member>
+        <member name="F:Luau.LuauCompileResultKind.Success">
+            <summary>The compiler produced loadable same-process output.</summary>
+        </member>
+        <member name="F:Luau.LuauCompileResultKind.Diagnostic">
+            <summary>The compiler rejected the source with a diagnostic.</summary>
+        </member>
+        <member name="F:Luau.LuauCompileResultKind.Canceled">
+            <summary>The request was canceled before its output was published.</summary>
+        </member>
+        <member name="F:Luau.LuauCompileResultKind.InfrastructureFailure">
+            <summary>The compiler backend or its resource policy failed.</summary>
+        </member>
+        <member name="T:Luau.LuauCompileResult">
+            <summary>
+            A non-throwing compilation outcome. Exactly one outcome-specific property
+            is populated according to <see cref="P:Luau.LuauCompileResult.Kind"/>.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauCompileResult.Kind">
+            <summary>Gets the request outcome.</summary>
+        </member>
+        <member name="P:Luau.LuauCompileResult.Output">
+            <summary>
+            Gets compiler-issued, same-process output for a successful request.
+            Copied bytecode cannot be promoted back into this capability.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauCompileResult.CompilationDiagnostic">
+            <summary>Gets the typed source diagnostic for a rejected program.</summary>
+        </member>
+        <member name="P:Luau.LuauCompileResult.InfrastructureException">
+            <summary>Gets the backend failure for an infrastructure outcome.</summary>
+        </member>
+        <member name="P:Luau.LuauCompileResult.IsSuccess">
+            <summary>Gets whether this result contains compiler-issued output.</summary>
+        </member>
+        <member name="M:Luau.LuauCompileResult.Success(Luau.LuauCompilerOutput)">
+            <summary>Creates a successful result containing compiler-issued output.</summary>
+            <exception cref="T:System.ArgumentNullException"><paramref name="output"/> is null.</exception>
+        </member>
+        <member name="M:Luau.LuauCompileResult.Diagnostic(Luau.LuauCompilationException)">
+            <summary>Creates a source-diagnostic result.</summary>
+            <exception cref="T:System.ArgumentNullException"><paramref name="diagnostic"/> is null.</exception>
+        </member>
+        <member name="M:Luau.LuauCompileResult.Canceled">
+            <summary>Creates a canceled result with no outcome payload.</summary>
+        </member>
+        <member name="M:Luau.LuauCompileResult.InfrastructureFailure(System.Exception)">
+            <summary>Creates an infrastructure-failure result.</summary>
+            <exception cref="T:System.ArgumentNullException"><paramref name="exception"/> is null.</exception>
+        </member>
+        <member name="T:Luau.LuauCompilerOutput">
+            <summary>
+            Opaque, success-only output produced by this process's Luau compiler.
+            It can be loaded directly for development and streamed-source execution,
+            but arbitrary bytes cannot be promoted into this capability.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.BytecodeLength">
+            <summary>Gets the compiled bytecode length in bytes.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.CompileOptions">
+            <summary>Gets the immutable compiler-option snapshot.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.SourceSha256">
+            <summary>Gets the lowercase SHA-256 hash of the compiled source.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.BytecodeSha256">
+            <summary>Gets the lowercase SHA-256 hash of the bytecode.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.UpstreamRevisionHash">
+            <summary>Gets the pinned upstream Luau revision identity.</summary>
+        </member>
+        <member name="P:Luau.LuauCompilerOutput.HostBuildFingerprint">
+            <summary>Gets the exact native host build identity.</summary>
+        </member>
+        <member name="M:Luau.LuauCompilerOutput.ToBytecodeArray">
+            <summary>Returns a defensive copy for inspection or persistence.</summary>
+        </member>
+        <member name="M:Luau.LuauCompilerOutput.CopyBytecodeTo(System.Buffers.IBufferWriter{System.Byte})">
+            <summary>Copies the bytecode to a caller-owned writer.</summary>
+        </member>
+        <member name="T:Luau.LuauException">
+            <summary>
+            The base exception for failures reported by the managed Luau runtime.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauException.#ctor(System.String)">
+            <summary>
+            Initializes an exception without chunk context.
+            </summary>
+            <param name="message">The error message.</param>
+        </member>
+        <member name="M:Luau.LuauException.#ctor(System.String,System.String)">
+            <summary>
+            Initializes an exception associated with a source or bytecode chunk.
+            </summary>
+            <param name="message">The error message.</param>
+            <param name="chunkName">The host-provided chunk name, when available.</param>
+        </member>
+        <member name="M:Luau.LuauException.#ctor(System.String,System.String,System.Exception)">
+            <summary>
+            Initializes an exception associated with a chunk and an underlying failure.
+            </summary>
+            <param name="message">The error message.</param>
+            <param name="chunkName">The host-provided chunk name, when available.</param>
+            <param name="innerException">The exception that caused this failure.</param>
+        </member>
+        <member name="P:Luau.LuauException.ChunkName">
+            <summary>
+            Gets the exact host-provided chunk name associated with the failure, or
+            <see langword="null"/> when no chunk name was supplied.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauExecutionOptions">
+            <summary>
+            Configures budgets for Luau execution, invocation, or resume operations.
+            State defaults are authoritative. Per-operation values may add or tighten
+            limits but cannot remove state limits or replace its continuation scheduler.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.Default">
+            <summary>
+            Gets the finite execution policy used by ordinary script states.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.Unbounded">
+            <summary>
+            Gets an explicitly unbounded execution policy. Hosts should use this
+            profile only for trusted work whose resource ownership is controlled by
+            another layer.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.WallClockLimit">
+            <summary>
+            Gets the maximum wall-clock duration for an operation, or
+            <see langword="null"/> when no wall-clock budget is configured.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned duration is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.InterruptCountLimit">
+            <summary>
+            Gets the maximum number of interrupt callbacks permitted for an
+            operation, or <see langword="null"/> when no interrupt-count budget is
+            configured.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned count is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.ContinuationScheduler">
+            <summary>
+            Gets the host scheduler used for asynchronous managed-callback dispatch
+            and subsequent VM continuations, or <see langword="null"/> when no
+            thread affinity is required.
+            </summary>
+            <remarks>
+            Unity hosts should normally configure a
+            <see cref="T:Luau.LuauSynchronizationContextScheduler"/> captured on the Unity
+            main thread. This controls Luau's own continuation work; an async host
+            callback that accesses thread-affine APIs after one of its own awaits
+            must also preserve or explicitly restore the appropriate context.
+            </remarks>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.MaxResultCount">
+            <summary>
+            Gets the maximum number of values an operation may return, or
+            <see langword="null"/> when result count is unlimited. This bounds both
+            the Luau stack output and managed arrays created by convenience APIs.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned count is negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauExecutionOptions.HasBudget">
+            <summary>
+            Gets whether at least one execution budget is configured.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauFunction">
+            <summary>
+            Represents either an owned script closure or a managed callback capability.
+            Script closures and retained copies must be disposed before their root VM;
+            callback-borrowed closures are valid only for their active callback frame.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauFunction.IsBorrowed">
+            <summary>Gets whether this reference is valid only for its callback frame.</summary>
+        </member>
+        <member name="P:Luau.LuauFunction.State">
+            <summary>
+            Gets the public owning root. Access fails after this function, its
+            callback frame, or its root has been disposed.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauFunction.IsDisposed">
+            <summary>Gets whether this function or its owning root is disposed.</summary>
+        </member>
+        <member name="M:Luau.LuauFunction.Retain">
+            <summary>
+            Creates an independently disposable owner for the same script closure.
+            Managed callback capabilities already have host-defined ownership and
+            cannot be retained through this operation.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauFunction.Invoke(System.ReadOnlySpan{Luau.LuauValue},Luau.LuauExecutionOptions)">
+            <summary>
+            Invokes a script closure synchronously on its owning VM root.
+            Managed callback functions are host capabilities and cannot be invoked
+            directly by managed callers. Dispose the returned scope to release its
+            scope-owned results; dispose returned child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauFunction.InvokeAsync(System.ReadOnlyMemory{Luau.LuauValue},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Invokes a script closure asynchronously on its owning VM root.
+            Managed callback functions are host capabilities and cannot be invoked
+            directly by managed callers. Dispose the returned scope to release its
+            scope-owned results; dispose returned child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauFunction.ResolvePublicState(Luau.LuauState)">
+            <summary>
+            Resolves the stack that callers should use when invoking this function.
+            Managed callbacks retain their creating state; registry-backed script
+            functions override this to use the VM root stack so a closure produced
+            by a yielded coroutine can be invoked without resuming that coroutine.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauFunction.Dispose">
+            <summary>
+            Releases this function owner. Disposal is idempotent and does not close
+            the owning VM root.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauLoadInputKind">
+            <summary>
+            Identifies which kind of input exceeded a configured loading bound.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauLoadInputKind.Source">
+            <summary>UTF-8 source text.</summary>
+        </member>
+        <member name="F:Luau.LuauLoadInputKind.Bytecode">
+            <summary>Precompiled Luau bytecode.</summary>
+        </member>
+        <member name="T:Luau.LuauExecutionBudgetKind">
+            <summary>
+            Identifies the execution budget that stopped a script.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauExecutionBudgetKind.WallClock">
+            <summary>The wall-clock duration was exhausted.</summary>
+        </member>
+        <member name="F:Luau.LuauExecutionBudgetKind.InterruptCount">
+            <summary>The interrupt callback count was exhausted.</summary>
+        </member>
+        <member name="T:Luau.LuauLimitException">
+            <summary>
+            Base class for configured byte-count limit failures.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauLimitException.#ctor(System.String,System.String,System.Int64)">
+            <summary>
+            Initializes a byte-count limit failure.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauLimitException.LimitBytes">
+            <summary>
+            Gets the configured limit in bytes.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauLoadLimitException">
+            <summary>
+            Thrown before compilation or native loading when source or bytecode exceeds
+            its configured size bound.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauLoadLimitException.#ctor(System.String,Luau.LuauLoadInputKind,System.Int64,System.Int64)">
+            <summary>
+            Initializes a load-size failure.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauLoadLimitException.InputKind">
+            <summary>
+            Gets whether source or bytecode exceeded its bound.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauLoadLimitException.ActualBytes">
+            <summary>
+            Gets the observed payload size in bytes.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauMemoryLimitException">
+            <summary>
+            Thrown after the tracked allocator rejects an allocation that would exceed
+            a root state's native memory limit.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauMemoryLimitException.#ctor(System.String,Luau.LuauMemoryUsageSnapshot,System.Int64)">
+            <summary>
+            Initializes a memory-limit failure from the last stable usage snapshot.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryLimitException.Usage">
+            <summary>
+            Gets the last stable native memory usage snapshot.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryLimitException.AttemptedBytes">
+            <summary>
+            Gets the native VM usage that the rejected allocation would have
+            produced.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauExecutionBudgetException">
+            <summary>
+            Thrown when a configured wall-clock or interrupt-count execution budget is
+            exhausted.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauExecutionBudgetException.#ctor(System.String,System.TimeSpan,System.TimeSpan)">
+            <summary>
+            Initializes a wall-clock budget failure.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauExecutionBudgetException.#ctor(System.String,System.Int64,System.Int64)">
+            <summary>
+            Initializes an interrupt-count budget failure.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauExecutionBudgetException.BudgetKind">
+            <summary>Gets the budget that stopped execution.</summary>
+        </member>
+        <member name="P:Luau.LuauExecutionBudgetException.WallClockLimit">
+            <summary>Gets the wall-clock limit when <see cref="P:Luau.LuauExecutionBudgetException.BudgetKind"/> is wall-clock.</summary>
+        </member>
+        <member name="P:Luau.LuauExecutionBudgetException.Elapsed">
+            <summary>Gets elapsed time when <see cref="P:Luau.LuauExecutionBudgetException.BudgetKind"/> is wall-clock.</summary>
+        </member>
+        <member name="P:Luau.LuauExecutionBudgetException.InterruptCountLimit">
+            <summary>Gets the interrupt limit when <see cref="P:Luau.LuauExecutionBudgetException.BudgetKind"/> is interrupt-count.</summary>
+        </member>
+        <member name="P:Luau.LuauExecutionBudgetException.ObservedInterruptCount">
+            <summary>Gets the observed count when <see cref="P:Luau.LuauExecutionBudgetException.BudgetKind"/> is interrupt-count.</summary>
+        </member>
+        <member name="T:Luau.LuauResultLimitException">
+            <summary>
+            Thrown when a script returns more values than the host-configured result
+            bound. The runner removes the rejected values before throwing.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauResultLimitException.#ctor(System.String,System.Int32,System.Int32)">
+            <summary>Initializes a result-count limit failure.</summary>
+        </member>
+        <member name="P:Luau.LuauResultLimitException.ActualCount">
+            <summary>Gets the rejected result count.</summary>
+        </member>
+        <member name="P:Luau.LuauResultLimitException.Limit">
+            <summary>Gets the configured maximum result count.</summary>
+        </member>
+        <member name="T:Luau.LuauDecodedResultLimitKind">
+            <summary>Identifies which managed string-decoding budget was exceeded.</summary>
+        </member>
+        <member name="F:Luau.LuauDecodedResultLimitKind.StringBytes">
+            <summary>One native UTF-8 string exceeded the per-string limit.</summary>
+        </member>
+        <member name="F:Luau.LuauDecodedResultLimitKind.OperationBytes">
+            <summary>Decoded strings exceeded the aggregate operation budget.</summary>
+        </member>
+        <member name="T:Luau.LuauDecodedResultLimitException">
+            <summary>
+            Thrown before allocating a managed string when native UTF-8 data exceeds a
+            configured per-string or aggregate decoding budget.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauDecodedResultLimitException.#ctor(System.String,Luau.LuauDecodedResultLimitKind,System.Int64,System.Int64)">
+            <summary>Initializes a decoded-result limit failure.</summary>
+        </member>
+        <member name="P:Luau.LuauDecodedResultLimitException.LimitKind">
+            <summary>Gets the decoding budget that was exceeded.</summary>
+        </member>
+        <member name="P:Luau.LuauDecodedResultLimitException.ActualBytes">
+            <summary>Gets the observed UTF-8 byte count.</summary>
+        </member>
+        <member name="T:Luau.LuauReferenceLimitException">
+            <summary>
+            Reports exhaustion of the process-wide opaque native reference-token space.
+            Tokens are intentionally never reused, so the process must be restarted
+            before new reference-valued wrappers can be created.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauReferenceLimitException.#ctor">
+            <summary>Initializes a native reference-token exhaustion failure.</summary>
+        </member>
+        <member name="T:Luau.LuauExecutionCanceledException">
+            <summary>
+            Thrown when cancellation stops Luau execution. It derives from
+            <see cref="T:System.OperationCanceledException"/> so tasks retain normal .NET
+            cancellation semantics while exposing chunk context.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauExecutionCanceledException.#ctor(System.String,System.Threading.CancellationToken)">
+            <summary>
+            Initializes a cancellation failure for a chunk.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauExecutionCanceledException.ChunkName">
+            <summary>
+            Gets the exact host-provided chunk name, or null when none was supplied.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauManagedCallbackException">
+            <summary>
+            Wraps an exception thrown by a managed function after it has been caught at
+            the unmanaged callback boundary.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauManagedCallbackException.#ctor(System.String,System.String,System.Exception)">
+            <summary>
+            Initializes a controlled managed-callback failure.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauManagedCallbackException.CallbackName">
+            <summary>
+            Gets the host-provided callback name, or null when the callback was unnamed.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauMemoryUsageSnapshot">
+            <summary>
+            An immutable snapshot of native memory tracked for one root Luau VM.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauMemoryUsageSnapshot.#ctor(System.Int64,System.Int64,System.Nullable{System.Int64})">
+            <summary>
+            Initializes a memory usage snapshot.
+            </summary>
+            <param name="currentBytes">Currently allocated native VM bytes.</param>
+            <param name="peakBytes">Highest observed native VM allocation.</param>
+            <param name="limitBytes">Configured limit, or null for an unlimited VM.</param>
+        </member>
+        <member name="P:Luau.LuauMemoryUsageSnapshot.CurrentBytes">
+            <summary>
+            Gets currently allocated native VM bytes.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryUsageSnapshot.PeakBytes">
+            <summary>
+            Gets the highest observed native VM allocation in bytes.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryUsageSnapshot.LimitBytes">
+            <summary>
+            Gets the configured native VM limit in bytes, or null for an unlimited VM.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryUsageSnapshot.IsTracked">
+            <summary>
+            Gets whether the VM uses the tracked allocator. Compatibility states
+            created without a memory limit intentionally report untracked usage.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauMemoryUsageSnapshot.IsLimited">
+            <summary>
+            Gets whether this VM has a configured memory limit.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauModuleLimits">
+            <summary>Bounds immutable module maps and precompiled bundles.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.Default">
+            <summary>Gets the finite default module policy.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.UnsafeUnbounded">
+            <summary>Gets an explicitly unsafe, unbounded module policy.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.MaxModuleCount">
+            <summary>
+            Gets the maximum modules in one map or bundle and, independently, the
+            maximum aliases in one map.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.MaxTotalSourceBytes">
+            <summary>Gets the aggregate admitted source-byte limit.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.MaxBytecodeBytesPerModule">
+            <summary>Gets the per-module compiled bytecode limit.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.MaxTotalBytecodeBytes">
+            <summary>Gets the aggregate compiled bytecode limit.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimits.MaxModuleIdUtf8Bytes">
+            <summary>Gets the UTF-8 byte limit for a canonical module ID.</summary>
+        </member>
+        <member name="T:Luau.LuauModuleLimitKind">
+            <summary>Identifies a module resource dimension.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.ModuleCount">
+            <summary>Modules in a map, bundle, or root cache.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.SourceBytes">
+            <summary>Aggregate admitted module source bytes.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.BytecodeBytesPerModule">
+            <summary>Bytecode bytes for one module.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.BundleBytecodeBytes">
+            <summary>Aggregate bundle bytecode bytes.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.ModuleIdBytes">
+            <summary>UTF-8 bytes in one canonical module ID.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.DependencyDepth">
+            <summary>Nested require dependency depth.</summary>
+        </member>
+        <member name="F:Luau.LuauModuleLimitKind.CachedResultCount">
+            <summary>Retained module results in one root VM cache.</summary>
+        </member>
+        <member name="T:Luau.LuauModuleLimitException">
+            <summary>Reports a finite module quota failure.</summary>
+        </member>
+        <member name="M:Luau.LuauModuleLimitException.#ctor(Luau.LuauModuleLimitKind,System.Int64,System.Int64)">
+            <summary>Initializes a module quota failure.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimitException.LimitKind">
+            <summary>Gets the exhausted quota.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimitException.Actual">
+            <summary>Gets the observed count or byte size.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleLimitException.Limit">
+            <summary>Gets the configured maximum.</summary>
+        </member>
+        <member name="T:Luau.LuauModuleBundleCompilationException">
+            <summary>Reports the first deterministic module-bundle compilation failure.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleBundleCompilationException.ModuleId">
+            <summary>Gets the canonical module ID that failed.</summary>
+        </member>
+        <member name="T:Luau.LuauModuleMap">
+            <summary>
+            An immutable, in-memory source module namespace. It never performs
+            filesystem or network resolution. One root VM and its module cache form one
+            trust domain; mutually untrusted maps belong on separate roots.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauModuleMap.#ctor(System.Collections.Generic.IReadOnlyDictionary{System.String,System.Byte[]},System.Collections.Generic.IReadOnlyDictionary{System.String,System.String},Luau.LuauModuleLimits)">
+            <summary>Creates a bounded immutable module map.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleMap.Count">
+            <summary>Gets the immutable module count.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleMap.TotalSourceBytes">
+            <summary>Gets the aggregate admitted source bytes.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleMap.Limits">
+            <summary>Gets the limits captured by this map.</summary>
+        </member>
+        <member name="M:Luau.LuauModuleMap.CanonicalizeModuleId(System.String)">
+            <summary>
+            Canonicalizes a module ID by normalizing separators, removing leading
+            and dot segments and one terminal <c>.luau</c>, and rejecting parent
+            traversal and alias syntax.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauModuleMap.CompileModuleBundleAsync(Luau.ILuauCompilationService,Luau.LuauCompileOptions,System.Threading.CancellationToken)">
+            <summary>
+            Compiles every source through the supplied bounded shared service. The
+            bundle is published only after every output and aggregate quota passes;
+            failures never expose a partially installable resolver.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauModuleMap.GetCacheKey(System.String)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Luau.LuauModuleMap.TryLoadModule(Luau.LuauState,System.String,System.String,Luau.LuauValue@)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Luau.LuauModuleMap.TryGetAliasPath(System.String,System.String@)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Luau.LuauModuleBundle">
+            <summary>
+            An immutable, same-process compiler-output module bundle. Construction is
+            internal to the all-or-nothing bounded compilation phase.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauModuleBundle.Count">
+            <summary>Gets the compiled module count.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleBundle.TotalBytecodeBytes">
+            <summary>Gets the aggregate compiled bytecode bytes.</summary>
+        </member>
+        <member name="P:Luau.LuauModuleBundle.Limits">
+            <summary>Gets the limits captured during compilation.</summary>
+        </member>
+        <member name="M:Luau.LuauModuleBundle.GetCacheKey(System.String)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Luau.LuauModuleBundle.TryLoadModule(Luau.LuauState,System.String,System.String,Luau.LuauValue@)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Luau.LuauModuleBundle.TryGetAliasPath(System.String,System.String@)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Luau.ILuauObjectCapability">
+            <summary>
+            Implemented by types whose Luau-visible object surface is generated from
+            <see cref="T:Luau.LuauLibraryAttribute"/> and <see cref="T:Luau.LuauMemberAttribute"/>.
+            </summary>
+        </member>
+        <member name="P:Luau.ILuauObjectCapability.LuauObjectDescriptor">
+            <summary>Gets the generated descriptor for this object's capability surface.</summary>
+        </member>
+        <member name="T:Luau.LuauObjectDescriptor">
+            <summary>
+            Describes one explicit, generated member surface that can be attached to an
+            opaque <see cref="T:Luau.LuauObjectHandle"/>. Descriptor identity is part of the
+            capability authority: two descriptor instances never silently upgrade one
+            another even when they target the same managed object.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauObjectDescriptor.TypeName">
+            <summary>Gets the diagnostic type name exposed by this descriptor.</summary>
+        </member>
+        <member name="T:Luau.LuauObjectDescriptor`1">
+            <summary>
+            A reflection-free descriptor for one managed reference type. Source-generated
+            capability bindings construct this type once and reuse it for every instance.
+            </summary>
+            <typeparam name="T">The exact managed target type.</typeparam>
+        </member>
+        <member name="M:Luau.LuauObjectDescriptor`1.#ctor(System.String,System.Action{`0},Luau.LuauObjectMember{`0}[])">
+            <summary>Creates an immutable capability descriptor.</summary>
+            <param name="typeName">The diagnostic Luau type name.</param>
+            <param name="validateTarget">
+            An optional AOT-safe liveness/thread-affinity validator invoked before
+            every member access. Unity bindings use this to reject destroyed objects.
+            </param>
+            <param name="members">The explicitly allowed generated member surface.</param>
+        </member>
+        <member name="T:Luau.LuauObjectMember`1">
+            <summary>
+            Immutable generated dispatch data for one explicitly exposed member.
+            Hosts normally obtain these values from the Luau source generator rather
+            than constructing a binding by hand.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauObjectMember`1.Name">
+            <summary>Gets the Luau-visible member name.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectMember`1.Property(System.String,System.Action{`0,Luau.LuauCallContext},System.Action{`0,Luau.LuauCallContext})">
+            <summary>Creates a readable, writable, or read/write property binding.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectMember`1.Method(System.String,System.Action{`0,Luau.LuauCallContext})">
+            <summary>Creates a synchronous method binding.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectMember`1.AsyncMethod(System.String,System.Func{`0,Luau.LuauCallContext,System.Threading.Tasks.ValueTask})">
+            <summary>Creates an asynchronous method binding.</summary>
+        </member>
+        <member name="T:Luau.LuauObjectHandle">
+            <summary>
+            An opaque, per-VM Luau userdata capability for one explicitly described
+            managed object. The target and registry token are never exposed publicly.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauObjectHandle.IsBorrowed">
+            <summary>Gets whether this reference is valid only for its callback frame.</summary>
+        </member>
+        <member name="P:Luau.LuauObjectHandle.IsDisposed">
+            <summary>Gets whether this managed wrapper or its owning VM is disposed.</summary>
+        </member>
+        <member name="P:Luau.LuauObjectHandle.State">
+            <summary>Gets the root state that owns this per-VM capability.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectHandle.Retain">
+            <summary>Creates an independently disposable owner for this capability.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectHandle.ToString">
+            <summary>Returns the generated capability type name without exposing its target.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectHandle.Dispose">
+            <summary>
+            Releases this managed wrapper. Luau values that still reference the
+            userdata remain valid until the VM collects them.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauObjectHandle.Finalize">
+            <summary>Releases the capability wrapper if its owner did not dispose it deterministically.</summary>
+        </member>
+        <member name="T:Luau.LuauManagedHandleLimitException">
+            <summary>
+            Thrown when a state reaches its configured finite managed capability count.
+            Releasing Luau references and running garbage collection makes slots reusable.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauManagedHandleLimitException.#ctor(System.Int32)">
+            <summary>Creates a managed-handle quota failure.</summary>
+        </member>
+        <member name="P:Luau.LuauManagedHandleLimitException.Limit">
+            <summary>Gets the configured per-state handle limit.</summary>
+        </member>
+        <member name="T:Luau.LuauRequirer">
+            <summary>
+            Defines an opt-in managed <c>require</c> resolver. Each instance has an
+            isolated VM cache namespace; implementations must resolve only explicitly
+            authorized modules and must not use ambient filesystem or network access.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauRequirer.TryLoadModule(Luau.LuauState,System.String,System.String,Luau.LuauValue@)">
+            <summary>
+            Attempts to load one resolved module on a temporary module thread.
+            Return exactly one owned value on success; the base resolver normalizes
+            and caches it before releasing both the value and temporary thread.
+            </summary>
+            <param name="state">The temporary module thread; do not retain it.</param>
+            <param name="fullPath">The alias-resolved logical module path.</param>
+            <param name="requireArgument">The original script argument for diagnostics.</param>
+            <param name="result">Receives the owned module result on success.</param>
+            <returns><see langword="true"/> when the module was found and evaluated.</returns>
+        </member>
+        <member name="M:Luau.LuauRequirer.TryGetAliasPath(System.String,System.String@)">
+            <summary>Attempts to map an explicit <c>@alias</c> prefix to a logical module path.</summary>
+            <param name="alias">The alias name without the leading <c>@</c>.</param>
+            <param name="path">Receives the mapped logical prefix when found.</param>
+            <returns><see langword="true"/> when the alias is configured.</returns>
+        </member>
+        <member name="M:Luau.LuauRequirer.ExecuteModuleSource(Luau.LuauState,System.String,System.ReadOnlySpan{System.Byte},System.ReadOnlySpan{System.Byte},Luau.LuauCompileOptions)">
+            <summary>
+            Compiles and evaluates already-admitted strict UTF-8 module source and
+            returns its single owned result. Implementations accepting untrusted
+            source must enforce finite source and compiler-output limits first.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauRequirer.ExecuteModuleCompilerOutput(Luau.LuauState,System.String,Luau.LuauCompilerOutput,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Evaluates same-process compiler output and returns its single owned
+            result. Compiler output is capability-bearing and cannot be persisted or
+            reconstructed by untrusted callers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauRequirer.ExecuteVerifiedModuleBytecode(Luau.LuauState,System.String,Luau.LuauBytecodeArtifact,System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Validates and evaluates a persistent bytecode artifact and returns its
+            single owned result. Artifact parsing alone does not grant trust; the
+            state's configured provenance validator must accept it.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauRequirer.GetCacheKey(System.String)">
+            <summary>
+            Gets the deterministic cache key within this resolver instance. Override
+            when one logical path can denote distinct immutable revisions.
+            </summary>
+            <param name="path">The alias-resolved logical module path.</param>
+        </member>
+        <member name="T:Luau.LuauResultScope">
+            <summary>
+            Owns the table, function, buffer, userdata, and object-handle results
+            produced by one allocating Luau operation. Dispose the scope
+            deterministically; call <c>Retain</c> on one of those wrappers when it must
+            outlive the scope. Primitive values require no cleanup. A returned
+            <see cref="T:Luau.LuauState"/> thread is a cached caller-owned wrapper rather than
+            a scope-owned result and must be disposed separately.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauResultScope.Count">
+            <summary>Gets the number of returned values.</summary>
+        </member>
+        <member name="P:Luau.LuauResultScope.Length">
+            <summary>Gets the number of returned values.</summary>
+        </member>
+        <member name="P:Luau.LuauResultScope.Item(System.Int32)">
+            <summary>Gets a returned value by zero-based index.</summary>
+        </member>
+        <member name="M:Luau.LuauResultScope.Read``1(System.Int32)">
+            <summary>
+            Reads one result using the standard managed conversion rules. A child
+            <see cref="T:Luau.LuauState"/> returned here remains caller-owned and must be
+            disposed separately from this scope.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauResultScope.AsSpan">
+            <summary>Gets a read-only span over the callback-independent values.</summary>
+        </member>
+        <member name="M:Luau.LuauResultScope.Dispose">
+            <summary>
+            Releases all disposable results still owned by this scope. Cached
+            <see cref="T:Luau.LuauState"/> thread wrappers are not scope-owned. Disposal
+            is idempotent.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauResultScope.GetEnumerator">
+            <summary>Returns an enumerator over the result values.</summary>
+        </member>
+        <member name="T:Luau.LuauObjectExtensions">
+            <summary>Creates generated managed-object capabilities for a Luau state.</summary>
+        </member>
+        <member name="M:Luau.LuauObjectExtensions.CreateHandle``1(Luau.LuauState,``0)">
+            <summary>
+            Creates an opaque per-state capability from a source-generated object
+            binding. Only members marked with <see cref="T:Luau.LuauMemberAttribute"/> are
+            reachable through the returned userdata.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauState">
+            <summary>
+            Owns one official Luau VM root or a coroutine retained by that root. Root
+            disposal cancels active operations and invalidates every child and VM-backed
+            wrapper. Hosts must dispose root states deterministically.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateHandle``1(``0,Luau.LuauObjectDescriptor{``0})">
+            <summary>
+            Creates a capability using an explicit generated descriptor. Descriptor
+            identity remains part of the authority, allowing intentionally narrower
+            views over the same target without upgrading either handle.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateTable">
+            <summary>Creates an empty table and returns an independently disposable owner.</summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateTable(System.Int32,System.Int32)">
+            <summary>
+            Creates an empty table with array and hash capacity hints and returns an
+            independently disposable owner.
+            </summary>
+            <param name="nArr">The non-negative array-capacity hint.</param>
+            <param name="nRec">The non-negative hash-capacity hint.</param>
+        </member>
+        <member name="M:Luau.LuauState.CreateTable(System.ReadOnlySpan{Luau.LuauValue})">
+            <summary>
+            Creates a one-based array table from <paramref name="values"/> and
+            returns an independently disposable owner.
+            </summary>
+            <param name="values">Values borrowed for the duration of table construction.</param>
+        </member>
+        <member name="M:Luau.LuauState.CreateTable(System.ReadOnlySpan{System.Collections.Generic.KeyValuePair{Luau.LuauValue,Luau.LuauValue}})">
+            <summary>
+            Creates a table from a span without intermediate collections. When the
+            span contains the same raw Luau key more than once, the later value wins.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateTable(System.Collections.Generic.IEnumerable{System.Collections.Generic.KeyValuePair{Luau.LuauValue,Luau.LuauValue}})">
+            <summary>
+            Creates a table from one collection-friendly entry sequence. When the
+            sequence contains the same raw Luau key more than once, the later value
+            wins.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateFunction(System.Action{Luau.LuauCallContext})">
+            <summary>
+            Creates a managed callback capability that Luau code can call. Unlike a
+            script closure returned by a load or value conversion, this capability
+            cannot be invoked directly through <see cref="M:Luau.LuauFunction.Invoke(System.ReadOnlySpan{Luau.LuauValue},Luau.LuauExecutionOptions)"/>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateFunction(System.String,System.Action{Luau.LuauCallContext})">
+            <summary>
+            Creates a named managed callback capability that Luau code can call.
+            Managed callers cannot invoke the returned capability directly.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateAsyncFunction(System.Func{Luau.LuauCallContext,System.Threading.Tasks.ValueTask})">
+            <summary>
+            Creates an asynchronous managed callback capability for Luau code.
+            Managed callers cannot invoke the returned capability directly.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateAsyncFunction(System.String,System.Func{Luau.LuauCallContext,System.Threading.Tasks.ValueTask})">
+            <summary>
+            Creates a named asynchronous managed callback capability for Luau code.
+            Managed callers cannot invoke the returned capability directly.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateThread">
+            <summary>
+            Creates a coroutine retained by this VM root. The returned wrapper may
+            be disposed independently; root disposal always invalidates it.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateBuffer(System.Int32)">
+            <summary>Creates a zero-filled buffer and returns an independently disposable owner.</summary>
+            <param name="size">The non-negative buffer length in bytes.</param>
+        </member>
+        <member name="M:Luau.LuauState.CreateBuffer(System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Creates a buffer by copying <paramref name="str"/> and returns an
+            independently disposable owner.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauState.IsDisposed">
+            <summary>Gets whether this wrapper or its VM root has been disposed.</summary>
+        </member>
+        <member name="P:Luau.LuauState.IsMainThread">
+            <summary>Gets whether this wrapper owns the VM root rather than a child coroutine.</summary>
+        </member>
+        <member name="P:Luau.LuauState.Options">
+            <summary>Gets the immutable options snapshot applied when the root was created.</summary>
+        </member>
+        <member name="P:Luau.LuauState.MemoryUsage">
+            <summary>Gets the root allocator's current, peak, and configured-limit byte counts.</summary>
+        </member>
+        <member name="M:Luau.LuauState.Create">
+            <summary>Creates a root VM with finite safe defaults. The caller owns the returned state.</summary>
+        </member>
+        <member name="M:Luau.LuauState.Create(Luau.LuauStateOptions)">
+            <summary>
+            Creates a root VM from a validated snapshot of <paramref name="options"/>.
+            The caller owns the returned state and must dispose it.
+            </summary>
+            <param name="options">Resource, trust, and execution policy for the new root.</param>
+            <exception cref="T:Luau.LuauMemoryLimitException">The configured allocator ceiling prevents VM creation.</exception>
+            <exception cref="T:System.PlatformNotSupportedException">The native host ABI is unavailable or incompatible.</exception>
+        </member>
+        <member name="M:Luau.LuauState.GetStatus">
+            <summary>
+            Gets the managed lifecycle state of a child coroutine. Root-state use
+            is invalid because coroutine lifecycle does not describe the root VM.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.GetMainThread">
+            <summary>
+            Gets the root wrapper that owns this coroutine. On a root state, returns
+            this instance. The returned root is not a newly retained owner.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ToString">
+            <summary>Returns the Luau textual representation of this root or coroutine.</summary>
+        </member>
+        <member name="M:Luau.LuauState.Dispose">
+            <summary>
+            Releases this wrapper. Disposing a root cancels active operations and
+            invalidates all child threads and VM-backed values; disposing a child
+            releases only that coroutine wrapper.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.Finalize">
+            <summary>Releases the native state if its owner did not dispose it deterministically.</summary>
+        </member>
+        <member name="M:Luau.LuauState.ToDisplayString(System.Int32)">
+            <summary>
+            Converts a stack value using Luau's display-string semantics, including
+            a protected <c>__tostring</c> metamethod call when applicable.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ToDisplayString(System.Int32,System.Int32,System.Boolean@)">
+            <summary>
+            Converts a stack value using Luau's display-string semantics while
+            limiting the UTF-8 size of the returned managed string.
+            </summary>
+            <param name="index">The stack index to format.</param>
+            <param name="maxUtf8Bytes">
+            The maximum number of bytes the returned string occupies when encoded
+            as UTF-8. A value of zero returns an empty string after formatting the
+            value.
+            </param>
+            <param name="truncated">
+            Set to <see langword="true"/> when any formatted content was omitted to
+            satisfy <paramref name="maxUtf8Bytes"/>.
+            </param>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteCompilerOutput(Luau.LuauCompilerOutput,System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)">
+            <summary>
+            Executes opaque output produced by this process's compiler and returns
+            all results under the state's normal execution limits. Dispose the
+            returned scope to release its scope-owned results; dispose returned
+            child thread wrappers separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteCompilerOutputInto(Luau.LuauCompilerOutput,System.Span{Luau.LuauValue},System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)">
+            <summary>
+            Executes compiler output into a caller-owned result span. The caller
+            owns and must dispose any reference wrappers written to the span. Slots
+            that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteCompilerOutputAsync(Luau.LuauCompilerOutput,System.ReadOnlyMemory{System.Char},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously executes compiler output. Dispose the returned scope to
+            release its scope-owned results; dispose child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteCompilerOutputIntoAsync(Luau.LuauCompilerOutput,System.Memory{Luau.LuauValue},System.ReadOnlyMemory{System.Char},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously executes compiler output into caller-owned memory. The
+            caller owns reference wrappers written to the destination. Slots that
+            receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteVerifiedBytecode(Luau.LuauBytecodeArtifact,System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)">
+            <summary>
+            Validates and executes a persistent artifact, returning all results.
+            The chunk name is diagnostic and is never part of provenance validation.
+            Dispose the returned scope to release its scope-owned results; dispose
+            returned child thread wrappers separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteVerifiedBytecodeInto(Luau.LuauBytecodeArtifact,System.Span{Luau.LuauValue},System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)">
+            <summary>
+            Validates and executes an artifact into a caller-owned span. The caller
+            owns and must dispose any reference wrappers written to the span. Slots
+            that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteVerifiedBytecodeAsync(Luau.LuauBytecodeArtifact,System.ReadOnlyMemory{System.Char},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously validates and executes a persistent artifact. Dispose the
+            returned scope to release its scope-owned results; dispose returned
+            child thread wrappers separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ExecuteVerifiedBytecodeIntoAsync(Luau.LuauBytecodeArtifact,System.Memory{Luau.LuauValue},System.ReadOnlyMemory{System.Char},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously validates and executes an artifact into caller-owned
+            memory. The caller owns reference wrappers written to the destination.
+            Slots that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoString(System.ReadOnlySpan{System.Char},System.ReadOnlySpan{System.Char},Luau.LuauCompileOptions,Luau.LuauExecutionOptions)">
+            <summary>
+            Compiles and executes UTF-16 source synchronously. Dispose the returned
+            scope and dispose any returned child thread wrappers separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringInto(System.ReadOnlySpan{System.Char},System.Span{Luau.LuauValue},System.ReadOnlySpan{System.Char},Luau.LuauCompileOptions,Luau.LuauExecutionOptions)">
+            <summary>
+            Compiles and executes UTF-16 source synchronously into caller-owned
+            storage. The caller owns and must dispose any reference wrappers written
+            to <paramref name="destination"/>. Slots that receive results must not
+            already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringIntoAsync(System.String,System.Memory{Luau.LuauValue},System.String,Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes string source into caller-owned
+            storage. The caller owns reference wrappers written to the destination.
+            Slots that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringIntoAsync(System.ReadOnlyMemory{System.Char},System.Memory{Luau.LuauValue},System.ReadOnlyMemory{System.Char},Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes UTF-16 source into caller-owned
+            storage. The caller owns reference wrappers written to the destination.
+            Slots that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringAsync(System.String,System.String,Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes string source. Dispose the returned
+            scope to release its scope-owned results; dispose child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringAsync(System.ReadOnlyMemory{System.Char},System.ReadOnlyMemory{System.Char},Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes UTF-16 source. Dispose the returned
+            scope to release its scope-owned results; dispose child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoString(System.ReadOnlySpan{System.Byte},System.ReadOnlySpan{System.Byte},Luau.LuauCompileOptions,Luau.LuauExecutionOptions)">
+            <summary>
+            Compiles and executes UTF-8 source synchronously. Dispose the returned
+            scope and dispose any returned child thread wrappers separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringInto(System.ReadOnlySpan{System.Byte},System.Span{Luau.LuauValue},System.ReadOnlySpan{System.Byte},Luau.LuauCompileOptions,Luau.LuauExecutionOptions)">
+            <summary>
+            Compiles and executes UTF-8 source synchronously into caller-owned
+            storage. The caller owns and must dispose any reference wrappers written
+            to <paramref name="destination"/>. Slots that receive results must not
+            already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringIntoAsync(System.ReadOnlyMemory{System.Byte},System.Memory{Luau.LuauValue},System.ReadOnlyMemory{System.Byte},Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes UTF-8 source into caller-owned
+            storage. The caller owns reference wrappers written to the destination.
+            Slots that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.DoStringAsync(System.ReadOnlyMemory{System.Byte},System.ReadOnlyMemory{System.Byte},Luau.LuauCompileOptions,System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously compiles and executes UTF-8 source. Dispose the returned
+            scope to release its scope-owned results; dispose child threads separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.Resume(System.ReadOnlySpan{Luau.LuauValue},Luau.LuauExecutionOptions)">
+            <summary>
+            Resumes this child coroutine with caller-owned arguments. The returned
+            scope owns its disposable wrapper results and must be disposed. Returned
+            child threads are caller-managed cached wrappers and must be disposed
+            separately. Argument storage is never reused as a result destination.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ResumeInto(System.Span{Luau.LuauValue},Luau.LuauExecutionOptions)">
+            <summary>
+            Resumes this child coroutine into a caller-owned result span. The caller
+            owns and must dispose any reference wrappers written to the span. Slots
+            that receive results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ResumeInto(System.ReadOnlySpan{Luau.LuauValue},System.Span{Luau.LuauValue},Luau.LuauExecutionOptions)">
+            <summary>
+            Resumes this child coroutine with arguments and writes results into a
+            distinct caller-owned span. The caller owns and must dispose any
+            reference wrappers written to the span. Slots that receive results must
+            not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ResumeAsync(System.ReadOnlyMemory{Luau.LuauValue},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously resumes this child coroutine. Dispose the returned scope;
+            returned child thread wrappers are caller-managed and disposed separately.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ResumeIntoAsync(System.Memory{Luau.LuauValue},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously resumes into caller-owned result memory. The caller owns
+            reference wrappers written to the destination. Slots that receive
+            results must not already contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ResumeIntoAsync(System.ReadOnlyMemory{Luau.LuauValue},System.Memory{Luau.LuauValue},System.Threading.CancellationToken,Luau.LuauExecutionOptions)">
+            <summary>
+            Asynchronously resumes with arguments and writes results into distinct
+            caller-owned memory. The caller owns and must dispose reference wrappers
+            written to the destination. Slots that receive results must not already
+            contain managed reference wrappers.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauState.Item(System.ReadOnlySpan{System.Byte})">
+            <summary>
+            Gets or sets a global by strict UTF-8 name. Disposable reference values
+            returned by the getter are independently owned. A thread result is the
+            VM's shared cached child wrapper; dispose it only after all holders are
+            finished. The setter only borrows its value for this call.
+            </summary>
+            <param name="key">A UTF-8 name containing no NUL byte.</param>
+        </member>
+        <member name="P:Luau.LuauState.Item(System.String)">
+            <summary>
+            Gets or sets a global by managed name. Disposable reference values
+            returned by the getter are independently owned. A thread result is the
+            VM's shared cached child wrapper; dispose it only after all holders are
+            finished. The setter only borrows its value for this call.
+            </summary>
+            <param name="key">A non-null name containing no NUL character.</param>
+        </member>
+        <member name="M:Luau.LuauState.LoadCompilerOutput(Luau.LuauCompilerOutput,System.ReadOnlySpan{System.Char})">
+            <summary>
+            Loads opaque bytecode returned by this process's compiler as a script
+            closure that managed code may execute through <see cref="M:Luau.LuauFunction.Invoke(System.ReadOnlySpan{Luau.LuauValue},Luau.LuauExecutionOptions)"/>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.LoadVerifiedBytecode(Luau.LuauBytecodeArtifact,System.ReadOnlySpan{System.Char})">
+            <summary>
+            Loads a persistent artifact after build-identity and configured
+            provenance validation as a host-invokable script closure. Caller-provided
+            chunk names are diagnostic only.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.LoadAcceptedBytecodeInternal(System.ReadOnlySpan{System.Byte},System.ReadOnlySpan{System.Byte},System.String,System.Boolean)">
+            <summary>
+            Raw native loader primitive. Callers must establish compiler-output or
+            persistent-artifact admission before reaching this method.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.GetMetatable(Luau.LuauValue)">
+            <summary>
+            Gets an independently disposable owner for <paramref name="value"/>'s
+            metatable, or <see langword="null"/> when it has none.
+            </summary>
+            <param name="value">The value borrowed for the duration of the operation.</param>
+        </member>
+        <member name="M:Luau.LuauState.SetMetatable(Luau.LuauValue,Luau.LuauTable)">
+            <summary>
+            Sets <paramref name="value"/>'s metatable, borrowing both wrappers for
+            the duration of the operation. Pass <see langword="null"/> to clear it.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenBaseLibrary">
+            <summary>
+            Opens the base library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenMathLibrary">
+            <summary>
+            Opens the math library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenTableLibrary">
+            <summary>
+            Opens the table library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenStringLibrary">
+            <summary>
+            Opens the string library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenCoroutineLibrary">
+            <summary>
+            Opens the coroutine library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenBit32Library">
+            <summary>
+            Opens the bit32 library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenUtf8Library">
+            <summary>
+            Opens the UTF-8 library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenOSLibrary">
+            <summary>
+            Opens the privileged OS library on the root state before
+            <see cref="M:Luau.LuauState.SandboxRoot"/>. Child states and roots already sandboxed are
+            rejected. This capability must never be exposed to untrusted mods.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenDebugLibrary">
+            <summary>
+            Opens the privileged debug library on the root state before
+            <see cref="M:Luau.LuauState.SandboxRoot"/>. Child states and roots already sandboxed are
+            rejected. This capability weakens script isolation and must never be
+            exposed to untrusted mods.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenBufferLibrary">
+            <summary>
+            Opens the buffer library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenVectorLibrary">
+            <summary>
+            Opens the vector library on the root state before <see cref="M:Luau.LuauState.SandboxRoot"/>.
+            Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenIntegerLibrary">
+            <summary>
+            Opens upstream Luau's signed 64-bit integer library on the root state
+            before <see cref="M:Luau.LuauState.SandboxRoot"/>. Child states and roots already
+            sandboxed are rejected. Integer values are deliberately distinct from
+            ordinary Luau numbers; use <c>integer.tonumber</c> for an explicit lossy
+            conversion in script.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenRequireLibrary(Luau.LuauRequirer)">
+            <summary>
+            Registers managed <c>require</c> support on the root state before root
+            sandboxing. Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenLibrary``1(``0)">
+            <summary>
+            Registers a generated host library on the root state before root
+            sandboxing. Child states and roots already sandboxed are rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.OpenLibrary``1">
+            <summary>
+            Constructs and registers a generated host library on the root state
+            before root sandboxing. Child states and roots already sandboxed are
+            rejected.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauState.IsRootSandboxed">
+            <summary>
+            Gets whether the shared root environment has been frozen with
+            <c>luaL_sandbox</c>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.SandboxRoot">
+            <summary>
+            Freezes the root globals and opened library tables after the host has
+            registered its allowed APIs. Environment mutation helpers are removed
+            so script instances cannot recover and raw-write their proxy table.
+            The Luau base library must be opened first because isolated child
+            environments use its primitive functions to protect host globals.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.CreateSandboxedThread">
+            <summary>
+            Creates a child coroutine with an isolated writable global proxy over
+            the frozen root APIs and a guard that rejects protected-global shadows.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.SandboxThread">
+            <summary>
+            Applies an isolated sandbox environment to an existing child thread.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ToValueForNativeTypeFixture(System.Int32,System.Int32)">
+            <summary>
+            Internal fixture for exercising native tag policy without enabling
+            upstream class/object libraries in production states.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauState.ToNumberLossy(System.Int32)">
+            <summary>
+            Converts a native number or 64-bit integer to <see cref="T:System.Double"/>,
+            explicitly allowing integer precision loss.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauStateOptions">
+            <summary>
+            Configures resource limits and loading policy for a root Luau state.
+            Options are validated when initialized so native callbacks can consume
+            primitive, prevalidated values without performing validation or allocating.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.Default">
+            <summary>
+            Gets the finite default policy for ordinary, untrusted script states.
+            Hosts that intentionally run trusted content may explicitly construct
+            a less restrictive options instance.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.UnboundedResources">
+            <summary>
+            Gets an explicitly unbounded resource profile. Persistent bytecode
+            remains rejected and still requires separate validator-gated policy.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MemoryLimitBytes">
+            <summary>
+            Gets the optional native VM allocation limit in bytes. Managed wrapper
+            allocations are not included in this limit.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned limit is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxSourceBytes">
+            <summary>
+            Gets the maximum UTF-8 source payload size in bytes, or
+            <see langword="null"/> when source size is unbounded.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned limit is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxBytecodeBytes">
+            <summary>
+            Gets the maximum precompiled bytecode payload size in bytes, or
+            <see langword="null"/> when bytecode size is unbounded.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned limit is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxManagedHandleCount">
+            <summary>
+            Gets the maximum number of live managed object capability registrations
+            owned by this VM, or <see langword="null"/> when explicitly unbounded.
+            Collected userdata releases its registration back to this quota.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned limit is zero or negative.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxDecodedStringBytes">
+            <summary>
+            Gets the maximum UTF-8 byte length of one Luau string decoded into
+            managed memory, or <see langword="null"/> when explicitly unbounded.
+            Native lengths are checked before allocating the managed string.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxDecodedBytesPerOperation">
+            <summary>
+            Gets the aggregate UTF-8 byte budget for strings decoded during one
+            execution, callback, module, or direct host operation, or
+            <see langword="null"/> when explicitly unbounded.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxDiagnosticBytes">
+            <summary>
+            Gets the maximum UTF-8 bytes decoded from a native diagnostic. Longer
+            diagnostics are truncated at a valid UTF-8 boundary.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxCachedModuleCount">
+            <summary>
+            Gets the maximum retained module results in this root VM's shared
+            module cache, or <see langword="null"/> when explicitly unbounded.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.MaxModuleDependencyDepth">
+            <summary>
+            Gets the maximum nested managed <c>require</c> dependency depth, or
+            <see langword="null"/> when explicitly unbounded.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauStateOptions.DefaultExecutionOptions">
+            <summary>
+            Gets the budgets used when an execution call does not supply its own
+            <see cref="T:Luau.LuauExecutionOptions"/>.
+            </summary>
+            <exception cref="T:System.ArgumentNullException">The assigned value is null.</exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.BytecodePolicy">
+            <summary>
+            Gets the policy for persistent bytecode artifacts. The default is
+            <see cref="F:Luau.LuauBytecodePolicy.Reject"/>. A trusted host must configure
+            <see cref="F:Luau.LuauBytecodePolicy.RequireValidator"/> with a provenance validator.
+            </summary>
+            <exception cref="T:System.ArgumentOutOfRangeException">
+            The assigned enum value is not defined.
+            </exception>
+        </member>
+        <member name="P:Luau.LuauStateOptions.BytecodeValidator">
+            <summary>
+            Gets the host validator used when <see cref="P:Luau.LuauStateOptions.BytecodePolicy"/> is
+            <see cref="F:Luau.LuauBytecodePolicy.RequireValidator"/>.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauStateOptions.Validate">
+            <summary>
+            Validates relationships between options after object initialization.
+            State creation should call this before allocating native resources.
+            </summary>
+            <exception cref="T:System.InvalidOperationException">
+            Bytecode validation is required but no validator is configured.
+            </exception>
+        </member>
+        <member name="T:Luau.LuauSynchronizationContextScheduler">
+            <summary>
+            Dispatches Luau continuations through a captured
+            <see cref="P:Luau.LuauSynchronizationContextScheduler.SynchronizationContext"/>.
+            </summary>
+            <remarks>
+            Construct or capture this scheduler on the thread owned by the supplied
+            synchronization context. In Unity, that is normally the main thread.
+            </remarks>
+        </member>
+        <member name="M:Luau.LuauSynchronizationContextScheduler.#ctor(System.Threading.SynchronizationContext)">
+            <summary>
+            Creates a scheduler for <paramref name="synchronizationContext"/> and
+            records the current thread as its owning thread.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauSynchronizationContextScheduler.SynchronizationContext">
+            <summary>
+            Gets the synchronization context used for dispatch.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauSynchronizationContextScheduler.OwnerManagedThreadId">
+            <summary>
+            Gets the managed thread ID captured when this scheduler was created.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauSynchronizationContextScheduler.CaptureCurrent">
+            <summary>
+            Captures <see cref="P:System.Threading.SynchronizationContext.Current"/> on its owning
+            thread.
+            </summary>
+            <exception cref="T:System.InvalidOperationException">
+            The current thread has no synchronization context.
+            </exception>
+        </member>
+        <member name="M:Luau.LuauSynchronizationContextScheduler.CheckAccess">
+            <inheritdoc/>
+        </member>
+        <member name="M:Luau.LuauSynchronizationContextScheduler.Post(System.Action)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Luau.LuauTable">
+            <summary>Provides raw, dictionary-style and metamethod-aware access to a Luau table.</summary>
+            <remarks>
+            Enumeration follows Luau's live raw <c>next</c> contract. Mutation during
+            enumeration is unsupported: it is not a snapshot or fail-fast view, and
+            entries may be included or skipped. Hosts must not depend on visitation or
+            ordering after mutation. Dispose the enumerator after early exit or failure.
+            </remarks>
+        </member>
+        <member name="T:Luau.LuauTable.Enumerator">
+            <summary>
+            Enumerates raw entries. Disposable <see cref="P:Luau.LuauTable.Enumerator.Current"/> members are
+            owned by the enumerator until the next move, reset, or disposal; call
+            <see cref="M:Luau.LuauValue.Retain"/> to keep one. Thread members are shared,
+            cached, non-retainable wrappers and are not owned by the enumerator.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Enumerator.#ctor(Luau.LuauTable)">
+            <summary>
+            Enumerates raw entries. Disposable <see cref="P:Luau.LuauTable.Enumerator.Current"/> members are
+            owned by the enumerator until the next move, reset, or disposal; call
+            <see cref="M:Luau.LuauValue.Retain"/> to keep one. Thread members are shared,
+            cached, non-retainable wrappers and are not owned by the enumerator.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauTable.Enumerator.Current">
+            <summary>Gets the current raw key/value pair.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.Enumerator.MoveNext">
+            <summary>
+            Advances to the next live raw entry and releases reference wrappers
+            owned by the previous <see cref="P:Luau.LuauTable.Enumerator.Current"/> value.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Enumerator.Dispose">
+            <summary>Releases reference wrappers owned by the current entry.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.Enumerator.Reset">
+            <summary>
+            Releases the current entry and restarts live raw enumeration.
+            Mutation between iterations remains unsupported.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauTable.IsBorrowed">
+            <summary>Gets whether this reference is valid only for its callback frame.</summary>
+        </member>
+        <member name="P:Luau.LuauTable.IsDisposed">
+            <summary>Gets whether this table or its owning root has been disposed.</summary>
+        </member>
+        <member name="P:Luau.LuauTable.Item(Luau.LuauValue)">
+            <summary>
+            Gets or sets a value using metamethod-aware Luau table semantics. Use
+            <see cref="M:Luau.LuauTable.RawGet(Luau.LuauValue)"/> and <see cref="M:Luau.LuauTable.RawSet(Luau.LuauValue,Luau.LuauValue)"/> for dictionary-style access
+            that does not invoke <c>__index</c> or <c>__newindex</c>. A
+            disposable getter result is caller-owned and must be disposed. A thread
+            result is the VM's shared cached child wrapper; dispose it only after all
+            holders are finished.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauTable.Length">
+            <summary>
+            Gets Luau's raw sequence length for this table. This is the value used
+            by raw <c>#</c>/<c>lua_objlen</c> semantics, not a count of key/value
+            entries.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauTable.EntryCount">
+            <summary>
+            Gets the number of raw key/value entries. This operation is O(n) and
+            does not invoke metamethods.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Clone">
+            <summary>
+            Creates a shallow Luau clone with an independently disposable managed
+            owner. The clone has distinct table identity from this table.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Retain">
+            <summary>Creates an independently disposable owner for this same table.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.TryMoveNext(Luau.LuauValue,System.Collections.Generic.KeyValuePair{Luau.LuauValue,Luau.LuauValue}@)">
+            <summary>
+            Performs one low-level raw <c>next</c> step. When successful, the caller
+            owns any disposable wrappers in <paramref name="result"/> and must
+            dispose them. Thread values are shared cached child wrappers. Prefer
+            <see cref="M:Luau.LuauTable.GetEnumerator"/> for automatic cleanup of disposable entries.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Add(Luau.LuauValue,Luau.LuauValue)">
+            <summary>
+            Adds one raw entry without invoking metamethods. Nil and NaN are invalid
+            keys, nil is not an addable value, and an existing raw key is rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Add(System.Collections.Generic.KeyValuePair{Luau.LuauValue,Luau.LuauValue})">
+            <summary>Adds one raw key/value pair using <see cref="M:Luau.LuauTable.Add(Luau.LuauValue,Luau.LuauValue)"/>.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.Clear">
+            <summary>Removes every raw entry without invoking metamethods.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.ContainsKey(Luau.LuauValue)">
+            <summary>Tests raw key presence without invoking <c>__index</c>.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.RawGet(Luau.LuauValue)">
+            <summary>
+            Reads a raw value without invoking <c>__index</c>. The caller owns and
+            must dispose a disposable wrapper result. A thread result is the VM's
+            shared cached child wrapper; dispose it only after all holders finish.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.RawSet(Luau.LuauValue,Luau.LuauValue)">
+            <summary>
+            Writes a raw entry without invoking <c>__newindex</c>. A nil value
+            removes the raw entry.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.TryGetValue(Luau.LuauValue,Luau.LuauValue@)">
+            <summary>
+            Attempts a raw read. On success, the caller owns any disposable wrapper
+            in <paramref name="value"/> and must dispose it. A thread value is the
+            VM's shared cached child wrapper.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Remove(Luau.LuauValue)">
+            <summary>
+            Removes a raw entry without invoking metamethods and reports whether it
+            existed. Assigning <see cref="F:Luau.LuauValue.Nil"/> has the same raw effect.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.ToString">
+            <summary>Returns Luau's diagnostic string for this table reference.</summary>
+        </member>
+        <member name="M:Luau.LuauTable.GetEnumerator">
+            <summary>
+            Creates a live raw enumerator that owns each disposable current entry
+            until it advances or is disposed. Shared thread wrappers are excluded.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Dispose">
+            <summary>
+            Releases this managed table owner. Disposal is idempotent and does not
+            close the owning VM root.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauTable.Finalize">
+            <summary>Releases an undisposed table owner as a final fallback.</summary>
+        </member>
+        <member name="T:Luau.LuauThreadedCompilationOptions">
+            <summary>
+            Immutable resource policy for <see cref="T:Luau.LuauThreadedCompilationService"/>.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.Default">
+            <summary>Gets the conservative, finite standalone service defaults.</summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.WorkerCount">
+            <summary>
+            Gets the number of dedicated compiler workers. The first backend
+            supports one worker by default and an explicitly selected second worker.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.MaxQueuedRequestCount">
+            <summary>
+            Gets the maximum admitted requests that have not completed, including
+            requests currently owned by workers.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.MaxQueuedSourceBytes">
+            <summary>
+            Gets the aggregate source-byte limit for admitted requests that have
+            not completed, including requests currently compiling.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.MaxSourceBytesPerRequest">
+            <summary>Gets the source-byte limit for one request.</summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.MaxBytecodeBytesPerResult">
+            <summary>
+            Gets the maximum bytecode payload accepted from one native compilation.
+            Native intermediate allocations are not included.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationOptions.ShutdownTimeout">
+            <summary>
+            Gets the finite period disposal waits for active native calls. Timing
+            out reports incomplete shutdown but never aborts a compiler thread.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauThreadedCompilationService">
+            <summary>
+            A bounded compilation backend served by dedicated, long-lived managed
+            workers. Workers never access a Luau state, Unity API, caller buffer, or
+            synchronization context.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauThreadedCompilationService.#ctor(Luau.LuauThreadedCompilationOptions)">
+            <summary>
+            Creates a bounded service and starts its dedicated compiler workers.
+            The native ABI is verified before any worker starts.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauThreadedCompilationService.Options">
+            <summary>Gets the immutable resource policy snapshot used by this service.</summary>
+        </member>
+        <member name="M:Luau.LuauThreadedCompilationService.CompileAsync(System.ReadOnlyMemory{System.Byte},Luau.LuauCompileOptions,System.Threading.CancellationToken)">
+            <inheritdoc />
+        </member>
+        <member name="M:Luau.LuauThreadedCompilationService.DisposeAsync">
+            <summary>
+            Stops admission, cancels queued work, and drains active native calls
+            without aborting their threads.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauThreadStatus">
+            <summary>
+            Describes the managed lifecycle state of a child Luau coroutine.
+            Root states do not have a coroutine lifecycle status.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauThreadStatus.Suspended">
+            <summary>The child is freshly created or suspended at a yield.</summary>
+        </member>
+        <member name="F:Luau.LuauThreadStatus.Running">
+            <summary>The child is currently executing through a managed operation.</summary>
+        </member>
+        <member name="F:Luau.LuauThreadStatus.Dead">
+            <summary>The child completed, failed, or was reset after a hard stop.</summary>
+        </member>
+        <member name="T:Luau.LuauType">
+            <summary>Identifies the Luau VM type represented by a <see cref="T:Luau.LuauValue"/>.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Nil">
+            <summary>The singleton nil value.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Boolean">
+            <summary>A Boolean value.</summary>
+        </member>
+        <member name="F:Luau.LuauType.LightUserData">
+            <summary>An unmanaged light-userdata pointer.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Number">
+            <summary>A floating-point number.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Integer">
+            <summary>An integer number.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Vector">
+            <summary>A three-component vector.</summary>
+        </member>
+        <member name="F:Luau.LuauType.String">
+            <summary>An immutable UTF-8 string value.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Table">
+            <summary>A table reference whose lifetime is tied to its managed wrapper owner.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Function">
+            <summary>A callable function reference whose lifetime is tied to its managed wrapper owner.</summary>
+        </member>
+        <member name="F:Luau.LuauType.UserData">
+            <summary>A userdata reference whose lifetime is tied to its managed wrapper owner.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Thread">
+            <summary>A coroutine thread owned by its root state.</summary>
+        </member>
+        <member name="F:Luau.LuauType.Buffer">
+            <summary>A mutable byte buffer reference whose lifetime is tied to its managed wrapper owner.</summary>
+        </member>
+        <member name="T:Luau.LuauUnsupportedValueException">
+            <summary>
+            Thrown when the native VM produces a value kind whose identity and lifetime
+            semantics are not part of the supported managed value model.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauUnsupportedValueException.ValueKind">
+            <summary>
+            Gets the upstream value-kind name reported by the managed conversion
+            boundary.
+            </summary>
+        </member>
+        <member name="T:Luau.LuauUserData">
+            <summary>
+            Represents opaque Luau userdata through a generation-checked VM reference.
+            Dispose owned instances deterministically; callback-borrowed instances
+            expire when their callback frame closes unless retained.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauUserData.IsBorrowed">
+            <summary>Gets whether this reference is valid only for its callback frame.</summary>
+        </member>
+        <member name="P:Luau.LuauUserData.IsDisposed">
+            <summary>Gets whether this wrapper, its callback frame, or its owning state is no longer usable.</summary>
+        </member>
+        <member name="P:Luau.LuauUserData.Size">
+            <summary>Gets the native byte size of the userdata payload.</summary>
+        </member>
+        <member name="M:Luau.LuauUserData.Retain">
+            <summary>Creates an independently disposable owner for this same userdata.</summary>
+        </member>
+        <member name="M:Luau.LuauUserData.ToString">
+            <summary>Returns the Luau textual representation of this userdata.</summary>
+        </member>
+        <member name="M:Luau.LuauUserData.Dispose">
+            <summary>Releases this wrapper's owned VM reference. The operation is idempotent.</summary>
+        </member>
+        <member name="M:Luau.LuauUserData.Finalize">
+            <summary>Releases the VM reference if the owner was not disposed deterministically.</summary>
+        </member>
+        <member name="T:Luau.LuauValue">
+            <summary>
+            Represents one managed Luau value. Primitive values are self-contained;
+            reference values borrow the lifetime of their contained wrapper and do not
+            retain it when this struct is copied or converted.
+            </summary>
+        </member>
+        <member name="F:Luau.LuauValue.Nil">
+            <summary>Represents the singleton Luau <c>nil</c> value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.CreateFrom``1(``0)">
+            <summary>
+            Converts a supported managed value without requiring a Luau state.
+            Reference values retain their existing ownership and VM association.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromNumber(System.Double)">
+            <summary>Creates a Luau floating-point number.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromInteger(System.Int64)">
+            <summary>Creates a distinct signed 64-bit Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromBoolean(System.Boolean)">
+            <summary>Creates a Luau Boolean value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromString(System.String)">
+            <summary>Creates a Luau string value from a non-null managed string.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromUserData(Luau.LuauUserData)">
+            <summary>Wraps existing userdata without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromObjectHandle(Luau.LuauObjectHandle)">
+            <summary>Creates an opaque userdata value from a managed object capability.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromVector(System.Numerics.Vector3)">
+            <summary>Creates a Luau three-component vector value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromTable(Luau.LuauTable)">
+            <summary>Wraps an existing table without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromFunction(Luau.LuauFunction)">
+            <summary>Wraps an existing function without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromThread(Luau.LuauState)">
+            <summary>Wraps an existing root or coroutine without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.FromBuffer(Luau.LuauBuffer)">
+            <summary>Wraps an existing buffer without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="P:Luau.LuauValue.Type">
+            <summary>Gets the Luau VM type of this value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.ToString">
+            <summary>
+            Returns the managed or Luau textual representation. Reference-valued
+            instances require their contained wrapper and root state to remain live.
+            </summary>
+        </member>
+        <member name="P:Luau.LuauValue.IsNil">
+            <summary>Gets whether this value is Luau <c>nil</c>.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.Retain">
+            <summary>
+            Creates an independently disposable owner when this value contains a
+            table, function, buffer, userdata, or object-handle reference. Primitive
+            values are returned unchanged. A cached thread wrapper cannot be
+            independently retained and is rejected.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauValue.Read``1">
+            <summary>Reads this value as the requested managed representation.</summary>
+            <remarks>
+            Reading a Luau script closure as <see cref="T:Luau.LuauFunction"/> produces a
+            host-invokable function. Managed callback capabilities created by
+            <see cref="M:Luau.LuauState.CreateFunction(System.Action{Luau.LuauCallContext})"/> remain
+            callable only from Luau.
+            </remarks>
+        </member>
+        <member name="M:Luau.LuauValue.ReadDoubleLossy">
+            <summary>
+            Reads a numeric value as <see cref="T:System.Double"/>, explicitly allowing a
+            64-bit integer to lose precision.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauValue.TryRead``1(``0@)">
+            <summary>
+            Attempts a checked conversion to <typeparamref name="T"/> without
+            retaining reference wrappers or changing their ownership.
+            </summary>
+            <typeparam name="T">The requested supported managed representation.</typeparam>
+            <param name="result">Receives the converted value when conversion succeeds.</param>
+            <returns><see langword="true"/> when the conversion is valid and lossless; otherwise <see langword="false"/>.</returns>
+        </member>
+        <member name="M:Luau.LuauValue.Equals(Luau.LuauValue)">
+            <summary>
+            Tests primitive values by value and VM-backed references by managed
+            wrapper identity. This does not invoke Luau equality metamethods.
+            </summary>
+        </member>
+        <member name="M:Luau.LuauValue.Equals(System.Object)">
+            <summary>Tests whether <paramref name="obj"/> is an equal <see cref="T:Luau.LuauValue"/>.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.GetHashCode">
+            <summary>Returns a hash consistent with managed value-or-wrapper-identity equality.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Equality(Luau.LuauValue,Luau.LuauValue)">
+            <summary>Tests two values using managed <see cref="M:Luau.LuauValue.Equals(Luau.LuauValue)"/> semantics.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Inequality(Luau.LuauValue,Luau.LuauValue)">
+            <summary>Tests two values for inequality using managed equality semantics.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Double)~Luau.LuauValue">
+            <summary>Converts a double to a Luau floating-point number.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Byte)~Luau.LuauValue">
+            <summary>Converts a byte to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.SByte)~Luau.LuauValue">
+            <summary>Converts a signed byte to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Int16)~Luau.LuauValue">
+            <summary>Converts a signed 16-bit value to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.UInt16)~Luau.LuauValue">
+            <summary>Converts an unsigned 16-bit value to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Int32)~Luau.LuauValue">
+            <summary>Converts a signed 32-bit value to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.UInt32)~Luau.LuauValue">
+            <summary>Converts an unsigned 32-bit value to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Int64)~Luau.LuauValue">
+            <summary>Converts a signed 64-bit value to a distinct Luau integer.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.UInt64)~Luau.LuauValue">
+            <summary>Converts an unsigned 64-bit value to a Luau integer, rejecting values above <see cref="F:System.Int64.MaxValue"/>.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Boolean)~Luau.LuauValue">
+            <summary>Converts a Boolean to a Luau Boolean value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.String)~Luau.LuauValue">
+            <summary>Converts a non-null managed string to a Luau string value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(System.Numerics.Vector3)~Luau.LuauValue">
+            <summary>Converts a three-component vector to a Luau vector value.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauTable)~Luau.LuauValue">
+            <summary>Wraps a table without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauFunction)~Luau.LuauValue">
+            <summary>Wraps a function without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauState)~Luau.LuauValue">
+            <summary>Wraps a root or coroutine without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauBuffer)~Luau.LuauValue">
+            <summary>Wraps a buffer without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauUserData)~Luau.LuauValue">
+            <summary>Wraps userdata without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="M:Luau.LuauValue.op_Implicit(Luau.LuauObjectHandle)~Luau.LuauValue">
+            <summary>Wraps an object capability without retaining or transferring its ownership.</summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.ConstantExpectedAttribute">
+            <summary>
+            Indicates that the specified method parameter expects a constant.
+            </summary>
+            <remarks>
+            This can be used to inform tooling that a constant should be used as an argument for the annotated parameter.
+            </remarks>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.ConstantExpectedAttribute.Min">
+            <summary>
+            Indicates the minimum bound of the expected constant, inclusive.
+            </summary>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.ConstantExpectedAttribute.Max">
+            <summary>
+            Indicates the maximum bound of the expected constant, inclusive.
+            </summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.ExperimentalAttribute">
+            <summary>
+            Indicates that an API is experimental and it may change in the future.
+            </summary>
+            <remarks>
+            This attribute allows call sites to be flagged with a diagnostic that indicates that an experimental
+            feature is used. Authors can use this attribute to ship preview features in their assemblies.
+            </remarks>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.ExperimentalAttribute.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Diagnostics.CodeAnalysis.ExperimentalAttribute"/> class,
+            specifying the ID that the compiler will use when reporting a use of the API the attribute applies to.
+            </summary>
+            <param name="diagnosticId">The ID that the compiler will use when reporting a use of the API the attribute applies to.</param>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.ExperimentalAttribute.DiagnosticId">
+            <summary>
+            Gets the ID that the compiler will use when reporting a use of the API the attribute applies to.
+            </summary>
+            <value>The unique diagnostic ID.</value>
+            <remarks>
+            The diagnostic ID is shown in build output for warnings and errors.
+            <para>This property represents the unique ID that can be used to suppress the warnings or errors, if needed.</para>
+            </remarks>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.ExperimentalAttribute.UrlFormat">
+            <summary>
+            Gets or sets the URL for corresponding documentation.
+            The API accepts a format string instead of an actual URL, creating a generic URL that includes the diagnostic ID.
+            </summary>
+            <value>The format string that represents a URL to corresponding documentation.</value>
+            <remarks>An example format string is <c>https://contoso.com/obsoletion-warnings/{0}</c>.</remarks>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute">
+            <summary>
+            Specifies that the method or property will ensure that the listed field and property members have not-null values.
+            </summary>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute.#ctor(System.String)">
+            <summary>
+            Initializes the attribute with a field or property member.
+            </summary>
+            <param name="member">The field or property member that is promised to be not-null.</param>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute.#ctor(System.String[])">
+            <summary>
+            Initializes the attribute with the list of field and property members.
+            </summary>
+            <param name="members">The list of field and property members that are promised to be not-null.</param>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute.Members">
+            <summary>
+            Gets field or property member names.
+            </summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute">
+            <summary>
+            Specifies that the method or property will ensure that the listed field and property
+            members have not-null values when returning with the specified return value condition.
+            </summary>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute.#ctor(System.Boolean,System.String)">
+            <summary>
+            Initializes the attribute with the specified return value condition and a field or property member.
+            </summary>
+            <param name="returnValue">The return value condition. If the method returns this value, the associated parameter will not be null.</param>
+            <param name="member">The field or property member that is promised to be not-null.</param>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute.#ctor(System.Boolean,System.String[])">
+            <summary>
+            Initializes the attribute with the specified return value condition and list of field and property members.
+            </summary>
+            <param name="returnValue">The return value condition. If the method returns this value, the associated parameter will not be null.</param>
+            <param name="members">The list of field and property members that are promised to be not-null.</param>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute.ReturnValue">
+            <summary>
+            Gets the return value condition.
+            </summary>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute.Members">
+            <summary>
+            Gets field or property member names.
+            </summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute">
+            <summary>
+            Specifies that this constructor sets all required members for the current type,
+            and callers do not need to set any required members themselves.
+            </summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute">
+            <summary>
+            Specifies the syntax used in a string.
+            </summary>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.#ctor(System.String)">
+            <summary>
+            Initializes the <see cref="T:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute"/> with the identifier of the syntax used.
+            </summary>
+            <param name="syntax">The syntax identifier.</param>
+        </member>
+        <member name="M:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.#ctor(System.String,System.Object[])">
+            <summary>Initializes the <see cref="T:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute"/> with the identifier of the syntax used.</summary>
+            <param name="syntax">The syntax identifier.</param>
+            <param name="arguments">Optional arguments associated with the specific syntax employed.</param>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Syntax">
+            <summary>Gets the identifier of the syntax used.</summary>
+        </member>
+        <member name="P:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Arguments">
+            <summary>Optional arguments associated with the specific syntax employed.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.CompositeFormat">
+            <summary>The syntax identifier for strings containing composite formats for string formatting.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.DateOnlyFormat">
+            <summary>The syntax identifier for strings containing date format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.DateTimeFormat">
+            <summary>The syntax identifier for strings containing date and time format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.EnumFormat">
+            <summary>The syntax identifier for strings containing <see cref="T:System.Enum"/> format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.GuidFormat">
+            <summary>The syntax identifier for strings containing <see cref="T:System.Guid"/> format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Json">
+            <summary>The syntax identifier for strings containing JavaScript Object Notation (JSON).</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.NumericFormat">
+            <summary>The syntax identifier for strings containing numeric format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Regex">
+            <summary>The syntax identifier for strings containing regular expressions.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.TimeOnlyFormat">
+            <summary>The syntax identifier for strings containing time format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.TimeSpanFormat">
+            <summary>The syntax identifier for strings containing <see cref="T:System.TimeSpan"/> format specifiers.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Uri">
+            <summary>The syntax identifier for strings containing URIs.</summary>
+        </member>
+        <member name="F:System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Xml">
+            <summary>The syntax identifier for strings containing XML.</summary>
+        </member>
+        <member name="T:System.Diagnostics.CodeAnalysis.UnscopedRefAttribute">
+            <summary>
+            Used to indicate a byref escapes and is not scoped.
+            </summary>
+            <remarks>
+            <para>
+            There are several cases where the C# compiler treats a <see langword="ref"/> as implicitly
+            <see langword="scoped"/> - where the compiler does not allow the <see langword="ref"/> to escape the method.
+            </para>
+            <para>
+            For example:
+            <list type="number">
+                <item><see langword="this"/> for <see langword="struct"/> instance methods.</item>
+                <item><see langword="ref"/> parameters that refer to <see langword="ref"/> <see langword="struct"/> types.</item>
+                <item><see langword="out"/> parameters.</item>
+            </list>
+            </para>
+            <para>
+            This attribute is used in those instances where the <see langword="ref"/> should be allowed to escape.
+            </para>
+            <para>
+            Applying this attribute, in any form, has impact on consumers of the applicable API. It is necessary for
+            API authors to understand the lifetime implications of applying this attribute and how it may impact their users.
+            </para>
+            </remarks>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.CallerArgumentExpressionAttribute">
+            <summary>
+            An attribute that allows parameters to receive the expression of other parameters.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.CallerArgumentExpressionAttribute.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.CompilerServices.CallerArgumentExpressionAttribute"/> class.
+            </summary>
+            <param name="parameterName">The condition parameter value.</param>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.CallerArgumentExpressionAttribute.ParameterName">
+            <summary>
+            Gets the parameter name the expression is retrieved from.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.CollectionBuilderAttribute.#ctor(System.Type,System.String)">
+            <summary>
+            Initialize the attribute to refer to the <paramref name="methodName"/> method on the <paramref name="builderType"/> type.
+            </summary>
+            <param name="builderType">The type of the builder to use to construct the collection.</param>
+            <param name="methodName">The name of the method on the builder to use to construct the collection.</param>
+            <remarks>
+            <paramref name="methodName"/> must refer to a static method that accepts a single parameter of
+            type <see cref="T:System.ReadOnlySpan`1"/> and returns an instance of the collection being built containing
+            a copy of the data from that span.  In future releases of .NET, additional patterns may be supported.
+            </remarks>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.CollectionBuilderAttribute.BuilderType">
+            <summary>
+            Gets the type of the builder to use to construct the collection.
+            </summary>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.CollectionBuilderAttribute.MethodName">
+            <summary>
+            Gets the name of the method on the builder to use to construct the collection.
+            </summary>
+            <remarks>
+            This should match the metadata name of the target method.
+            For example, this might be ".ctor" if targeting the type's constructor.
+            </remarks>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute">
+            <summary>
+            Indicates that compiler support for a particular feature is required for the location where this attribute is applied.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.#ctor(System.String)">
+            <summary>
+            Creates a new instance of the <see cref="T:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute"/> type.
+            </summary>
+            <param name="featureName">The name of the feature to indicate.</param>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.FeatureName">
+            <summary>
+            The name of the compiler feature.
+            </summary>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.IsOptional">
+            <summary>
+            If true, the compiler can choose to allow access to the location where this attribute is applied if it does not understand <see cref="P:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.FeatureName"/>.
+            </summary>
+        </member>
+        <member name="F:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.RefStructs">
+            <summary>
+            The <see cref="P:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.FeatureName"/> used for the ref structs C# feature.
+            </summary>
+        </member>
+        <member name="F:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.RequiredMembers">
+            <summary>
+            The <see cref="P:System.Runtime.CompilerServices.CompilerFeatureRequiredAttribute.FeatureName"/> used for the required members C# feature.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute">
+            <summary>
+            Indicates which arguments to a method involving an interpolated string handler should be passed to that handler.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute"/> class.
+            </summary>
+            <param name="argument">The name of the argument that should be passed to the handler.</param>
+            <remarks><see langword="null"/> may be used as the name of the receiver in an instance method.</remarks>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute.#ctor(System.String[])">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute"/> class.
+            </summary>
+            <param name="arguments">The names of the arguments that should be passed to the handler.</param>
+            <remarks><see langword="null"/> may be used as the name of the receiver in an instance method.</remarks>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.InterpolatedStringHandlerArgumentAttribute.Arguments">
+            <summary>
+            Gets the names of the arguments that should be passed to the handler.
+            </summary>
+            <remarks><see langword="null"/> may be used as the name of the receiver in an instance method.</remarks>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.InterpolatedStringHandlerAttribute">
+            <summary>
+            Indicates the attributed type is to be used as an interpolated string handler.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.IsExternalInit">
+            <summary>
+            Reserved to be used by the compiler for tracking metadata.
+            This class should not be used by developers in source code.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.ModuleInitializerAttribute">
+             <summary>
+             Used to indicate to the compiler that a method should be called
+             in its containing module's initializer.
+             </summary>
+             <remarks>
+             When one or more valid methods
+             with this attribute are found in a compilation, the compiler will
+             emit a module initializer which calls each of the attributed methods.
+            
+             Certain requirements are imposed on any method targeted with this attribute:
+             - The method must be `static`.
+             - The method must be an ordinary member method, as opposed to a property accessor, constructor, local function, etc.
+             - The method must be parameterless.
+             - The method must return `void`.
+             - The method must not be generic or be contained in a generic type.
+             - The method's effective accessibility must be `internal` or `public`.
+            
+             The specification for module initializers in the .NET runtime can be found here:
+             https://github.com/dotnet/runtime/blob/main/docs/design/specs/Ecma-335-Augments.md#module-initializer
+             </remarks>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute">
+            <summary>
+            Specifies the priority of a member in overload resolution. When unspecified, the default priority is 0.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute.#ctor(System.Int32)">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute"/> class.
+            </summary>
+            <param name="priority">The priority of the attributed member. Higher numbers are prioritized, lower numbers are deprioritized. 0 is the default if no attribute is present.</param>
+        </member>
+        <member name="P:System.Runtime.CompilerServices.OverloadResolutionPriorityAttribute.Priority">
+            <summary>
+            The priority of the member.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.ParamCollectionAttribute">
+            <summary>
+            Indicates that a method will allow a variable number of arguments in its invocation.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.RequiredMemberAttribute">
+            <summary>
+            Specifies that a type has required members or that a member is required.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.RequiresLocationAttribute">
+            <summary>
+            Reserved for use by a compiler for tracking metadata.
+            This attribute should not be used by developers in source code.
+            </summary>
+        </member>
+        <member name="T:System.Runtime.CompilerServices.SkipLocalsInitAttribute">
+            <summary>
+            Used to indicate to the compiler that the <c>.locals init</c> flag should not be set in method headers.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.#ctor">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute"/> class.
+            </summary>
+        </member>
+        <member name="M:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.#ctor(System.String)">
+            <summary>
+            Initializes a new instance of the <see cref="T:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute"/> class with the specified message.
+            </summary>
+            <param name="message">An optional message associated with this attribute instance.</param>
+        </member>
+        <member name="P:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.Message">
+            <summary>
+            Returns the optional message associated with this attribute instance.
+            </summary>
+        </member>
+        <member name="P:System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.Url">
+            <summary>
+            Returns the optional URL associated with this attribute instance.
+            </summary>
+        </member>
+    </members>
+</doc>

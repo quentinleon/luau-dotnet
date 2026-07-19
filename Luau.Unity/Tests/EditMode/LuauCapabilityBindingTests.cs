@@ -40,7 +40,7 @@ namespace Luau.Unity.Tests
 
             try
             {
-                var results = await child.ExecuteAsync(asset);
+                using var results = await child.ExecuteAsync(asset);
 
                 Assert.That(results, Has.Length.EqualTo(3));
                 Assert.That(results[0].Read<int>(), Is.EqualTo(45));
@@ -71,7 +71,7 @@ namespace Luau.Unity.Tests
 
             try
             {
-                var results = child.DoString(
+                using var results = child.DoString(
                     "gameObject.name = \"Renamed\"\n" +
                     "gameObject:SetActive(false)\n" +
                     "transform.localPosition = vector.create(4, 5, 6)\n" +
@@ -127,7 +127,7 @@ namespace Luau.Unity.Tests
                     using (var handle = root.CreateHandle(door))
                     {
                         child["door"] = handle;
-                        var result = child.DoString(
+                        using var result = child.DoString(
                             "door:Increment(1); return door.Value");
                         Assert.That(result, Has.Length.EqualTo(1));
                         Assert.That(result[0].Read<int>(), Is.EqualTo(1));

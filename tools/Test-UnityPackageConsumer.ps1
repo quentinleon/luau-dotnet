@@ -1,7 +1,11 @@
 param(
     [string] $UnityPath,
     [string] $PackageReference,
-    [string] $OutputRoot
+    [string] $OutputRoot,
+    [string] $ExpectedGitCommit = "",
+
+    [ValidateRange(1, 180)]
+    [int] $UnityTimeoutMinutes = 20
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,7 +95,11 @@ function ConvertTo-UpmPackageReference([string] $Reference) {
         $pathCandidate = $candidate.Substring(5)
     }
 
-    if ([System.IO.Path]::IsPathRooted($pathCandidate)) {
+    if ($hasFilePrefix -or [System.IO.Path]::IsPathRooted($pathCandidate) -or
+        (Test-Path -LiteralPath (Join-Path $repositoryRoot $pathCandidate))) {
+        if (![System.IO.Path]::IsPathRooted($pathCandidate)) {
+            $pathCandidate = Join-Path $repositoryRoot $pathCandidate
+        }
         if (!(Test-Path -LiteralPath $pathCandidate)) {
             throw "The local package reference does not exist: $pathCandidate"
         }
@@ -103,6 +111,85 @@ function ConvertTo-UpmPackageReference([string] $Reference) {
     }
 
     return $candidate
+}
+
+function Resolve-PackageContentRoot(
+    [string] $ResolvedReference,
+    [string] $MaterializationRoot) {
+    if ($ResolvedReference.StartsWith(
+        "file:",
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (![string]::IsNullOrWhiteSpace($ExpectedGitCommit)) {
+            throw "ExpectedGitCommit can only be verified for an exact git package reference."
+        }
+        $localPath = $ResolvedReference.Substring(5)
+        Assert-ExistingDirectory $localPath "Referenced local package"
+        return [System.IO.Path]::GetFullPath($localPath)
+    }
+
+    $gitReference = [regex]::Match(
+        $ResolvedReference,
+        '^(?<repository>.+?\.git)(?:\?path=(?<path>[^#]+))?#(?<revision>[^#]+)$')
+    if (!$gitReference.Success) {
+        throw (
+            "Sample validation requires a local file package or an exact git reference " +
+            "ending in .git?path=<package>#<revision>: $ResolvedReference")
+    }
+
+    $repository = $gitReference.Groups["repository"].Value
+    $revision = $gitReference.Groups["revision"].Value
+    if ($repository.StartsWith("-", [System.StringComparison]::Ordinal) -or
+        $revision.StartsWith("-", [System.StringComparison]::Ordinal) -or
+        $revision -notmatch '^[A-Za-z0-9._/-]+$' -or
+        $revision.Contains("..")) {
+        throw "The exact git package reference contains an unsafe repository or revision."
+    }
+
+    Assert-StrictDescendant $MaterializationRoot $allowedOutputRoot
+    $gitOutput = (& git init --quiet $MaterializationRoot 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to initialize the exact package materialization: $gitOutput"
+    }
+    $gitOutput = (& git -C $MaterializationRoot remote add origin $repository 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to configure the exact package origin: $gitOutput"
+    }
+    $gitOutput = (& git -C $MaterializationRoot fetch --quiet --depth 1 origin $revision 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to fetch exact package revision '$revision': $gitOutput"
+    }
+    $gitOutput = (& git -C $MaterializationRoot checkout --quiet --detach FETCH_HEAD 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to check out exact package revision '$revision': $gitOutput"
+    }
+    $materializedCommit = (& git -C $MaterializationRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $materializedCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Unable to resolve the materialized exact package commit: $materializedCommit"
+    }
+    if (![string]::IsNullOrWhiteSpace($ExpectedGitCommit)) {
+        if ($ExpectedGitCommit -notmatch '^[0-9a-fA-F]{40}$' -or
+            !$materializedCommit.Equals(
+                $ExpectedGitCommit,
+                [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw (
+                "Materialized package commit '$materializedCommit' does not match expected " +
+                "commit '$ExpectedGitCommit'.")
+        }
+    }
+
+    $relativePackagePath = [Uri]::UnescapeDataString(
+        $gitReference.Groups["path"].Value).Trim([char[]]@('/', '\'))
+    $contentRoot = if ([string]::IsNullOrEmpty($relativePackagePath)) {
+        [System.IO.Path]::GetFullPath($MaterializationRoot)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $MaterializationRoot $relativePackagePath))
+    }
+    if (!(Test-IsSameOrDescendant $contentRoot $MaterializationRoot)) {
+        throw "The git package path escapes its exact materialization: $relativePackagePath"
+    }
+    Assert-ExistingDirectory $contentRoot "Materialized exact package content"
+    return $contentRoot
 }
 
 Assert-ExistingFile $versionFile "Integration-project Unity version"
@@ -193,6 +280,48 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Nu
 Get-ChildItem -LiteralPath $fixtureRoot -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $assetsPath -Recurse -Force
 }
+
+$packageContentRoot = Resolve-PackageContentRoot `
+    $resolvedPackageReference `
+    (Join-Path $projectPath "PackageSource")
+$resolvedPackageJsonPath = Join-Path $packageContentRoot "package.json"
+Assert-ExistingFile $resolvedPackageJsonPath "Referenced package metadata"
+Assert-ExistingFile `
+    (Join-Path $packageContentRoot "Runtime/Luau.xml") `
+    "Referenced managed XML IntelliSense artifact"
+$packageMetadata = Get-Content -LiteralPath $resolvedPackageJsonPath -Raw | ConvertFrom-Json
+if ($packageMetadata.name -cne "com.nuskey.luau.unity") {
+    throw "The referenced package has an unexpected identity: $($packageMetadata.name)"
+}
+$sampleImportRoot = Join-Path $projectPath (
+    "Assets/Samples/Luau.Unity/" + $packageMetadata.version)
+foreach ($sample in @($packageMetadata.samples)) {
+    if ([string]::IsNullOrWhiteSpace($sample.displayName) -or
+        [string]::IsNullOrWhiteSpace($sample.path)) {
+        throw "Every declared package sample requires a displayName and path."
+    }
+
+    if (!$sample.path.StartsWith("Samples~/", [System.StringComparison]::Ordinal) -or
+        $sample.displayName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0 -or
+        $sample.displayName.Contains("..")) {
+        throw "Declared package sample contains an unsafe display name or path."
+    }
+
+    $sampleSource = [System.IO.Path]::GetFullPath((Join-Path $packageContentRoot $sample.path))
+    if (!(Test-IsSameOrDescendant $sampleSource $packageContentRoot)) {
+        throw "Declared package sample escapes the referenced package: $($sample.path)"
+    }
+    Assert-ExistingDirectory $sampleSource "Declared package sample '$($sample.displayName)'"
+    $sampleDestination = [System.IO.Path]::GetFullPath(
+        (Join-Path $sampleImportRoot $sample.displayName))
+    if (!(Test-IsSameOrDescendant $sampleDestination $sampleImportRoot)) {
+        throw "Declared package sample destination escapes the consumer Assets tree."
+    }
+    New-Item -ItemType Directory -Path $sampleDestination -Force | Out-Null
+    Get-ChildItem -LiteralPath $sampleSource -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $sampleDestination -Recurse -Force
+    }
+}
 Copy-Item -LiteralPath $versionFile -Destination (
     Join-Path $projectSettingsPath "ProjectVersion.txt") -Force
 
@@ -227,10 +356,22 @@ $unityProcess = Start-Process `
     -ArgumentList $unityArguments `
     -WindowStyle Hidden `
     -PassThru
+$timedOut = $false
+$exitCode = $null
 try {
-    $unityProcess.WaitForExit()
-    $unityProcess.Refresh()
-    $exitCode = $unityProcess.ExitCode
+    $timeoutMilliseconds = [int]([TimeSpan]::FromMinutes($UnityTimeoutMinutes).TotalMilliseconds)
+    if (!$unityProcess.WaitForExit($timeoutMilliseconds)) {
+        $timedOut = $true
+        $processId = $unityProcess.Id
+        Write-Host "Unity consumer timed out after $UnityTimeoutMinutes minute(s); terminating process tree $processId."
+        $taskkill = Join-Path $env:SystemRoot "System32/taskkill.exe"
+        & $taskkill /PID $processId /T /F 2>&1 | Write-Host
+        $null = $unityProcess.WaitForExit(30000)
+    }
+    else {
+        $unityProcess.Refresh()
+        $exitCode = $unityProcess.ExitCode
+    }
 }
 finally {
     $unityProcess.Dispose()
@@ -248,7 +389,7 @@ $compilerOrPackageFailure = $log -match (
     "DllNotFoundException.*luau_host|EntryPointNotFoundException.*luau_host).*$")
 $passed = $log -match [regex]::Escape($passedMarker)
 
-if ($exitCode -ne 0 -or !$passed -or $reportedFailure -or $compilerOrPackageFailure) {
+if ($timedOut -or $exitCode -ne 0 -or !$passed -or $reportedFailure -or $compilerOrPackageFailure) {
     if ($log) {
         Get-Content -LiteralPath $logPath -Tail 160
     }
@@ -256,7 +397,34 @@ if ($exitCode -ne 0 -or !$passed -or $reportedFailure -or $compilerOrPackageFail
     Write-Host "Failed disposable project and log retained at $projectPath"
     throw (
         "The generated Unity package consumer failed " +
-        "(Unity exit code $exitCode, pass marker present: $passed).")
+        "(timed out: $timedOut, Unity exit code $exitCode, pass marker present: $passed).")
+}
+
+if (![string]::IsNullOrWhiteSpace($ExpectedGitCommit)) {
+    try {
+        $packageLockPath = Join-Path $packagesPath "packages-lock.json"
+        Assert-ExistingFile $packageLockPath "Generated consumer package lock"
+        $packageLock = Get-Content -LiteralPath $packageLockPath -Raw | ConvertFrom-Json
+        $lockProperty = $packageLock.dependencies.PSObject.Properties |
+            Where-Object { $_.Name -ceq $packageMetadata.name } |
+            Select-Object -First 1
+        if ($null -eq $lockProperty) {
+            throw "Generated package lock is missing '$($packageMetadata.name)'."
+        }
+        $lockEntry = $lockProperty.Value
+        if ($lockEntry.source -cne "git" -or
+            $lockEntry.version -cne $resolvedPackageReference -or
+            !$lockEntry.hash.Equals($ExpectedGitCommit, [StringComparison]::OrdinalIgnoreCase)) {
+            throw (
+                "Generated package lock did not resolve the exact requested git package. " +
+                "Expected version '$resolvedPackageReference' and commit '$ExpectedGitCommit'; " +
+                "found source '$($lockEntry.source)', version '$($lockEntry.version)', hash '$($lockEntry.hash)'.")
+        }
+    }
+    catch {
+        Write-Host "Failed disposable project and log retained at $projectPath"
+        throw
+    }
 }
 
 Remove-DisposableProject $projectPath
@@ -265,5 +433,5 @@ if (Test-Path -LiteralPath $projectPath) {
 }
 
 Write-Host (
-    "Generated minimal Unity consumer resolved the package, compiled source-generator output, " +
-    "loaded the native VM, and executed successfully.")
+    "Generated minimal Unity consumer resolved the package, compiled both imported samples and " +
+    "source-generator output, validated XML IntelliSense, loaded the native VM, and executed successfully.")

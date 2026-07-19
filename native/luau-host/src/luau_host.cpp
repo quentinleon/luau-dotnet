@@ -6,9 +6,9 @@
 
 #include "lapi.h"
 #include "ldo.h"
-#include "ltable.h"
 #include "ludata.h"
 
+#include "reference_tokens.h"
 #include "tracked_allocation.h"
 
 #include <atomic>
@@ -21,6 +21,7 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <unordered_map>
 
 #ifndef LUAU_HOST_UPSTREAM_REVISION
 #define LUAU_HOST_UPSTREAM_REVISION "6e9b580e2e24643214caf0f4bbbb3db911ca30f3"
@@ -125,7 +126,10 @@ constexpr uint32_t kRequiredFeatures =
     LUAU_HOST_FEATURE_INTERRUPT |
     LUAU_HOST_FEATURE_TERMINAL_RESET |
     LUAU_HOST_FEATURE_INTEGER_VALUES |
-    LUAU_HOST_FEATURE_SANDBOX;
+    LUAU_HOST_FEATURE_SANDBOX |
+    LUAU_HOST_FEATURE_OPAQUE_REFERENCE_TOKENS |
+    LUAU_HOST_FEATURE_DIRECT_CALLBACK_IDENTITY |
+    LUAU_HOST_FEATURE_OBSERVATION_ONLY_GC_INTERRUPT;
 
 constexpr uint64_t fnv1a(const char* text, uint64_t value = UINT64_C(14695981039346656037))
 {
@@ -204,7 +208,6 @@ struct AllocatorContext
     luau_host_allocator_failure failure = LUAU_HOST_ALLOCATOR_FAILURE_NONE;
     bool tracked = false;
     bool hasLimit = false;
-    bool failNextGrowthWithQuota = false;
     bool interrupted = false;
     std::atomic<InterruptPoll> interruptPoll = {nullptr};
     std::atomic<uint64_t> interruptGate = {0};
@@ -251,16 +254,6 @@ void* trackedallocator(void* userdata, void* block, size_t oldSize, size_t newSi
 
     const size_t requestedBytes = retainedBytes + newSize;
     const bool isGrowth = newSize > previousRetainedSize;
-
-    if (isGrowth && allocator->failNextGrowthWithQuota)
-    {
-        allocator->failNextGrowthWithQuota = false;
-        const size_t attempted = allocator->hasLimit && requestedBytes <= allocator->limitBytes
-            ? allocator->limitBytes + 1
-            : requestedBytes;
-        setallocatorfailure(allocator, LUAU_HOST_ALLOCATOR_FAILURE_QUOTA, attempted);
-        return nullptr;
-    }
 
     if (isGrowth && allocator->hasLimit && requestedBytes > allocator->limitBytes)
     {
@@ -372,43 +365,79 @@ bool validtableindex(lua_State* state, int index)
     return validordinaryindex(state, index) && lua_type(state, index) == LUA_TTABLE;
 }
 
-bool validreference(lua_State* state, int reference)
+struct ReferenceRecord
 {
-    if (!state || reference <= LUA_REFNIL)
+    lua_State* root;
+    int registryReference;
+};
+
+luau_host_internal::MonotonicReferenceTokenAllocator referenceTokenAllocator;
+std::mutex referenceMutex;
+std::unordered_map<int32_t, ReferenceRecord> liveReferences;
+
+bool lookupreference(lua_State* state, int32_t token, int* registryReference)
+{
+    if (!state || token <= 0 || !registryReference)
         return false;
 
-    global_State* global = state->global;
-    LuaTable* registryTable = hvalue(registry(state));
-    const TValue* value = luaH_getnum(registryTable, reference);
-    if (value == luaO_nilobject)
+    lua_State* root = lua_mainthread(state);
+    std::lock_guard<std::mutex> lock(referenceMutex);
+    const auto found = liveReferences.find(token);
+    if (found == liveReferences.end() || found->second.root != root)
         return false;
 
-    // Released reference slots remain numeric entries linked through the
-    // registry free list. Walk that bounded list so a stale handle cannot be
-    // released twice or exposed as the freelist's implementation value.
-    int freeReference = global->registryfree;
-    const int maximumSteps = luaH_getn(registryTable);
-    for (int step = 0; freeReference != 0 && step < maximumSteps; ++step)
+    *registryReference = found->second.registryReference;
+    return true;
+}
+
+luau_host_status registerreference(lua_State* state, int registryReference, int32_t* token)
+{
+    const int32_t allocated = referenceTokenAllocator.allocate();
+    if (allocated == 0)
+        return LUAU_HOST_STATUS_RESOURCE_EXHAUSTED;
+
+    try
     {
-        if (freeReference == reference)
-            return false;
-        if (freeReference < 0)
-            return false;
-
-        const TValue* freeSlot = luaH_getnum(registryTable, freeReference);
-        if (freeSlot == luaO_nilobject || !ttisnumber(freeSlot))
-            return false;
-
-        const double nextValue = nvalue(freeSlot);
-        if (!std::isfinite(nextValue) || nextValue < 0 || nextValue > double(std::numeric_limits<int>::max()))
-            return false;
-        const int nextReference = int(nextValue);
-        if (nextValue != double(nextReference))
-            return false;
-        freeReference = nextReference;
+        std::lock_guard<std::mutex> lock(referenceMutex);
+        const bool inserted = liveReferences.emplace(
+            allocated,
+            ReferenceRecord{lua_mainthread(state), registryReference}).second;
+        if (!inserted)
+            return LUAU_HOST_STATUS_RESOURCE_EXHAUSTED;
+    }
+    catch (const std::bad_alloc&)
+    {
+        return LUAU_HOST_STATUS_SYSTEM_OUT_OF_MEMORY;
+    }
+    catch (...)
+    {
+        return LUAU_HOST_STATUS_SYSTEM_OUT_OF_MEMORY;
     }
 
-    return freeReference == 0;
+    *token = allocated;
+    return LUAU_HOST_STATUS_OK;
+}
+
+void erasereference(lua_State* state, int32_t token, int registryReference)
+{
+    std::lock_guard<std::mutex> lock(referenceMutex);
+    const auto found = liveReferences.find(token);
+    if (found != liveReferences.end() &&
+        found->second.root == lua_mainthread(state) &&
+        found->second.registryReference == registryReference)
+        liveReferences.erase(found);
+}
+
+void erasereferencesforroot(lua_State* root)
+{
+    std::lock_guard<std::mutex> lock(referenceMutex);
+    for (auto current = liveReferences.begin(); current != liveReferences.end();)
+    {
+        if (current->second.root == root)
+            current = liveReferences.erase(current);
+        else
+            ++current;
+    }
 }
 
 bool validcallbackframe(lua_State* state)
@@ -570,6 +599,7 @@ struct TableContext
 struct ClosureContext
 {
     luau_host_managed_function function;
+    uint64_t registrationId;
     const char* debugName;
     size_t debugNameSize;
     int upvalues;
@@ -581,6 +611,7 @@ struct ClosureContext
 struct CallbackOwnerPayload
 {
     uint64_t magic;
+    uint64_t registrationId;
     void* userdata;
     luau_host_userdata_destructor destructor;
     luau_host_managed_function function;
@@ -654,6 +685,7 @@ void callbackownerdestructor(void* userdata)
     luau_host_userdata_destructor destructor = owner->destructor;
     void* ownerUserdata = owner->userdata;
     owner->magic = 0;
+    owner->registrationId = 0;
     owner->destructor = nullptr;
     owner->userdata = nullptr;
     owner->function = nullptr;
@@ -684,34 +716,6 @@ struct LoadContext
     int environment;
     int result;
 };
-
-struct GcContext
-{
-    int operation;
-    int data;
-    int result;
-};
-
-bool nativegcoperation(luau_host_gc_operation operation, int* output)
-{
-    if (!output)
-        return false;
-
-    switch (operation)
-    {
-    case LUAU_HOST_GC_STOP: *output = LUA_GCSTOP; return true;
-    case LUAU_HOST_GC_RESTART: *output = LUA_GCRESTART; return true;
-    case LUAU_HOST_GC_COLLECT: *output = LUA_GCCOLLECT; return true;
-    case LUAU_HOST_GC_COUNT_KIB: *output = LUA_GCCOUNT; return true;
-    case LUAU_HOST_GC_COUNT_REMAINDER_BYTES: *output = LUA_GCCOUNTB; return true;
-    case LUAU_HOST_GC_IS_RUNNING: *output = LUA_GCISRUNNING; return true;
-    case LUAU_HOST_GC_STEP_KIB: *output = LUA_GCSTEP; return true;
-    case LUAU_HOST_GC_SET_GOAL_PERCENT: *output = LUA_GCSETGOAL; return true;
-    case LUAU_HOST_GC_SET_STEP_MULTIPLIER_PERCENT: *output = LUA_GCSETSTEPMUL; return true;
-    case LUAU_HOST_GC_SET_STEP_SIZE_KIB: *output = LUA_GCSETSTEPSIZE; return true;
-    default: return false;
-    }
-}
 
 struct LibraryContext
 {
@@ -770,6 +774,7 @@ void oppushcallback(lua_State* state, void* userdata)
     CallbackOwnerPayload* owner = static_cast<CallbackOwnerPayload*>(
         lua_newuserdatadtor(state, payloadSize, callbackownerdestructor));
     owner->magic = kCallbackOwnerMagic;
+    owner->registrationId = c->registrationId;
     owner->userdata = c->ownerUserdata;
     owner->destructor = c->ownerDestructor;
     owner->function = c->function;
@@ -823,7 +828,7 @@ void opdisplaystring(lua_State* state, void* userdata)
     c->pointerResult = luaL_tolstring(state, c->index, &c->length);
 }
 void opload(lua_State* state, void* userdata) { LoadContext* c = static_cast<LoadContext*>(userdata); c->result = luau_load(state, c->chunkName, c->bytecode, c->size, c->environment); }
-void opcollect(lua_State* state, void* userdata) { GcContext* c = static_cast<GcContext*>(userdata); c->result = lua_gc(state, c->operation, c->data); }
+void opcollect(lua_State* state, void*) { (void)lua_gc(state, LUA_GCCOLLECT, 0); }
 void opsettop(lua_State* state, void* userdata)
 {
     const int index = static_cast<IndexContext*>(userdata)->index;
@@ -893,7 +898,6 @@ void opopenlibrary(lua_State* state, void* userdata)
     }
 }
 
-void opopenall(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); luaL_openlibs(state); }
 void opsandboxroot(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); luaL_sandbox(state); }
 void opsandboxthread(lua_State* state, void*) { requirestack(state, LUA_MINSTACK); luaL_sandboxthread(state); }
 
@@ -946,12 +950,13 @@ void interrupttrampoline(lua_State* state, int gc)
         return;
     }
 
+    const bool isGcNotification = gc >= 0;
     int action = 0;
     try
     {
-        const luau_host_interrupt_kind kind = gc < 0
-            ? LUAU_HOST_INTERRUPT_EXECUTION
-            : LUAU_HOST_INTERRUPT_GC;
+        const luau_host_interrupt_kind kind = isGcNotification
+            ? LUAU_HOST_INTERRUPT_GC
+            : LUAU_HOST_INTERRUPT_EXECUTION;
         action = poll(host(state), kind);
     }
     catch (...)
@@ -962,6 +967,12 @@ void interrupttrampoline(lua_State* state, int gc)
 
     // Yield/throw may bypass C++ destructors; decrement before changing VM flow.
     leaveinterrupt(allocator);
+
+    // Collector notifications are observation-only. A hostile or buggy poll
+    // cannot use its return value to yield, throw, or mark the VM canceled from
+    // a collector phase.
+    if (isGcNotification)
+        return;
 
     if (action == 0)
         return;
@@ -1158,6 +1169,7 @@ void LUAU_HOST_CALL luau_host_state_close(luau_host_state* root)
     // Root close is the final lifecycle boundary. Do not leave this root's
     // interrupt callback registered if a caller omits the explicit uninstall.
     luau_host_interrupt_uninstall(root);
+    erasereferencesforroot(state);
     AllocatorContext* allocator = getallocator(state);
     lua_close(state);
     if (allocator)
@@ -1189,19 +1201,7 @@ luau_host_status LUAU_HOST_CALL luau_host_memory_reset_failure(luau_host_state* 
     return LUAU_HOST_STATUS_OK;
 }
 
-luau_host_status LUAU_HOST_CALL luau_host_memory_arm_quota_failure(luau_host_state* state)
-{
-    AllocatorContext* allocator = state ? getallocator(native(state)) : nullptr;
-    if (!allocator)
-        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    if (!allocator->hasLimit || allocator->limitBytes == std::numeric_limits<size_t>::max())
-        return LUAU_HOST_STATUS_UNSUPPORTED;
-    allocator->failNextGrowthWithQuota = true;
-    return LUAU_HOST_STATUS_OK;
-}
-
 luau_host_state* LUAU_HOST_CALL luau_host_main_thread(luau_host_state* state) { return state ? host(lua_mainthread(native(state))) : nullptr; }
-int32_t LUAU_HOST_CALL luau_host_is_thread_reset(luau_host_state* state) { return state ? lua_isthreadreset(native(state)) : 0; }
 luau_host_status LUAU_HOST_CALL luau_host_thread_status(luau_host_state* state) { return state ? mapstatus(native(state), lua_status(native(state))) : LUAU_HOST_STATUS_INVALID_ARGUMENT; }
 
 luau_host_status LUAU_HOST_CALL luau_host_thread_create(luau_host_state* parent, luau_host_state** output)
@@ -1241,12 +1241,6 @@ const uint8_t* LUAU_HOST_CALL luau_host_type_name(luau_host_state* state, int32_
     return state && type >= LUA_TNONE && type < LUA_T_COUNT
         ? reinterpret_cast<const uint8_t*>(lua_typename(native(state), type))
         : nullptr;
-}
-int32_t LUAU_HOST_CALL luau_host_raw_equal(luau_host_state* state, int32_t left, int32_t right)
-{
-    return state && validordinaryindex(native(state), left) && validordinaryindex(native(state), right)
-        ? lua_rawequal(native(state), left, right)
-        : 0;
 }
 int32_t LUAU_HOST_CALL luau_host_object_length(luau_host_state* state, int32_t index)
 {
@@ -1431,34 +1425,17 @@ const void* LUAU_HOST_CALL luau_host_to_pointer(luau_host_state* state, int32_t 
     return ttisuserdata(value) ? exposeduserdata(value) : lua_topointer(native(state), index);
 }
 
-luau_host_managed_function LUAU_HOST_CALL luau_host_to_function(luau_host_state* state, int32_t index)
+uint64_t LUAU_HOST_CALL luau_host_callback_registration_id(luau_host_state* state)
 {
-    if (!state || !validordinaryindex(native(state), index))
-        return nullptr;
-
-    const TValue* value = luaA_toobject(native(state), index);
-    if (iscfunction(value))
-    {
-        CallbackOwnerPayload* owner = callbackpayload(clvalue(value));
-        if (owner)
-            return owner->function;
-    }
-    return reinterpret_cast<luau_host_managed_function>(lua_tocfunction(native(state), index));
-}
-
-void* LUAU_HOST_CALL luau_host_callback_userdata(luau_host_state* state, int32_t upvalue)
-{
-    if (!state || upvalue <= 0 || upvalue > 255)
-        return nullptr;
+    if (!state)
+        return 0;
 
     lua_State* target = native(state);
     if (!validcallbackframe(target))
-        return nullptr;
+        return 0;
 
     CallbackOwnerPayload* owner = currentcallbackpayload(target);
-    if (!owner || upvalue > owner->callerUpvalues)
-        return nullptr;
-    return exposeduserdata(luaA_toobject(target, lua_upvalueindex(upvalue)));
+    return owner ? owner->registrationId : 0;
 }
 
 luau_host_status LUAU_HOST_CALL luau_host_push_value(luau_host_state* state, int32_t index)
@@ -1518,6 +1495,7 @@ luau_host_status LUAU_HOST_CALL luau_host_push_callback(
     if (!state ||
         !validcallbacks(callbacks) ||
         !callbacks->managed_function ||
+        callbacks->registration_id == 0 ||
         (!debugName && debugNameSize != 0) ||
         debugNameSize > uint64_t(std::numeric_limits<size_t>::max()) ||
         hasOwnerUserdata != hasOwnerDestructor ||
@@ -1535,6 +1513,7 @@ luau_host_status LUAU_HOST_CALL luau_host_push_callback(
 
     ClosureContext c = {
         callbacks->managed_function,
+        callbacks->registration_id,
         debugNameSize != 0 ? reinterpret_cast<const char*>(debugName) : nullptr,
         nativeDebugNameSize,
         upvalueCount,
@@ -1709,14 +1688,34 @@ luau_host_status LUAU_HOST_CALL luau_host_reference_create(luau_host_state* stat
     if (!state || !validordinaryindex(native(state), index)) return LUAU_HOST_STATUS_INVALID_ARGUMENT;
     IndexContext c = {index, 0};
     luau_host_status s = protect(native(state), oprefcreate, &c, 0);
-    if (s == LUAU_HOST_STATUS_OK) *reference = c.result;
+    if (s != LUAU_HOST_STATUS_OK)
+        return s;
+
+    s = registerreference(native(state), c.result, reference);
+    if (s != LUAU_HOST_STATUS_OK)
+    {
+        lua_unref(native(state), c.result);
+
+        // C++ registry bookkeeping happens after the protected lua_ref.  If
+        // that host allocation fails, append a protected error sentinel so
+        // SYSTEM_OUT_OF_MEMORY keeps the same +1 error shape as VM allocation
+        // failures and managed error handling cannot consume a caller value.
+        if (s == LUAU_HOST_STATUS_SYSTEM_OUT_OF_MEMORY)
+        {
+            const luau_host_status errorStatus = protect(native(state), oppushnil, nullptr, 0);
+            if (errorStatus != LUAU_HOST_STATUS_OK)
+                return errorStatus;
+        }
+    }
     return s;
 }
 
 luau_host_status LUAU_HOST_CALL luau_host_reference_push(luau_host_state* state, int32_t reference, int32_t* type)
 {
-    if (!state || !validreference(native(state), reference)) return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    RawIndexContext c = {LUA_REGISTRYINDEX, reference, 0};
+    int registryReference = 0;
+    if (!state || !lookupreference(native(state), reference, &registryReference))
+        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
+    RawIndexContext c = {LUA_REGISTRYINDEX, registryReference, 0};
     luau_host_status s = protect(native(state), oprefpush, &c, 0);
     if (s == LUAU_HOST_STATUS_OK && type) *type = c.result;
     return s;
@@ -1726,9 +1725,14 @@ luau_host_status LUAU_HOST_CALL luau_host_reference_release(luau_host_state* sta
 {
     if (!state) return LUAU_HOST_STATUS_INVALID_ARGUMENT;
     if (reference <= LUA_REFNIL) return LUAU_HOST_STATUS_OK;
-    if (!validreference(native(state), reference)) return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-    IntContext c = {reference, 0};
-    return protect(native(state), oprefrelease, &c, 0);
+    int registryReference = 0;
+    if (!lookupreference(native(state), reference, &registryReference))
+        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
+    IntContext c = {registryReference, 0};
+    const luau_host_status status = protect(native(state), oprefrelease, &c, 0);
+    if (status == LUAU_HOST_STATUS_OK)
+        erasereference(native(state), reference, registryReference);
+    return status;
 }
 
 luau_host_status LUAU_HOST_CALL luau_host_to_string(luau_host_state* state, int32_t index, const uint8_t** output, uint64_t* length)
@@ -1847,30 +1851,11 @@ int32_t LUAU_HOST_CALL luau_host_yield(luau_host_state* state, int32_t resultCou
     return lua_yield(target, resultCount);
 }
 
-luau_host_status LUAU_HOST_CALL luau_host_collect(
-    luau_host_state* state,
-    luau_host_gc_operation operation,
-    int32_t data,
-    int32_t* result)
+luau_host_status LUAU_HOST_CALL luau_host_collect(luau_host_state* state)
 {
-    int nativeOperation = 0;
-    if (!state || !nativegcoperation(operation, &nativeOperation) ||
-        (operation >= LUAU_HOST_GC_STEP_KIB && data < 0) ||
-        (operation == LUAU_HOST_GC_SET_STEP_SIZE_KIB && data > (std::numeric_limits<int>::max() >> 10)))
+    if (!state)
         return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-
-    global_State* global = native(state)->global;
-    const int64_t maximum = std::numeric_limits<int>::max();
-    if ((operation == LUAU_HOST_GC_SET_STEP_MULTIPLIER_PERCENT &&
-            (data == 0 || int64_t(global->gcstepsize) * data > maximum || int64_t(global->gcgoal) * data > maximum)) ||
-        (operation == LUAU_HOST_GC_SET_GOAL_PERCENT && int64_t(data) * global->gcstepmul > maximum) ||
-        (operation == LUAU_HOST_GC_SET_STEP_SIZE_KIB && (int64_t(data) << 10) * global->gcstepmul > maximum))
-        return LUAU_HOST_STATUS_INVALID_ARGUMENT;
-
-    GcContext c = {nativeOperation, data, 0};
-    luau_host_status s = protect(native(state), opcollect, &c, 0);
-    if (s == LUAU_HOST_STATUS_OK && result) *result = c.result;
-    return s;
+    return protect(native(state), opcollect, nullptr, 0);
 }
 
 luau_host_status LUAU_HOST_CALL luau_host_open_library(luau_host_state* state, luau_host_library library, int32_t* resultCount)
@@ -1883,7 +1868,6 @@ luau_host_status LUAU_HOST_CALL luau_host_open_library(luau_host_state* state, l
     return s;
 }
 
-luau_host_status LUAU_HOST_CALL luau_host_open_all_libraries(luau_host_state* state) { return protect(native(state), opopenall, nullptr, 0); }
 luau_host_status LUAU_HOST_CALL luau_host_sandbox_root(luau_host_state* state) { return protect(native(state), opsandboxroot, nullptr, 0); }
 luau_host_status LUAU_HOST_CALL luau_host_sandbox_thread(luau_host_state* state) { return protect(native(state), opsandboxthread, nullptr, 0); }
 

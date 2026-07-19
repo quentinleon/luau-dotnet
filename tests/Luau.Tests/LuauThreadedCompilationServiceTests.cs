@@ -300,6 +300,16 @@ public sealed class LuauThreadedCompilationServiceTests
     [Fact]
     public async Task OversizedCompilerOutputIsAnInfrastructureLimitFailure()
     {
+        await using var exactService = CreateService(
+            new LuauThreadedCompilationOptions { MaxBytecodeBytesPerResult = 3 },
+            (source, options, _) => CreateOutput(source, options, bytecodeLength: 3));
+
+        var exact = await exactService.CompileAsync(new byte[] { 1 }).AsTask().WaitAsync(TestTimeout);
+
+        AssertResultShape(exact, LuauCompileResultKind.Success);
+        Assert.Equal(3, exact.Output!.BytecodeLength);
+        Assert.Equal((0, 0L, 0), exactService.ReservationSnapshot);
+
         await using var service = CreateService(
             new LuauThreadedCompilationOptions { MaxBytecodeBytesPerResult = 3 },
             (source, options, _) => CreateOutput(source, options, bytecodeLength: 4));
@@ -944,6 +954,8 @@ public sealed class LuauThreadedCompilationServiceTests
             Assert.Equal(serial.SourceSha256, result.Output!.SourceSha256);
             Assert.Equal(serial.BytecodeSha256, result.Output.BytecodeSha256);
             Assert.Equal(serial.CompileOptions, result.Output.CompileOptions);
+            Assert.Equal(serial.UpstreamRevisionHash, result.Output.UpstreamRevisionHash);
+            Assert.Equal(serial.HostBuildFingerprint, result.Output.HostBuildFingerprint);
             Assert.Equal(serialBytes, result.Output.ToBytecodeArray());
         });
     }

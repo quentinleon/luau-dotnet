@@ -34,7 +34,12 @@ public readonly struct LuauCallContext
         return GetFrame().Read<T>(index);
     }
 
-    /// <summary>Adds one managed value to the callback's ordered return values.</summary>
+    /// <summary>
+    /// Adds one managed value to the callback's ordered return values. Pushing
+    /// a reference wrapper does not transfer or dispose its managed ownership;
+    /// the callback or library must keep persistent wrappers live and dispose
+    /// owned wrappers when they are no longer needed.
+    /// </summary>
     public void Return<T>(T? value)
     {
         GetFrame().Return(value);
@@ -62,6 +67,7 @@ internal sealed class LuauCallFrame
     LuauState? state;
     int active = 1;
     int returnCount;
+    List<ILuauCallbackBorrowedReference>? borrowedReferences;
 
     internal LuauCallFrame(
         LuauState state,
@@ -116,7 +122,7 @@ internal sealed class LuauCallFrame
         EnsureArgumentIndex(index);
         try
         {
-            return state!.ToValue(index + 1).Read<T>();
+            return state!.ToValue(index + 1, this).Read<T>();
         }
         catch (Exception exception) when (exception is not ArgumentOutOfRangeException)
         {
@@ -132,7 +138,7 @@ internal sealed class LuauCallFrame
     internal void Return<T>(T? value)
     {
         EnsureActive();
-        state!.Push(state.CreateFrom(value));
+        state!.Push(LuauValue.CreateFrom(value));
         returnCount++;
     }
 
@@ -155,8 +161,34 @@ internal sealed class LuauCallFrame
             return;
         }
 
+        var borrowed = borrowedReferences;
+        borrowedReferences = null;
+        if (borrowed != null)
+        {
+            for (var index = borrowed.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    borrowed[index].InvalidateBorrowed();
+                }
+                catch
+                {
+                    // Callback invalidation must release every remaining
+                    // borrowed reference even when one cleanup path fails.
+                }
+            }
+        }
+
         state = null;
     }
+
+    internal void RegisterBorrowed(ILuauCallbackBorrowedReference reference)
+    {
+        EnsureActive();
+        (borrowedReferences ??= []).Add(reference);
+    }
+
+    internal void EnsureBorrowedActive() => EnsureActive();
 
     void EnsureArgumentIndex(int index)
     {

@@ -193,6 +193,21 @@ internal sealed class LuauObjectRegistry
         }
     }
 
+    internal void RetainWrapper(LuauObjectToken token)
+    {
+        lock (gate)
+        {
+            DrainNativeReleases();
+            var entry = GetEntry(token);
+            if (!entry.NativeAlive || entry.Reference < 0)
+            {
+                throw new ObjectDisposedException(nameof(LuauObjectHandle));
+            }
+
+            entry.WrapperCount = checked(entry.WrapperCount + 1);
+        }
+    }
+
     internal void ReleaseWrapper(LuauObjectToken token, LuauState state)
     {
         var reference = -1;

@@ -316,14 +316,19 @@ if (!(Test-Path -LiteralPath $integrationProjectRoot -PathType Container)) {
 
 $canonicalHashProbeUtf8 = [Text.UTF8Encoding]::new($false)
 $canonicalHashLf = Get-CanonicalUtf8Sha256 (
-    $canonicalHashProbeUtf8.GetBytes("stage-5`npackage-metadata`n"))
+    $canonicalHashProbeUtf8.GetBytes("stage-6`npackage-metadata`n"))
 $canonicalHashCrLf = Get-CanonicalUtf8Sha256 (
-    $canonicalHashProbeUtf8.GetBytes("stage-5`r`npackage-metadata`r`n"))
+    $canonicalHashProbeUtf8.GetBytes("stage-6`r`npackage-metadata`r`n"))
 Assert-Equal "Canonical text hash line-ending regression probe" $canonicalHashCrLf $canonicalHashLf
 
 $gitAttributes = Read-RepositoryText ".gitattributes"
 foreach ($requiredAttribute in @(
     "*.meta text eol=lf",
+    "*.asmdef text eol=lf",
+    "*.json text eol=lf",
+    "*.luau text eol=lf",
+    "*.md text eol=lf",
+    "*.xml text eol=lf",
     "tests/Luau.Tests/PublicApi.approved.txt text eol=lf",
     "native/luau-host/include/luau_host.h text eol=lf",
     "native/luau-host/exports/luau_host.exports text eol=lf"
@@ -338,26 +343,134 @@ $packageTopLevel = @(
         Sort-Object
 )
 Assert-SequenceEqual `
-    "Stage 5 package top-level content" `
+    "Stage 6 package top-level content" `
     $packageTopLevel `
-    @("Editor", "Editor.meta", "package.json", "Runtime", "Runtime.meta", "Tests", "Tests.meta")
-Assert-PackagePathAbsent "package.json.meta"
-Write-Host "PASS: Luau.Unity is a standalone package with the exact Stage 5 top-level allowlist."
+    @(
+        "CHANGELOG.md",
+        "CHANGELOG.md.meta",
+        "Documentation~",
+        "Editor",
+        "Editor.meta",
+        "LICENSE.md",
+        "LICENSE.md.meta",
+        "package.json",
+        "package.json.meta",
+        "README.md",
+        "README.md.meta",
+        "Runtime",
+        "Runtime.meta",
+        "Samples~",
+        "Tests",
+        "Tests.meta",
+        "Third Party Notices.md",
+        "Third Party Notices.md.meta")
+Write-Host "PASS: Luau.Unity has the exact Stage 6 release-content top-level allowlist."
 
 $package = Read-PackageJson "package.json"
 Assert-Equal "Unity package name" $package.name "com.nuskey.luau.unity"
-Assert-Equal "Unity package version" $package.version "0.1.6"
+Assert-Equal "Unity package version" $package.version "0.2.0"
 Assert-Equal "Unity package display name" $package.displayName "Luau.Unity"
 Assert-Equal `
     "Unity package description" `
     $package.description `
-    "Unity-first Luau runtime with managed APIs and native plugins"
-Assert-Equal "Unity package author" $package.author.name "nuskey"
+    "A bounded, Unity-first managed host for the official Luau VM, with source-generated APIs and maintained Windows and Android native plugins."
+Assert-Equal "Unity package minimum Unity version" $package.unity "6000.3"
+Assert-Equal "Unity package minimum Unity release" $package.unityRelease "19f1"
+Assert-Equal "Unity package license" $package.license "MIT"
+Assert-Equal "Unity package author" $package.author.name "Yusuke Nakada (nuskey)"
+Assert-Equal "Unity package repository" $package.repository.url "https://github.com/nuskey8/luau-dotnet.git"
+Assert-Equal "Unity package repository directory" $package.repository.directory "Luau.Unity"
+Assert-Equal "Unity package issues" $package.bugs.url "https://github.com/nuskey8/luau-dotnet/issues"
+foreach ($urlProperty in @("licensesUrl", "documentationUrl", "changelogUrl")) {
+    $url = [string]$package.$urlProperty
+    if (!$url.StartsWith("https://github.com/nuskey8/luau-dotnet/", [StringComparison]::Ordinal) -or
+        $url.IndexOf("v0.2.0", [StringComparison]::Ordinal) -lt 0) {
+        throw "Unity package $urlProperty is not pinned to the canonical v0.2.0 tree: $url"
+    }
+}
+$sampleNames = @($package.samples | ForEach-Object displayName)
+$samplePaths = @($package.samples | ForEach-Object path)
+Assert-SequenceEqual "Unity package sample names" $sampleNames @("Getting Started", "Capability Binding")
+Assert-SequenceEqual `
+    "Unity package sample paths" `
+    $samplePaths `
+    @("Samples~/Getting Started", "Samples~/Capability Binding")
 $dependencyProperty = $package.PSObject.Properties["dependencies"]
 if ($null -ne $dependencyProperty -and @($dependencyProperty.Value.PSObject.Properties).Count -ne 0) {
     throw "The Unity package must not rely on development-project dependencies."
 }
-Write-Host "PASS: package identity and preview version are unchanged and declare no dependencies."
+Write-Host "PASS: final package identity, preview version, origin, legal links, and samples are declared without dependencies."
+
+$requiredReleaseFiles = @(
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    "Third Party Notices.md",
+    "Documentation~/getting-started.md",
+    "Documentation~/execution-and-trust.md",
+    "Documentation~/capability-bindings.md",
+    "Documentation~/resource-limits.md",
+    "Documentation~/modules.md",
+    "Documentation~/artifacts.md",
+    "Documentation~/compiler-security.md",
+    "Samples~/Getting Started/GettingStartedSample.cs",
+    "Samples~/Getting Started/GettingStarted.luau",
+    "Samples~/Capability Binding/CapabilityBindingSample.cs",
+    "Samples~/Capability Binding/CapabilityBinding.luau"
+)
+foreach ($releaseFile in $requiredReleaseFiles) {
+    Get-PackageFile $releaseFile | Out-Null
+}
+$packageReadme = Read-PackageText "README.md"
+Assert-ContainsLiteral `
+    "Tagged package installation" `
+    $packageReadme `
+    "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity#v0.2.0"
+foreach ($contract in @(
+    "LuauResultScope",
+    "source-only by default",
+    "runtime mod-source limits",
+    "Windows x64 and Android ARM64/x86_64"
+)) {
+    Assert-ContainsLiteral "Package README product contract" $packageReadme $contract
+}
+$trackedDocumentation = @("README.md") + @(
+    Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Filter "*.md" |
+        ForEach-Object { $_.FullName })
+foreach ($documentationPath in $trackedDocumentation) {
+    $documentationText = if ([IO.Path]::IsPathRooted($documentationPath)) {
+        [IO.File]::ReadAllText($documentationPath)
+    } else {
+        Read-RepositoryText $documentationPath
+    }
+    foreach ($forbiddenLink in @("](docs/plans/", "](../docs/plans/")) {
+        Assert-NotContainsLiteral "Tracked release documentation $documentationPath" $documentationText $forbiddenLink
+    }
+}
+$gettingStartedSample = Read-PackageText "Samples~/Getting Started/GettingStartedSample.cs"
+foreach ($required in @(
+    '[LuauLibrary("sample")]',
+    "ConfigureHostApis = state =>",
+    "using var root = LuauUnity.CreateState(",
+    "using var results = await root.ExecuteAsync(",
+    "destroyCancellationToken"
+)) {
+    Assert-ContainsLiteral "Getting Started sample" $gettingStartedSample $required
+}
+$capabilitySample = Read-PackageText "Samples~/Capability Binding/CapabilityBindingSample.cs"
+foreach ($required in @(
+    "GameObject target;",
+    "using var sandbox = root.CreateSandboxedThread();",
+    "using var targetHandle = root.CreateHandle(target);",
+    'sandbox["target"] = targetHandle;',
+    "using var results = await sandbox.ExecuteAsync("
+)) {
+    Assert-ContainsLiteral "Capability Binding sample" $capabilitySample $required
+}
+foreach ($forbidden in @("GameObject.Find", "FindObjectOfType", "FindFirstObjectByType", "Resources.Load")) {
+    Assert-NotContainsLiteral "Capability Binding sample" $capabilitySample $forbidden
+}
+Write-Host "PASS: tracked package docs, legal notices, trust guidance, and both importable public-contract samples are complete."
 
 $forbiddenDirectoryNames = @(
     "Assets",
@@ -372,13 +485,11 @@ $forbiddenDirectoryNames = @(
     "obj",
     "Sandbox",
     "URP",
-    "Verification",
-    "Documentation~",
-    "Samples~"
+    "Verification"
 )
 foreach ($directory in Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -Directory) {
     if ($forbiddenDirectoryNames -contains $directory.Name) {
-        throw "Development, generated, project-only, or post-Stage-5 directory ships in the package: $(Get-PackageRelativePath $directory.FullName)"
+        throw "Development, generated, or project-only directory ships in the package: $(Get-PackageRelativePath $directory.FullName)"
     }
 }
 
@@ -389,6 +500,9 @@ foreach ($item in Get-ChildItem -LiteralPath $packageRoot -Recurse -Force) {
 
     $relativePath = Get-PackageRelativePath $item.FullName
     if (!$item.PSIsContainer -and $relativePath -eq "package.json") {
+        continue
+    }
+    if ($item.PSIsContainer -and $relativePath -in @("Documentation~", "Samples~")) {
         continue
     }
 
@@ -411,11 +525,12 @@ foreach ($metaFile in Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -F
     }
     $guidOwners[$guid] = $relativeMetaPath
 }
-Write-Host "PASS: every package asset has metadata, every metadata file has an asset, and all package GUIDs are unique."
+Write-Host "PASS: every imported package asset has metadata, hidden UPM roots are exempt, and all package GUIDs are unique."
 
 $allowedBinaryPaths = @(
     "Runtime/Luau.dll",
     "Runtime/Luau.SourceGenerator.dll",
+    "Runtime/Luau.xml",
     "Runtime/Plugins/android-arm64/libluau_host.so",
     "Runtime/Plugins/android-x64/libluau_host.so",
     "Runtime/Plugins/win-x64/luau_host.dll"
@@ -427,15 +542,128 @@ $actualBinaryPaths = @(
         ForEach-Object { Get-PackageRelativePath $_.FullName } |
         Sort-Object
 )
-Assert-SequenceEqual "Stage 5 managed/native binary inventory" $actualBinaryPaths $allowedBinaryPaths
-Write-Host "PASS: the package contains only the five approved Stage 5 managed/native artifacts."
+Assert-SequenceEqual "Stage 6 managed/native/XML artifact inventory" $actualBinaryPaths $allowedBinaryPaths
+Write-Host "PASS: the package contains only the six approved managed/native/XML artifacts."
+
+$managedProject = Read-RepositoryText "src/Luau/Luau.csproj"
+Assert-ContainsLiteral `
+    "Managed XML documentation build" `
+    $managedProject `
+    "<GenerateDocumentationFile>true</GenerateDocumentationFile>"
+Assert-ContainsLiteral `
+    "Managed XML documentation completeness gate" `
+    $managedProject `
+    '<WarningsAsErrors>$(WarningsAsErrors);CS1591</WarningsAsErrors>'
+$managedXmlPath = Get-PackageFile "Runtime/Luau.xml"
+try {
+    [xml]$managedXml = Get-Content -LiteralPath $managedXmlPath -Raw
+}
+catch {
+    throw "Runtime/Luau.xml is not well-formed XML: $_"
+}
+Assert-Equal "Managed XML assembly identity" $managedXml.doc.assembly.name "Luau"
+$documentedMemberNames = @($managedXml.doc.members.member | ForEach-Object name)
+foreach ($requiredMember in @(
+    "T:Luau.LuauState",
+    "T:Luau.LuauResultScope",
+    "T:Luau.LuauBytecodeArtifactCodec",
+    "T:Luau.LuauModuleMap",
+    "T:Luau.LuauRequirer",
+    "T:Luau.LuauStateOptions",
+    'M:Luau.LuauCallContext.Read``1(System.Int32)',
+    "M:Luau.LuauValue.Retain",
+    "M:Luau.LuauState.CreateSandboxedThread",
+    "M:Luau.LuauState.ExecuteCompilerOutput(Luau.LuauCompilerOutput,System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)"
+)) {
+    if ($documentedMemberNames -cnotcontains $requiredMember) {
+        throw "Runtime/Luau.xml is missing required IntelliSense member: $requiredMember"
+    }
+}
+$semanticDocumentation = @(
+    @{ Name = "T:Luau.LuauState"; Text = "Root disposal cancels active operations" },
+    @{ Name = "T:Luau.LuauResultScope"; Text = "Dispose the scope deterministically" },
+    @{ Name = "T:Luau.LuauBytecodeArtifactCodec"; Text = "never grants compiler-output trust" },
+    @{ Name = "T:Luau.LuauModuleMap"; Text = "never performs filesystem or network resolution" },
+    @{ Name = "T:Luau.LuauRequirer"; Text = "explicitly authorized modules" },
+    @{ Name = "M:Luau.LuauValue.Retain"; Text = "independently disposable owner" },
+    @{ Name = "M:Luau.LuauState.CreateSandboxedThread"; Text = "isolated writable global proxy" },
+    @{ Name = "M:Luau.LuauState.ExecuteCompilerOutput(Luau.LuauCompilerOutput,System.ReadOnlySpan{System.Char},Luau.LuauExecutionOptions)"; Text = "Dispose the returned scope" }
+)
+foreach ($requirement in $semanticDocumentation) {
+    $member = @($managedXml.doc.members.member | Where-Object { $_.name -ceq $requirement.Name })
+    if ($member.Count -ne 1) {
+        throw "Runtime/Luau.xml must contain exactly one semantic documentation member '$($requirement.Name)'."
+    }
+    $normalizedMemberText = [regex]::Replace([string]$member[0].InnerText, "\s+", " ").Trim()
+    if ($normalizedMemberText -cnotlike "*$($requirement.Text)*") {
+        throw "Runtime/Luau.xml member '$($requirement.Name)' is missing required ownership/trust guidance '$($requirement.Text)'."
+    }
+}
+$copyManagedArtifacts = Read-RepositoryText "tools/Copy-DotNetArtifactsToUnity.ps1"
+foreach ($required in @(
+    'Source = "src/Luau/bin/$Configuration/netstandard2.1/Luau.xml"',
+    'FileName = "Luau.xml"',
+    'CanonicalText = $true',
+    "function Get-CanonicalUtf8Bytes",
+    '$destinationMeta = "$destination.meta"'
+)) {
+    Assert-ContainsLiteral "Managed XML artifact copy/check" $copyManagedArtifacts $required
+}
+Write-Host "PASS: deterministic Luau XML IntelliSense is built, copied, documented, and metadata-protected."
+
+$artifactCodec = Read-RepositoryText "src/Luau/LuauBytecodeArtifactCodec.cs"
+foreach ($required in @(
+    "public const int CurrentFormatVersion = 1;",
+    "IBufferWriter<byte> destination",
+    "Stream destination",
+    "ReadOnlySpan<byte> encoded",
+    'CheckLimit("envelope", encoded.Length, effectiveLimits.MaxEnvelopeBytes);',
+    'CheckLimit("sourceIdentity", sourceIdentityLength, effectiveLimits.MaxSourceIdentityBytes);',
+    'CheckLimit("provenanceId", provenanceIdLength, effectiveLimits.MaxProvenanceIdBytes);',
+    'CheckLimit("provenanceData", provenanceLength, effectiveLimits.MaxProvenanceBytes);',
+    'CheckLimit("bytecode", bytecodeLength, effectiveLimits.MaxBytecodeBytes);',
+    "CryptographicOperations.FixedTimeEquals",
+    "LuauArtifactFailureKind.IntegrityMismatch",
+    "LuauArtifactFailureKind.RuntimeIdentityMismatch",
+    "The artifact envelope contains trailing bytes.",
+    "Artifact field lengths overflow the managed envelope size."
+)) {
+    Assert-ContainsLiteral "Managed artifact codec" $artifactCodec $required
+}
+
+$artifactLimits = Read-RepositoryText "src/Luau/LuauArtifactLimits.cs"
+foreach ($required in @(
+    "int? maxEnvelopeBytes = 8 * 1024 * 1024;",
+    "int? maxBytecodeBytes = 4 * 1024 * 1024;",
+    "int? maxProvenanceBytes = 64 * 1024;",
+    "int? maxProvenanceIdBytes = 256;",
+    "int? maxSourceIdentityBytes = 1024;",
+    "public static LuauArtifactLimits UnsafeUnbounded"
+)) {
+    Assert-ContainsLiteral "Managed artifact limits" $artifactLimits $required
+}
+
+$artifactCodecTests = Read-RepositoryText "tests/Luau.Tests/ArtifactCodecTests.cs"
+foreach ($required in @(
+    "SpanStreamAndBufferWriterRoundTripsPreserveArtifactMetadata",
+    "TruncationAndTrailingBytesAreTypedMalformedFailures",
+    "DeclaredLengthOverflowIsRejectedBeforePayloadAllocation",
+    "EveryEnvelopeFieldLimitIsCheckedAtExactAndOneOverBoundaries",
+    "IdentityCorruptionAndInvalidUtf8HaveTypedDiagnostics",
+    "BoundedRandomMutationCorpusOnlyProducesArtifactsOrTypedRejections",
+    "BoundedStreamRejectsOneByteOverWithoutReturningAnArtifact"
+)) {
+    Assert-ContainsLiteral "Managed artifact codec tests" $artifactCodecTests $required
+}
+Write-Host "PASS: the managed artifact envelope is versioned, bounded before allocation, integrity checked, typed on rejection, and independently mutation tested."
 
 $artifactBaselines = @(
-    @{ Path = "Runtime/Luau.dll"; Length = 220160L; Sha256 = "1561DA495CCD7F6EB1C731E4AF4ADC6D3FBB03F55BA9A21A7210432C5E4D3620" },
-    @{ Path = "Runtime/Luau.SourceGenerator.dll"; Length = 62976L; Sha256 = "A85C30B3DC6C6B174C6412FD8E92E072ADC4639EA5CFDE93349645BF77E0F24E" },
-    @{ Path = "Runtime/Plugins/win-x64/luau_host.dll"; Length = 716800L; Sha256 = "0BEB9381E900228C46F2AF97E4394C3F46A22740624E0C02675BEBE0A134B637" },
-    @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so"; Length = 9738896L; Sha256 = "DCA28A83E732D494E5F6C5C5BA590A0BF428A261B0805CE29D79B3F1986A3F4A" },
-    @{ Path = "Runtime/Plugins/android-x64/libluau_host.so"; Length = 9491432L; Sha256 = "03D7E02A2C58C5E92760697122A8880D5727894DE45095505D9CAF0515C00729" }
+    @{ Path = "Runtime/Luau.dll"; Length = 257024L; Sha256 = "A5FC81460C5EE02CFDC04EA9859F765883E32DDF25CC09D00A8CE769709609AB" },
+    @{ Path = "Runtime/Luau.xml"; Length = 156183L; Sha256 = "4B9AA846CCE65DB5E621D4C86BA4461CA64176C9CE54A4891935771992DF3829" },
+    @{ Path = "Runtime/Luau.SourceGenerator.dll"; Length = 63488L; Sha256 = "6BE677E31ACBD752B49A8F3808A149E29302EC3073501A372B9BB3F770F33661" },
+    @{ Path = "Runtime/Plugins/win-x64/luau_host.dll"; Length = 995328L; Sha256 = "9878A9224B567D32EA8BCED03446AE32743C3DDABF5FAF3574B9097920ADEB82" },
+    @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so"; Length = 866704L; Sha256 = "E8C61ABEB71FC54EE8FBAF34ECCD4A327638D1E9DC26909535AACE89C4CE8787" },
+    @{ Path = "Runtime/Plugins/android-x64/libluau_host.so"; Length = 900512L; Sha256 = "5014AC8458B85C4D68BF3125CC4800D5B6F9546478009EB78CAFA838A90BCE2C" }
 )
 foreach ($artifact in $artifactBaselines) {
     $artifactPath = Get-PackageFile $artifact.Path
@@ -445,6 +673,7 @@ foreach ($artifact in $artifactBaselines) {
 
 $importerMetaBaselines = @(
     @{ Path = "Runtime/Luau.dll.meta"; Sha256 = "15053472E460343CF4695A7233307CFC03962D1C3CD1D3E73A29179A33FB11D8" },
+    @{ Path = "Runtime/Luau.xml.meta"; Sha256 = "55112CC099D1C5DC2B976BF62876FE88B18F43C49BC3BA63032993D3CC118FC9" },
     @{ Path = "Runtime/Luau.SourceGenerator.dll.meta"; Sha256 = "AAB0C496B4CE44B75F1D5259F73995B3A686FEDA1626EF8D658FA489EA1AE199" },
     @{ Path = "Runtime/Plugins/win-x64/luau_host.dll.meta"; Sha256 = "699FB21B9A924DB6EFE360450AD8CBD620CB980B8001F5F4D026FAA383F3E24D" },
     @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so.meta"; Sha256 = "C13B52911F78424D6F9B2C6FD86BF29F8B7680AFDE5F04B51664A06F117B1D01" },
@@ -456,7 +685,7 @@ foreach ($meta in $importerMetaBaselines) {
         (Get-PackageFile $meta.Path) `
         $meta.Sha256
 }
-Write-Host "PASS: managed/analyzer/native binaries and their importer metadata match the immutable pre-move hashes."
+Write-Host "PASS: managed/XML/analyzer/native artifacts and importer metadata match the Stage 6 semantic-freeze hashes."
 
 $managedImporter = Read-PackageText "Runtime/Luau.dll.meta"
 Assert-ContainsLiteral "Managed runtime importer" $managedImporter "isExplicitlyReferenced: 0"
@@ -690,8 +919,20 @@ Write-Host "PASS: retired global Resources and Addressables resolvers remain abs
 $importer = Read-PackageText "Editor/LuauImporter.cs"
 Assert-ContainsLiteral "Luau importer" $importer '[ScriptedImporter(3, "luau")]'
 foreach ($required in @(
-    "compilerOutput = LuauCompiler.Compile(source);",
-    "catch (LuauCompilationException exception)",
+    "source = ReadSourceBytes(",
+    "LuauAssetImportSettings.MaxImportedSourceBytes",
+    "text = DecodeSource(source);",
+    "compileResult = LuauUnity",
+    ".CompileAssetSourceAsync(",
+    "if (compileResult.Kind != LuauCompileResultKind.Success)",
+    "var compilerOutput = compileResult.Output;",
+    "ImportErrorObserverForTests",
+    "ctx.LogImportError(message);",
+    "static readonly UTF8Encoding StrictUtf8",
+    "throwOnInvalidBytes: true",
+    "var declaredLength = stream.Length;",
+    "if (declaredLength > maxSourceBytes)",
+    "catch (System.Exception exception)",
     "asset.SetSource(text, source);",
     "LuauAssetImportSettings.ImportPolicy ==",
     "LuauAssetImportPolicy.AllowFirstPartyPrecompile &&",
@@ -699,12 +940,22 @@ foreach ($required in @(
 )) {
     Assert-ContainsLiteral "Luau importer" $importer $required
 }
+foreach ($forbidden in @(
+    "File.ReadAllText",
+    "File.ReadAllBytes",
+    "Encoding.UTF8.GetBytes(text)",
+    "Encoding.UTF8.GetBytes(sourceText)"
+)) {
+    Assert-NotContainsLiteral "Strict bounded Luau importer" $importer $forbidden
+}
 Assert-LiteralOrder `
     "Luau importer compiler-identity dependency ordering" `
     $importer `
     @(
         "LuauCompilerIdentityDependency.DependsOn(ctx);",
-        "compilerOutput = LuauCompiler.Compile(source);",
+        "compileResult = LuauUnity",
+        ".CompileAssetSourceAsync(",
+        "var compilerOutput = compileResult.Output;",
         "LuauCompilerIdentityDependency.ScheduleRegistration(compilerOutput);"
     )
 
@@ -735,12 +986,40 @@ foreach ($required in @(
 $importerPolicyTests = Read-PackageText "Tests/EditMode/LuauImporterPolicyTests.cs"
 foreach ($required in @(
     "CompilerIdentityTracksCoverageInstrumentation",
+    "SourceAdmissionAcceptsExactLimitAndRejectsOneOverBeforeReading",
+    "StrictUtf8AcceptsBomAndEmptySourceAndRejectsInvalidBytes",
+    "ImporterRejectsOneByteOverTheConfiguredLimit",
+    "ImporterPreservesBomAndEmptySourceBytes",
+    "ImporterRejectsInvalidUtf8WithoutPersistingReplacementText",
+    "CompileFailurePreservesTheExactAdmittedSource",
+    "LegacyPrecompiledAssetWithoutSourceIdentityRequiresReimport",
+    "ImporterUsesBoundedSharedLaneAndPreservesSourceOnOutputLimit",
+    'FindProperty("sourceIdentity")',
     "CoverageLevel = 2",
     "coverageOutput.BytecodeSha256",
     "LuauCompilerIdentityDependency.ComputeHash(coverageOutput)",
     "LuauCompilerIdentityDependency.ComputeHash(defaultOutput)"
 )) {
     Assert-ContainsLiteral "Luau compiler coverage identity test" $importerPolicyTests $required
+}
+Assert-ContainsLiteral `
+    "Bounded importer compilation lane" `
+    $importer `
+    ".CompileAssetSourceAsync("
+Assert-NotContainsLiteral `
+    "Bounded importer compilation lane" `
+    $importer `
+    "LuauCompiler.Compile(source)"
+$compilationServiceTests = Read-RepositoryText "tests/Luau.Tests/LuauThreadedCompilationServiceTests.cs"
+foreach ($required in @(
+    "OversizedCompilerOutputIsAnInfrastructureLimitFailure",
+    "MaxBytecodeBytesPerResult = 3",
+    "bytecodeLength: 3",
+    "AssertResultShape(exact, LuauCompileResultKind.Success)",
+    "bytecodeLength: 4",
+    "LuauCompilationLimitKind.BytecodeBytesPerResult"
+)) {
+    Assert-ContainsLiteral "Bounded compiler-output exact/over tests" $compilationServiceTests $required
 }
 Write-Host "PASS: importer invalidation tracks compiler schema, options, and exact native identity before persistent artifact creation."
 Write-Host "PASS: SourceOnly imports compile transiently for diagnostics but persist source."
@@ -749,19 +1028,25 @@ $projectSettings = Read-PackageText "Editor/LuauUnityProjectSettings.cs"
 foreach ($required in @(
     "SourceOnly = 0",
     "AllowFirstPartyPrecompile = 1",
-    "LuauAssetImportPolicy importPolicy = LuauAssetImportPolicy.SourceOnly;"
+    "LuauAssetImportPolicy importPolicy = LuauAssetImportPolicy.SourceOnly;",
+    "DefaultMaxImportedSourceBytes = 1024 * 1024",
+    "int maxImportedSourceBytes = LuauAssetImportSettings.DefaultMaxImportedSourceBytes;",
+    "public static int MaxImportedSourceBytes",
+    "public static void SetMaxImportedSourceBytes(int maxSourceBytes)"
 )) {
     Assert-ContainsLiteral "Luau project import policy" $projectSettings $required
 }
 
 $checkedInSettings = Read-IntegrationText "ProjectSettings/LuauUnitySettings.asset"
 Assert-ContainsLiteral "Checked-in Luau project settings" $checkedInSettings "importPolicy: 0"
-Write-Host "PASS: the project-wide import policy is explicitly SourceOnly by default with one first-party opt-in mode."
+Assert-ContainsLiteral "Checked-in Luau project settings" $checkedInSettings "maxImportedSourceBytes: 1048576"
+Write-Host "PASS: the project-wide import policy is SourceOnly with one first-party opt-in and a finite 1 MiB importer cap."
 
 foreach ($required in @(
     "LuauAssetImportSettings.FirstPartyProvenanceId",
     "AssetDatabase.AssetPathToGUID(ctx.assetPath)",
     "var artifact = LuauBytecodeArtifact.Create(",
+    '"unity-asset-guid:" + assetGuid',
     "Encoding.UTF8.GetBytes(assetGuid)",
     "asset.SetVerifiedBytecode(sourceText, artifact);"
 )) {
@@ -777,7 +1062,11 @@ foreach ($required in @(
     "public ReadOnlySpan<byte> AsSpan()",
     "public ReadOnlyMemory<byte> AsMemory()",
     "throw InvalidContentKind();",
-    "internal LuauBytecodeArtifact GetVerifiedBytecode()"
+    "internal LuauBytecodeArtifact GetVerifiedBytecode()",
+    "[SerializeField] internal string sourceIdentity;",
+    "sourceIdentity = artifact.SourceIdentity;",
+    '"The serialized bytecode artifact has no source identity.',
+    "sourceIdentity,"
 )) {
     Assert-ContainsLiteral "Luau asset" $asset $required
 }
@@ -789,7 +1078,7 @@ Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoStringInto("
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.ExecuteVerifiedBytecode("
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "state.ExecuteVerifiedBytecodeInto("
-Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "public static ValueTask<LuauValue[]> ExecuteAsync("
+Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "public static ValueTask<LuauResultScope> ExecuteAsync("
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "public static ValueTask<int> ExecuteIntoAsync("
 Assert-ContainsLiteral "Luau asset execution extensions" $stateExtensions "LuauUnity.CompileAssetSourceAsync"
 Assert-NotContainsLiteral "Luau asset execution extensions" $stateExtensions "state.DoStringAsync("
@@ -806,7 +1095,7 @@ foreach ($forbidden in @(
 
 $stateCompilationExtensions = Read-PackageText "Runtime/LuauStateCompilationExtensions.cs"
 foreach ($required in @(
-    "public static ValueTask<LuauValue[]> ExecuteWithCompilationServiceAsync(",
+    "public static ValueTask<LuauResultScope> ExecuteWithCompilationServiceAsync(",
     "public static ValueTask<int> ExecuteIntoWithCompilationServiceAsync(",
     "SnapshotAssetForAsync(state, asset, cancellationToken)",
     "ValidateSourceSize(state, source.Length, assetName)",
@@ -828,6 +1117,9 @@ $unityCompilation = Read-PackageText "Runtime/LuauUnityCompilation.cs"
 foreach ($required in @(
     "static LuauAssetCompilationProvider assetCompilationProvider = CompileAsync;",
     "internal static ValueTask<LuauCompileResult> CompileAssetSourceAsync(",
+    "public static ValueTask<LuauModuleBundle> CompileModuleBundleAsync(",
+    "SharedModuleCompilationService.Instance",
+    "moduleMap.CompileModuleBundleAsync(",
     "internal static IDisposable OverrideAssetCompilationProviderForTests(",
     "new LuauThreadedCompilationService(",
     "MaxQueuedRequestCount = windows ? 32 : 16",
@@ -851,6 +1143,7 @@ foreach ($required in @(
 $unityCompilationTests = Read-PackageText "Tests/EditMode/LuauCompilationServiceTests.cs"
 foreach ($required in @(
     "EditorReloadHookDrainsSharedLaneAndRejectsAdmissionUntilReset",
+    "SharedFacadeCompilesModuleBundleThroughThePackageOwnedLane",
     "LuauCompilationServiceEditorLifetime.DrainForAssemblyReload();",
     "LuauUnity.ResetCompilationServiceAfterDrainForTests();",
     'Does.Contain("shutting down")'
@@ -881,7 +1174,7 @@ foreach ($required in @(
     "IsPublicOrProtected",
     "ExecuteExtensionSurfaceContainsOnlyApprovedShapes",
     '"ExecuteInto(Luau.LuauState,Luau.Unity.LuauAsset,System.Span<Luau.LuauValue>)->System.Int32"',
-    '"ExecuteAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<Luau.LuauValue[]>"',
+    '"ExecuteAsync(Luau.LuauState,Luau.Unity.LuauAsset,System.Threading.CancellationToken)->System.Threading.Tasks.ValueTask<Luau.LuauResultScope>"',
     'const string ApprovedApiSha256 ='
 )) {
     Assert-ContainsLiteral "Unity runtime public API inventory" $unityPublicApiTests $required
@@ -937,15 +1230,20 @@ Assert-LiteralOrder `
 Write-Host "PASS: SourceOnly hides precompile controls and unknown policy values still receive fail-closed build validation."
 Write-Host "PASS: reusable validation and the build preprocessor inspect imported asset content, not importer flags."
 
-$moduleMap = Read-PackageText "Runtime/LuauModuleMap.cs"
+Assert-PackagePathAbsent "Runtime/LuauModuleMap.cs"
+Assert-PackagePathAbsent "Runtime/LuauModuleMap.cs.meta"
+$moduleMap = Read-RepositoryText "src/Luau/LuauModuleMap.cs"
 foreach ($required in @(
     "public sealed class LuauModuleMap : LuauRequirer",
     "CanonicalizeModuleId",
     "protected override string GetCacheKey",
     "ExecuteModuleSource",
-    "(byte[])source.Clone()"
+    "(byte[])source.Clone()",
+    "public async ValueTask<LuauModuleBundle> CompileModuleBundleAsync(",
+    "public sealed class LuauModuleBundle : LuauRequirer",
+    "LuauModuleLimits"
 )) {
-    Assert-ContainsLiteral "Luau module map" $moduleMap $required
+    Assert-ContainsLiteral "Managed-core Luau module policy" $moduleMap $required
 }
 foreach ($forbidden in @(
     "using System.IO;",
@@ -954,7 +1252,7 @@ foreach ($forbidden in @(
     "ExecuteModuleBytecode",
     "ExecuteTrustedModuleBytecode"
 )) {
-    Assert-NotContainsLiteral "Luau module map" $moduleMap $forbidden
+    Assert-NotContainsLiteral "Managed-core Luau module policy" $moduleMap $forbidden
 }
 
 $unityFacade = Read-PackageText "Runtime/LuauUnity.cs"
@@ -998,7 +1296,7 @@ $managedPublicApiPath = Get-RepositoryFile "tests/Luau.Tests/PublicApi.approved.
 Assert-CanonicalTextFileHash `
     "Managed public API approval inventory" `
     $managedPublicApiPath `
-    "8BB40DC32B57F7B64DC6C99D0CD164534BF020773FE4CF9F490C1A86B137B7C4"
+    "31389FBA06EDC360196B4F5C68FF48E0132169A229C8B4973E494FD098B48218"
 $managedPublicApiProject = Read-RepositoryText "tests/Luau.Tests/Luau.Tests.csproj"
 Assert-ContainsLiteral `
     "Managed public API test project" `
@@ -1007,34 +1305,69 @@ Assert-ContainsLiteral `
 Assert-ContainsLiteral `
     "Unity public API approval inventory" `
     $unityPublicApiTests `
-    '"835c137e18e804c96fc86220019caab7c1378ebb557d871c03218bf1de12da2b"'
+    '"5918500aa9d9ec052e02606634530620de3f5f5f47e6b83d1b8901554de87692"'
 Assert-NotContainsLiteral `
     "Unity public API approval inventory" `
     $unityPublicApiTests `
     '"56c52c'
-Write-Host "PASS: managed API approval content is unchanged and Unity API approval contains only the reviewed smoke-type removal."
+Write-Host "PASS: managed and Unity public API approval inventories match the Stage 6 ownership surface."
 
 $headerPath = Get-RequiredFile $hostRoot "include/luau_host.h" "Native host ABI header"
 $exportsPath = Get-RequiredFile $hostRoot "exports/luau_host.exports" "Native host export allowlist"
 Assert-CanonicalTextFileHash `
     "Native host ABI header" `
     $headerPath `
-    "56D723242B7857B65B5E3BFFEFA54653B229AA7D8015F1798861263DFC962BB2"
+    "F3C276BDCD88254503E63767598F6071089760835A57CC79673C7094DBF84459"
 Assert-CanonicalTextFileHash `
     "Native host export allowlist" `
     $exportsPath `
-    "C5F4E112B480D1C057A334F766CD05FF800974E2D648B34100D0BBEA47EA0A6B"
+    "DC6351C83986F1A1B8EDAA246F97701C4CD0CAFD34D605C91F0BFF910F4558A0"
 $exports = @(
     Get-Content -LiteralPath $exportsPath |
         ForEach-Object { $_.Trim() } |
         Where-Object { $_ -ne "" -and !$_.StartsWith("#", [StringComparison]::Ordinal) }
 )
-Assert-Equal "Native host export count" $exports.Count 85
+Assert-Equal "Native host export count" $exports.Count 80
 Assert-SequenceEqual "Native host sorted export allowlist" $exports @($exports | Sort-Object -CaseSensitive)
 foreach ($export in $exports) {
     if (!$export.StartsWith("luau_host_", [StringComparison]::Ordinal)) {
         throw "Native export does not belong to the versioned host ABI: $export"
     }
+}
+if ($exports -cnotcontains "luau_host_callback_registration_id") {
+    throw "Native ABI 2.0 is missing direct callback registration identity."
+}
+foreach ($removedExport in @(
+    "luau_host_callback_userdata",
+    "luau_host_is_thread_reset",
+    "luau_host_raw_equal",
+    "luau_host_to_function",
+    "luau_host_open_all_libraries",
+    "luau_host_memory_arm_quota_failure"
+)) {
+    if ($exports -ccontains $removedExport) {
+        throw "Removed native ABI 2.0 export is still present: $removedExport"
+    }
+}
+$nativeHeader = Get-Content -LiteralPath $headerPath -Raw
+foreach ($required in @(
+    "LUAU_HOST_ABI_MAJOR = 2",
+    "LUAU_HOST_ABI_MINOR = 0",
+    "LUAU_HOST_FEATURE_OPAQUE_REFERENCE_TOKENS = 1U << 9",
+    "LUAU_HOST_FEATURE_DIRECT_CALLBACK_IDENTITY = 1U << 10",
+    "LUAU_HOST_FEATURE_OBSERVATION_ONLY_GC_INTERRUPT = 1U << 11"
+)) {
+    Assert-ContainsLiteral "Native ABI 2.0 header" $nativeHeader $required
+}
+$managedNativeProtection = Read-RepositoryText "src/Luau/Internal/LuauNativeProtection.cs"
+foreach ($required in @(
+    "ExpectedAbiMajor = 2",
+    "MinimumAbiMinor = 0",
+    "ExpectedFeatureFlags = 0xfffU",
+    "info.abi_minor != LuauNativeProtection.MinimumAbiMinor",
+    'expected the exact ABI {LuauNativeProtection.ExpectedAbiMajor}.{LuauNativeProtection.MinimumAbiMinor}'
+)) {
+    Assert-ContainsLiteral "Managed ABI 2.0 verifier" $managedNativeProtection $required
 }
 
 $expectedUpstreamRevision = "6e9b580e2e24643214caf0f4bbbb3db911ca30f3"
@@ -1078,7 +1411,7 @@ Assert-ContainsLiteral `
     "Native host pinned revision" `
     $cmake `
     "set(LUAU_HOST_UPSTREAM_REVISION `"$expectedUpstreamRevision`")"
-Write-Host "PASS: native ABI header, 85-symbol allowlist, checked-in plugins, and pinned upstream revision are unchanged."
+Write-Host "PASS: native ABI 2.0 header, 80-symbol allowlist, stale-safe O(1) references, checked-in plugins, and pinned upstream revision are synchronized."
 
 $integrationManifest = Read-IntegrationJson "Packages/manifest.json"
 $integrationDependency = $integrationManifest.dependencies.PSObject.Properties["com.nuskey.luau.unity"]
@@ -1114,6 +1447,11 @@ foreach ($consumerProbeFile in @(
 )) {
     Get-RepositoryFile $consumerProbeFile | Out-Null
 }
+$consumerApiProbe = Read-RepositoryText "tests/Luau.Unity.PackageConsumerProbe/ConsumerApiProbe.cs"
+Assert-ContainsLiteral `
+    "Package consumer module-bundle adapter" `
+    $consumerApiProbe `
+    "return LuauUnity.CompileModuleBundleAsync("
 Write-Host "PASS: the integration project consumes the standalone package and the generated-consumer fixture remains a source-only probe."
 
 $operationalFiles = @(
@@ -1123,6 +1461,7 @@ $operationalFiles = @(
     ".github/workflows/build-luau-host.windows.yml",
     ".github/workflows/build-luau-host.yml",
     ".github/workflows/validate-managed-package.yml",
+    ".github/dependabot.yml",
     "native/luau-host/CMakeLists.txt",
     "native/luau-host/cmake/Write-ArtifactManifest.ps1",
     "tools/Copy-DotNetArtifactsToUnity.ps1",
@@ -1131,7 +1470,9 @@ $operationalFiles = @(
     "tools/Test-ManagedHarnessSelection.ps1",
     "tools/Test-UnityHost.ps1",
     "tools/Test-UnityPackageConsumer.ps1",
+    "tools/Test-UnityPackageRelease.ps1",
     "tools/Test-UnityPackageStatic.ps1",
+    "tools/UnityPackageReleasePolicy.json",
     "tools/harness/Luau.Interop.csproj",
     "tests/Luau.Unity.Integration/Packages/manifest.json",
     "tests/Luau.Unity.Integration/Packages/packages-lock.json"
@@ -1171,6 +1512,122 @@ $copyManaged = Read-RepositoryText "tools/Copy-DotNetArtifactsToUnity.ps1"
 Assert-ContainsLiteral "Managed artifact copy path" $copyManaged '$packageRoot = Join-Path $root "Luau.Unity"'
 $copyNative = Read-RepositoryText "tools/Copy-NativeArtifactsToUnity.ps1"
 Assert-ContainsLiteral "Native artifact copy path" $copyNative '$pluginsRoot = Join-Path $packageRoot "Runtime/Plugins"'
+foreach ($required in @(
+    "--strip-unneeded",
+    "--remove-section=.comment",
+    '"shipping-check"',
+    '"shipping"',
+    '"symbols/$target"',
+    "--only-keep-debug",
+    "Assert-AndroidElfHardening",
+    "Write-ShippingManifest",
+    "Write-SymbolManifest",
+    "source_commit",
+    "source_tree_clean",
+    "toolchain",
+    "unstripped_input",
+    "shipping_output",
+    "audited_manifest_sha256",
+    "maximum_bytes",
+    "Write-ArtifactManifest.ps1",
+    "UnityPackageReleasePolicy.json"
+)) {
+    Assert-ContainsLiteral "Native shipping artifact shaping" $copyNative $required
+}
+$nativeManifestWriter = Read-RepositoryText "native/luau-host/cmake/Write-ArtifactManifest.ps1"
+foreach ($required in @(
+    "schema_version = 3",
+    "source_commit",
+    "source_tree_clean",
+    "Get-ToolchainMetadata",
+    "CMAKE_CXX_COMPILER_ID",
+    "CMAKE_CXX_COMPILER_VERSION",
+    "CMAKE_CXX_COMPILER_LINKER_ID",
+    "CMAKE_CXX_COMPILER_LINKER_VERSION",
+    "CMAKE_MAKE_PROGRAM",
+    "CMAKE_SYSTEM_VERSION",
+    "windows_sdk",
+    "windows_header_sha256",
+    "runtime_header_sha256",
+    "kernel_library_sha256",
+    "executable_sha256",
+    "ci_image_version"
+)) {
+    Assert-ContainsLiteral "Native artifact toolchain provenance" $nativeManifestWriter $required
+}
+$releasePolicy = Read-RepositoryJson "tools/UnityPackageReleasePolicy.json"
+Assert-Equal "Release policy schema" ([int]$releasePolicy.schemaVersion) 1
+Assert-Equal "Release policy package" $releasePolicy.packageId "com.nuskey.luau.unity"
+Assert-Equal "Release policy version" $releasePolicy.packageVersion "0.2.0"
+Assert-Equal "Release policy tag" $releasePolicy.releaseTag "v0.2.0"
+Assert-Equal "Release policy archive format" $releasePolicy.archiveFormat "ustar+gzip-stored-v1"
+Assert-Equal "Release policy NDK" $releasePolicy.androidNdkRevision "27.2.12479018"
+Assert-Equal "Release policy archive budget" ([long]$releasePolicy.maximumArchiveBytes) 8388608L
+$expectedReleaseArtifactPolicy = @(
+    @{ Path = "Runtime/Luau.dll"; MaximumBytes = 1048576L },
+    @{ Path = "Runtime/Luau.xml"; MaximumBytes = 1048576L },
+    @{ Path = "Runtime/Luau.SourceGenerator.dll"; MaximumBytes = 524288L },
+    @{ Path = "Runtime/Plugins/win-x64/luau_host.dll"; MaximumBytes = 2097152L },
+    @{ Path = "Runtime/Plugins/android-arm64/libluau_host.so"; MaximumBytes = 3145728L },
+    @{ Path = "Runtime/Plugins/android-x64/libluau_host.so"; MaximumBytes = 3145728L }
+)
+Assert-SequenceEqual `
+    "Release artifact policy allowlist" `
+    @($releasePolicy.artifacts | ForEach-Object path) `
+    @($expectedReleaseArtifactPolicy | ForEach-Object Path)
+for ($index = 0; $index -lt $expectedReleaseArtifactPolicy.Count; $index++) {
+    Assert-Equal `
+        "Release artifact budget $($expectedReleaseArtifactPolicy[$index].Path)" `
+        ([long]$releasePolicy.artifacts[$index].maximumBytes) `
+        ([long]$expectedReleaseArtifactPolicy[$index].MaximumBytes)
+}
+$releaseValidator = Read-RepositoryText "tools/Test-UnityPackageRelease.ps1"
+foreach ($required in @(
+    "Package top-level allowlist",
+    "Managed/native/XML artifact allowlist",
+    "Duplicate Unity GUID",
+    "New-DeterministicPackageArchive",
+    "New-DeterministicStoredGzip",
+    "stored DEFLATE blocks",
+    "0xcbf43926",
+    "ConvertTo-Json -Depth 8 -Compress",
+    "The package archive is not deterministic",
+    'refs/tags/$Tag^{commit}',
+    "The repository working tree must be clean for exact-tag validation",
+    'Test-UnityPackageStatic.ps1',
+    'ls-tree -r --name-only $Tag -- Luau.Unity',
+    'hash-object --no-filters',
+    'Exact-tag package file inventory',
+    '?path=Luau.Unity#$Tag',
+    "Test-UnityPackageConsumer.ps1",
+    'PackageReference = $taggedInstallUrl',
+    'ExpectedGitCommit = $tagCommit',
+    'UnityTimeoutMinutes = $ConsumerTimeoutMinutes'
+)) {
+    Assert-ContainsLiteral "Package release validator" $releaseValidator $required
+}
+$consumerValidator = Read-RepositoryText "tools/Test-UnityPackageConsumer.ps1"
+foreach ($required in @(
+    "function Resolve-PackageContentRoot",
+    'PackageSource',
+    '$resolvedPackageJsonPath = Join-Path $packageContentRoot "package.json"',
+    '$sampleSource = [System.IO.Path]::GetFullPath((Join-Path $packageContentRoot $sample.path))',
+    '(Join-Path $packageContentRoot "Runtime/Luau.xml")',
+    '[int] $UnityTimeoutMinutes = 20',
+    '$timeoutMilliseconds = [int]([TimeSpan]::FromMinutes($UnityTimeoutMinutes).TotalMilliseconds)',
+    '$unityProcess.WaitForExit($timeoutMilliseconds)',
+    'System32/taskkill.exe',
+    'packages-lock.json',
+    '$lockEntry.source -cne "git"',
+    '$lockEntry.version -cne $resolvedPackageReference',
+    '$lockEntry.hash.Equals($ExpectedGitCommit'
+)) {
+    Assert-ContainsLiteral "Exact-reference package consumer" $consumerValidator $required
+}
+Assert-NotContainsLiteral `
+    "Exact-reference package consumer samples" `
+    $consumerValidator `
+    'Join-Path $packageRoot $sample.path'
 $hostSoak = Read-RepositoryText "tools/Test-LuauHostSoak.ps1"
 Assert-ContainsLiteral "Host soak default plugin" $hostSoak '"Luau.Unity/Runtime/Plugins/win-x64/luau_host.dll"'
 $harnessProject = Read-RepositoryText "tools/harness/Luau.Interop.csproj"
@@ -1187,6 +1644,7 @@ Write-Host "PASS: operational scripts use only final package, integration-projec
 
 $managedWorkflow = Read-RepositoryText ".github/workflows/validate-managed-package.yml"
 Assert-ContainsLiteral "Managed validation workflow" $managedWorkflow "pull_request:"
+Assert-ContainsLiteral "Managed validation outer timeout" $managedWorkflow "timeout-minutes: 45"
 if ([Regex]::IsMatch($managedWorkflow, '(?m)^\s+paths(?:-ignore)?:\s*$')) {
     throw "Managed package validation must remain unfiltered so every compatibility path triggers it."
 }
@@ -1194,7 +1652,8 @@ foreach ($requiredCommand in @(
     "dotnet test Luau.slnx",
     "tools/Test-ManagedHarnessSelection.ps1",
     "tools/Copy-DotNetArtifactsToUnity.ps1",
-    "tools/Test-UnityPackageStatic.ps1"
+    "tools/Test-UnityPackageStatic.ps1",
+    "tools/Test-UnityPackageRelease.ps1"
 )) {
     Assert-ContainsLiteral "Managed validation workflow" $managedWorkflow $requiredCommand
 }
@@ -1224,6 +1683,178 @@ $compatibilityPathsCoveredByUnfilteredPullRequests = @(
 foreach ($compatibilityPath in $compatibilityPathsCoveredByUnfilteredPullRequests) {
     Get-RepositoryFile $compatibilityPath | Out-Null
 }
-Write-Host "PASS: unfiltered pull requests validate API baselines, interop, plugins, native ABI inputs, and deterministic harness paths without adding Stage 6 native lanes."
+Write-Host "PASS: unfiltered pull requests validate API baselines, interop, plugins, native ABI inputs, and deterministic package paths."
+
+$workflowDirectory = Join-Path $repositoryRoot ".github/workflows"
+$workflowFiles = @(
+    Get-ChildItem -LiteralPath $workflowDirectory -File |
+        Where-Object { $_.Extension -in @(".yml", ".yaml") } |
+        Sort-Object Name
+)
+if ($workflowFiles.Count -eq 0) {
+    throw "No GitHub Actions workflows were found."
+}
+$externalActionCount = 0
+foreach ($workflowFile in $workflowFiles) {
+    $workflowText = [IO.File]::ReadAllText($workflowFile.FullName)
+    if ($workflowText.IndexOf('${{ secrets.', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "Workflow '$($workflowFile.Name)' must not consume fork secrets."
+    }
+    if (![Regex]::IsMatch($workflowText, '(?m)^permissions:\s*$') -or
+        ![Regex]::IsMatch($workflowText, '(?m)^\s{2}contents:\s+read\s*$')) {
+        throw "Workflow '$($workflowFile.Name)' must declare least privilege with contents: read."
+    }
+
+    $usesMatches = [Regex]::Matches(
+        $workflowText,
+        '(?m)^\s*uses:\s*(?<reference>[^\s#]+)(?:\s+#\s*(?<comment>.+?))?\s*$')
+    foreach ($usesMatch in $usesMatches) {
+        $reference = $usesMatch.Groups["reference"].Value
+        if ($reference.StartsWith("./", [StringComparison]::Ordinal)) {
+            continue
+        }
+        $externalActionCount++
+        if ($reference -notmatch '^[^@\s]+@[0-9a-fA-F]{40}$') {
+            throw "Workflow '$($workflowFile.Name)' action is not pinned by a full commit SHA: $reference"
+        }
+        if ([string]::IsNullOrWhiteSpace($usesMatch.Groups["comment"].Value)) {
+            throw "Workflow '$($workflowFile.Name)' SHA pin lacks a readable release/version comment: $reference"
+        }
+    }
+}
+if ($externalActionCount -lt 1) {
+    throw "Workflow validation found no externally pinned actions."
+}
+
+$dependabot = Read-RepositoryText ".github/dependabot.yml"
+foreach ($required in @(
+    "version: 2",
+    "package-ecosystem: github-actions",
+    "interval: weekly"
+)) {
+    Assert-ContainsLiteral "Reviewed automated action-pin updates" $dependabot $required
+}
+
+$nativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.yml"
+foreach ($required in @(
+    "pull_request:",
+    "paths:",
+    '".gitmodules"',
+    '"native/luau"',
+    '"native/luau/**"',
+    '"native/luau-host/**"',
+    '"Luau.Unity/Runtime/Interop/**"',
+    '"Luau.Unity/Runtime/Plugins/**"',
+    '"tools/Copy-NativeArtifactsToUnity.ps1"',
+    "workflow_dispatch:",
+    "linux-sanitize",
+    "Linux ASan, UBSan, and bounded fuzz smoke",
+    "timeout-minutes: 30",
+    'test "$(clang-18 -dumpversion)" = "18.1.3"',
+    "luau_host_fuzz_smoke",
+    "if: failure()",
+    "retention-days: 30",
+    "needs: [build-windows, build-android, sanitize-and-fuzz]",
+    "tools/Test-UnityPackageRelease.ps1",
+    "com.nuskey.luau.unity-0.2.0.tgz",
+    "luau-unity-upm-release-candidate"
+)) {
+    Assert-ContainsLiteral "Native pull-request/security workflow" $nativeWorkflow $required
+}
+Assert-LiteralCount "Native submodule gitlink CI trigger" $nativeWorkflow '"native/luau"' 2
+Assert-NotContainsLiteral "Docs-only native workflow filtering" $nativeWorkflow '"docs/**"'
+
+$cmakePresets = Read-RepositoryText "native/luau-host/CMakePresets.json"
+foreach ($required in @(
+    '"generator": "Visual Studio 17 2022"',
+    '"CMAKE_SYSTEM_VERSION": "10.0.22621.0"',
+    '"value": "v143"',
+    '"VCToolsVersion": "14.42.34433"',
+    '"CMAKE_C_COMPILER": "clang-18"',
+    '"CMAKE_CXX_COMPILER": "clang++-18"',
+    '"LUAU_HOST_ENABLE_SANITIZERS": "ON"',
+    '"LUAU_HOST_BUILD_FUZZERS": "ON"'
+)) {
+    Assert-ContainsLiteral "Pinned sanitizer/fuzzer preset" $cmakePresets $required
+}
+$hostCMake = Read-RepositoryText "native/luau-host/CMakeLists.txt"
+foreach ($required in @(
+    "-fsanitize=address,undefined",
+    "-fno-sanitize-recover=all",
+    "luau_host_compiler_fuzzer",
+    "luau_host_abi_fuzzer",
+    "luau_host_fuzz_smoke",
+    "-runs=5000",
+    "-runs=10000",
+    "fuzz-artifacts"
+)) {
+    Assert-ContainsLiteral "Native sanitizer/fuzzer targets" $hostCMake $required
+}
+Assert-LiteralCount "Native libFuzzer per-target timeout bound" $hostCMake "-timeout=5" 2
+Assert-LiteralCount "Native libFuzzer per-target RSS bound" $hostCMake "-rss_limit_mb=2048" 2
+
+$artifactFuzzEngine = Read-RepositoryText "fuzz/Luau.ArtifactFuzz/ArtifactFuzzEngine.cs"
+$runOneStart = $artifactFuzzEngine.IndexOf(
+    "    bool RunOne(",
+    [StringComparison]::Ordinal)
+if ($runOneStart -lt 0) {
+    throw "Managed artifact fuzz per-input evaluation boundary is missing."
+}
+$evaluateMethodStart = $artifactFuzzEngine.IndexOf(
+    "    static ParseOutcome Evaluate(byte[] input)",
+    $runOneStart,
+    [StringComparison]::Ordinal)
+if ($evaluateMethodStart -lt 0) {
+    throw "Managed artifact fuzz per-input evaluation boundary is missing."
+}
+$runOneText = $artifactFuzzEngine.Substring($runOneStart, $evaluateMethodStart - $runOneStart)
+Assert-LiteralOrder "Managed artifact fuzz per-input checkpoint" $runOneText @(
+    "ReproducerStore.Checkpoint(options.ReproducerDirectory, input, context);",
+    "var outcome = Evaluate(input);"
+)
+Assert-NotContainsLiteral "Managed artifact fuzz per-input checkpoint retention" $runOneText "ReproducerStore.ClearCheckpoint"
+Assert-LiteralCount `
+    "Managed artifact fuzz successful-run checkpoint cleanup" `
+    $artifactFuzzEngine `
+    "ReproducerStore.ClearCheckpoint(options.ReproducerDirectory);" `
+    2
+
+$artifactFuzzReproducerStore = Read-RepositoryText "fuzz/Luau.ArtifactFuzz/ReproducerStore.cs"
+foreach ($required in @(
+    'const string CheckpointBinaryName = "current-input.bin";',
+    'const string CheckpointReportName = "current-input.txt";',
+    "WriteAtomically(Path.Combine(directory, CheckpointBinaryName), input);",
+    "Path.Combine(directory, CheckpointReportName),",
+    "foreach (var name in new[] { CheckpointBinaryName, CheckpointReportName })",
+    "File.Delete(path);"
+)) {
+    Assert-ContainsLiteral "Managed artifact fuzz in-flight checkpoint storage" $artifactFuzzReproducerStore $required
+}
+
+$windowsNativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.windows.yml"
+foreach ($required in @(
+    "Verify pinned MSVC toolchain",
+    '$reviewedToolsVersion = "14.42.34433"',
+    '$reviewedCompilerVersion = "19.42.34433.0"',
+    '$reviewedSdkVersion = "10.0.22621.0"',
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Windows Kits/10",
+    "Require current shipped Windows plugin",
+    "Shape shipping host and external symbols",
+    "native/luau-host/out/shipping/win-x64/",
+    "native/luau-host/out/symbols/win-x64/"
+)) {
+    Assert-ContainsLiteral "Windows native release artifacts" $windowsNativeWorkflow $required
+}
+$androidNativeWorkflow = Read-RepositoryText ".github/workflows/build-luau-host.android.yml"
+foreach ($required in @(
+    "Require current shipped Android plugin",
+    "Shape stripped shipping host and external symbols",
+    'native/luau-host/out/shipping/${{ matrix.platform }}/',
+    'native/luau-host/out/symbols/${{ matrix.platform }}/'
+)) {
+    Assert-ContainsLiteral "Android native release artifacts" $androidNativeWorkflow $required
+}
+Write-Host "PASS: workflows use reviewed SHA pins, least privilege, native-sensitive PR gates, pinned sanitizer/fuzz lanes, reproducible artifact uploads, and automated pin maintenance."
 
 Write-Host "Unity package static policy validation passed."

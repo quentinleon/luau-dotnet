@@ -31,11 +31,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ApprovedBuildInputSha256 = "9f5a23faad2e6b07be02bbc9fe1f410629e79937c1626b0d1d58b0ea481cefd6"
+$ApprovedBuildInputSha256 = "2ac37a6c388dd1ed39a450d2eebaad679d8bb38ca752623069eecc48d38d79dc"
 $ApprovedUpstreamRevisionHash = [Convert]::ToUInt64("c45f010aabf167ac", 16)
-$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("106bf44141c27552", 16)
-$ApprovedFeatureFlags = [uint32]0x1ff
-$ApprovedExportCount = 85
+$ApprovedHostBuildFingerprint = [Convert]::ToUInt64("e22f181ac247f52a", 16)
+$ApprovedFeatureFlags = [uint32]0xfff
+$ApprovedExportCount = 80
 
 function Get-RequiredMatchValue {
     param(
@@ -124,6 +124,151 @@ function Get-CMakeCacheValue {
         -Text $Cache `
         -Pattern "(?m)^${escapedName}:[^=]+=(.+)$" `
         -Description "CMake cache value $Name").Trim()
+}
+
+function Get-CMakeSetValue {
+    param(
+        [string] $Text,
+        [string] $Name
+    )
+
+    $escapedName = [regex]::Escape($Name)
+    $match = [regex]::Match(
+        $Text,
+        "(?m)^set\(${escapedName}\s+(?:`"(?<quoted>[^`"]*)`"|(?<plain>[^\)\r\n]*))\)")
+    if (!$match.Success) {
+        throw "Unable to derive generated CMake value $Name."
+    }
+
+    return $(if ($match.Groups["quoted"].Success) {
+        $match.Groups["quoted"].Value
+    }
+    else {
+        $match.Groups["plain"].Value.Trim()
+    })
+}
+
+function Get-ToolFileRecord {
+    param(
+        [string] $Path,
+        [string] $Identity,
+        [string] $Version
+    )
+
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Configured tool does not exist: $Path"
+    }
+
+    return [ordered]@{
+        file = [IO.Path]::GetFileName($Path)
+        identity = $Identity
+        version = $Version
+        sha256 = Get-LowerFileSha256 $Path
+    }
+}
+
+function Get-ToolchainMetadata {
+    param([string] $ArtifactPlatform)
+
+    $preset = switch ($ArtifactPlatform) {
+        "win-x64" { "windows-x64" }
+        "android-arm64" { "android-arm64" }
+        "android-x64" { "android-x64" }
+        default { throw "Unsupported artifact platform: $ArtifactPlatform" }
+    }
+    $buildDirectory = Join-Path $hostRoot "out/build/$preset"
+    $cachePath = Join-Path $buildDirectory "CMakeCache.txt"
+    if (!(Test-Path -LiteralPath $cachePath -PathType Leaf)) {
+        throw "Toolchain provenance requires the configured CMake cache: $cachePath"
+    }
+    $cache = Get-Content -LiteralPath $cachePath -Raw
+    $cmakeCommand = Get-CMakeCacheValue $cache "CMAKE_COMMAND"
+    $generator = Get-CMakeCacheValue $cache "CMAKE_GENERATOR"
+    $cmakeVersion = "{0}.{1}.{2}" -f `
+        (Get-CMakeCacheValue $cache "CMAKE_CACHE_MAJOR_VERSION"), `
+        (Get-CMakeCacheValue $cache "CMAKE_CACHE_MINOR_VERSION"), `
+        (Get-CMakeCacheValue $cache "CMAKE_CACHE_PATCH_VERSION")
+    $cmakeVersionOutput = @(& $cmakeCommand --version 2>&1)
+    $cmakeVersionExitCode = $LASTEXITCODE
+    $reportedCmakeVersion = ($cmakeVersionOutput | Select-Object -First 1 | Out-String).Trim()
+    if ($cmakeVersionExitCode -ne 0 -or !$reportedCmakeVersion.StartsWith("cmake version ", [StringComparison]::Ordinal)) {
+        throw "Unable to query configured CMake version from $cmakeCommand."
+    }
+
+    $compilerDescriptors = @(
+        Get-ChildItem `
+            -Path (Join-Path $buildDirectory "CMakeFiles/$cmakeVersion*/CMakeCXXCompiler.cmake") `
+            -File `
+            -ErrorAction Stop)
+    if ($compilerDescriptors.Count -ne 1) {
+        throw "Expected one CMake C++ compiler descriptor for $preset/$cmakeVersion; found $($compilerDescriptors.Count). Use a clean configured build tree."
+    }
+    $compilerDescriptor = Get-Content -LiteralPath $compilerDescriptors[0].FullName -Raw
+    $compilerPath = Get-CMakeSetValue $compilerDescriptor "CMAKE_CXX_COMPILER"
+    $compilerId = Get-CMakeSetValue $compilerDescriptor "CMAKE_CXX_COMPILER_ID"
+    $compilerVersion = Get-CMakeSetValue $compilerDescriptor "CMAKE_CXX_COMPILER_VERSION"
+    # The Android compiler descriptor may preserve an 8.3/no-extension linker
+    # spelling. The cache carries the directly invokable linker file.
+    $linkerPath = Get-CMakeCacheValue $cache "CMAKE_LINKER"
+    $linkerId = Get-CMakeSetValue $compilerDescriptor "CMAKE_CXX_COMPILER_LINKER_ID"
+    $linkerVersion = Get-CMakeSetValue $compilerDescriptor "CMAKE_CXX_COMPILER_LINKER_VERSION"
+
+    $makeProgramRecord = $null
+    $makeProgramMatch = [regex]::Match($cache, "(?m)^CMAKE_MAKE_PROGRAM:[^=]+=(.+)$")
+    if ($makeProgramMatch.Success) {
+        $makeProgram = $makeProgramMatch.Groups[1].Value.Trim()
+        if (!(Test-Path -LiteralPath $makeProgram -PathType Leaf)) {
+            throw "Configured build tool does not exist: $makeProgram"
+        }
+        $makeProgramVersionOutput = @(& $makeProgram --version 2>&1)
+        $makeProgramVersionExitCode = $LASTEXITCODE
+        $makeProgramVersion = ($makeProgramVersionOutput | Select-Object -First 1 | Out-String).Trim()
+        if ($makeProgramVersionExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($makeProgramVersion)) {
+            throw "Unable to query configured build-tool version from $makeProgram."
+        }
+        $makeProgramRecord = [ordered]@{
+            file = [IO.Path]::GetFileName($makeProgram)
+            version = $makeProgramVersion
+            sha256 = Get-LowerFileSha256 $makeProgram
+        }
+    }
+
+    $metadata = [ordered]@{
+        cmake = [ordered]@{
+            version = $reportedCmakeVersion.Substring("cmake version ".Length)
+            generator = $generator
+            executable_sha256 = Get-LowerFileSha256 $cmakeCommand
+        }
+        compiler = Get-ToolFileRecord $compilerPath $compilerId $compilerVersion
+        linker = Get-ToolFileRecord $linkerPath $linkerId $linkerVersion
+        build_tool = $makeProgramRecord
+        build_host = [ordered]@{
+            os = [Environment]::OSVersion.VersionString
+            architecture = [string]$env:PROCESSOR_ARCHITECTURE
+            ci_image_os = [string]$env:ImageOS
+            ci_image_version = [string]$env:ImageVersion
+        }
+    }
+    if ($ArtifactPlatform -eq "win-x64") {
+        $sdkVersion = Get-CMakeCacheValue $cache "CMAKE_SYSTEM_VERSION"
+        $sdkRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits/10"
+        $windowsHeader = Join-Path $sdkRoot "Include/$sdkVersion/um/Windows.h"
+        $runtimeHeader = Join-Path $sdkRoot "Include/$sdkVersion/ucrt/corecrt.h"
+        $kernelLibrary = Join-Path $sdkRoot "Lib/$sdkVersion/um/x64/kernel32.lib"
+        foreach ($requiredSdkFile in @($windowsHeader, $runtimeHeader, $kernelLibrary)) {
+            if (!(Test-Path -LiteralPath $requiredSdkFile -PathType Leaf)) {
+                throw "Configured Windows SDK $sdkVersion is incomplete: $requiredSdkFile"
+            }
+        }
+        $metadata["windows_sdk"] = [ordered]@{
+            version = $sdkVersion
+            windows_header_sha256 = Get-LowerFileSha256 $windowsHeader
+            runtime_header_sha256 = Get-LowerFileSha256 $runtimeHeader
+            kernel_library_sha256 = Get-LowerFileSha256 $kernelLibrary
+        }
+    }
+
+    return $metadata
 }
 
 function Get-BinaryArchitecture {
@@ -289,6 +434,7 @@ $upstreamRoot = Join-Path $repositoryRoot "native/luau"
 $packageRoot = Join-Path $repositoryRoot "Luau.Unity"
 $headerPath = Join-Path $hostRoot "include/luau_host.h"
 $sourcePath = Join-Path $hostRoot "src/luau_host.cpp"
+$referenceTokensPath = Join-Path $hostRoot "src/reference_tokens.h"
 $allocatorPath = Join-Path $hostRoot "src/tracked_allocation.h"
 $exportsPath = Join-Path $hostRoot "exports/luau_host.exports"
 $cmakePath = Join-Path $hostRoot "CMakeLists.txt"
@@ -300,6 +446,7 @@ $managedTypesPath = Join-Path $packageRoot "Runtime/Interop/NativeTypes.cs"
 foreach ($requiredPath in @(
     $headerPath,
     $sourcePath,
+    $referenceTokensPath,
     $allocatorPath,
     $exportsPath,
     $cmakePath,
@@ -519,10 +666,11 @@ Assert-Equal "Checked-out Luau revision" $actualUpstreamRevision $upstreamRevisi
 
 $headerSha256 = Get-LowerFileSha256 $headerPath
 $sourceSha256 = Get-LowerFileSha256 $sourcePath
+$referenceTokensSha256 = Get-LowerFileSha256 $referenceTokensPath
 $allocatorSha256 = Get-LowerFileSha256 $allocatorPath
 $exportsSha256 = Get-LowerFileSha256 $exportsPath
 $buildInputDescriptor =
-    "abi=$abiMajor.$abiMinor;upstream=$upstreamRevision;header=$headerSha256;source=$sourceSha256;allocator=$allocatorSha256;exports=$exportsSha256"
+    "abi=$abiMajor.$abiMinor;upstream=$upstreamRevision;header=$headerSha256;source=$sourceSha256;references=$referenceTokensSha256;allocator=$allocatorSha256;exports=$exportsSha256"
 $buildInputSha256 = Get-TextSha256 $buildInputDescriptor
 $upstreamRevisionHash = Get-Fnv1a64 $upstreamRevision
 $hostBuildFingerprint = Get-Fnv1a64 "luau-host-inputs;$buildInputSha256;$Configuration"
@@ -579,6 +727,24 @@ foreach ($export in $approvedExports) {
 }
 Invoke-BinaryExportAudit $resolvedBinary $Platform
 
+$sourceCommit = (& git -C $repositoryRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw "Unable to resolve the source commit for native artifact provenance: $sourceCommit"
+}
+$sourceCommit = $sourceCommit.ToLowerInvariant()
+$sourceStatus = (& git -C $repositoryRoot status --porcelain=v1 --untracked-files=all 2>&1 | Out-String)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect the source tree for native artifact provenance: $sourceStatus"
+}
+$sourceTreeClean = [string]::IsNullOrWhiteSpace($sourceStatus)
+$toolchain = Get-ToolchainMetadata $Platform
+if ($Platform.StartsWith("android-", [StringComparison]::Ordinal)) {
+    $toolchain["android"] = [ordered]@{
+        api = $AndroidApi
+        ndk_revision = $AndroidNdk
+    }
+}
+
 $platformMetadata = switch ($Platform) {
     "win-x64" { [ordered]@{ os = "windows"; architecture = "x64" } }
     "android-arm64" { [ordered]@{ os = "android"; architecture = "arm64" } }
@@ -617,10 +783,13 @@ $abi = [ordered]@{
 
 $binary = Get-Item -LiteralPath $resolvedBinary
 $manifest = [ordered]@{
-    schema_version = 2
+    schema_version = 3
     artifact = $binary.Name
     platform = $Platform
+    source_commit = $sourceCommit
+    source_tree_clean = $sourceTreeClean
     platform_metadata = $platformMetadata
+    toolchain = $toolchain
     binary_architecture = $binaryArchitecture
     binary_identity = [ordered]@{
         record_size = $binaryIdentity.record_size
@@ -645,6 +814,7 @@ $manifest = [ordered]@{
     build_inputs = [ordered]@{
         header_sha256 = $headerSha256
         source_sha256 = $sourceSha256
+        reference_tokens_sha256 = $referenceTokensSha256
         allocator_sha256 = $allocatorSha256
         exports_sha256 = $exportsSha256
         aggregate_sha256 = $buildInputSha256
@@ -669,3 +839,5 @@ Write-Host "Validated luau_host ABI manifest: $resolvedOutput"
 Write-Host "  ABI: $abiMajor.$abiMinor; features: $(Format-Hex32 $featureFlags); exports: $($approvedExports.Count)"
 Write-Host "  Upstream: $(Format-Hex64 $upstreamRevisionHash); host: $(Format-Hex64 $hostBuildFingerprint)"
 Write-Host "  Build inputs: $buildInputSha256"
+Write-Host "  Toolchain: $($toolchain.compiler.identity) $($toolchain.compiler.version); $($toolchain.linker.identity) $($toolchain.linker.version); $($toolchain.cmake.version)"
+Write-Host "  Source: $sourceCommit; clean tree: $sourceTreeClean"

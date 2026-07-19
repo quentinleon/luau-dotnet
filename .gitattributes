@@ -2,6 +2,11 @@
 # builds stable across Git clients and checkout locations.
 .gitattributes text eol=lf
 *.cs text eol=lf
+*.asmdef text eol=lf
+*.json text eol=lf
+*.luau text eol=lf
+*.md text eol=lf
+*.xml text eol=lf
 
 # Static package validation pins these textual compatibility contracts by
 # canonical SHA-256. Keep their checkout bytes stable on Windows as well.

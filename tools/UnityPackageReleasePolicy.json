@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "packageId": "com.nuskey.luau.unity",
+  "packageVersion": "0.2.0",
+  "releaseTag": "v0.2.0",
+  "archiveFormat": "ustar+gzip-stored-v1",
+  "androidNdkRevision": "27.2.12479018",
+  "maximumArchiveBytes": 8388608,
+  "artifacts": [
+    {
+      "path": "Runtime/Luau.dll",
+      "maximumBytes": 1048576
+    },
+    {
+      "path": "Runtime/Luau.xml",
+      "maximumBytes": 1048576
+    },
+    {
+      "path": "Runtime/Luau.SourceGenerator.dll",
+      "maximumBytes": 524288
+    },
+    {
+      "path": "Runtime/Plugins/win-x64/luau_host.dll",
+      "maximumBytes": 2097152
+    },
+    {
+      "path": "Runtime/Plugins/android-arm64/libluau_host.so",
+      "maximumBytes": 3145728
+    },
+    {
+      "path": "Runtime/Plugins/android-x64/libluau_host.so",
+      "maximumBytes": 3145728
+    }
+  ]
+}

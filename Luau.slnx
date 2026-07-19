@@ -1,4 +1,10 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Luau.Benchmarks/Luau.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/fuzz/">
+    <Project Path="fuzz/Luau.ArtifactFuzz/Luau.ArtifactFuzz.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Luau.SourceGenerator/Luau.SourceGenerator.csproj" />
     <Project Path="src/Luau/Luau.csproj" />

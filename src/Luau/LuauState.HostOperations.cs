@@ -7,9 +7,8 @@ public unsafe partial class LuauState
         ThrowIfDisposed();
         using var access = EnterNativeAccess();
         using var operation = new LuauDirectHostOperationScope(this);
-        var ignored = 0;
         LuauNativeProtection.Prepare(context);
-        var status = Luau.Internal.Interop.NativeMethods.luau_host_collect(l, 2, 0, &ignored);
+        var status = Luau.Internal.Interop.NativeMethods.luau_host_collect(l);
         LuauNativeProtection.ThrowIfFailed(this, l, status, "run a full garbage collection");
         operation.Complete("A direct garbage collection cannot yield or suspend the Luau thread.");
     }

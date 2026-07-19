@@ -1,0 +1,5 @@
+"invalid_utf8"="\xff\xfe\x80"
+"long_comment"="--[["
+"type_alias"="export type T<T> = { value: T }"
+"interpolation"="`{value}`"
+"large_number"="0xffffffffffffffffffffffffffffffff"

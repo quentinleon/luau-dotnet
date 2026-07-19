@@ -4,7 +4,7 @@
 # symbols.
 luau_host_buffer_create
 luau_host_buffer_free
-luau_host_callback_userdata
+luau_host_callback_registration_id
 luau_host_collect
 luau_host_compile
 luau_host_get_abi_info
@@ -14,17 +14,14 @@ luau_host_global_set
 luau_host_interrupt_install
 luau_host_interrupt_uninstall
 luau_host_is_global
-luau_host_is_thread_reset
 luau_host_is_yieldable
 luau_host_load
 luau_host_main_thread
-luau_host_memory_arm_quota_failure
 luau_host_memory_get
 luau_host_memory_reset_failure
 luau_host_metatable_get
 luau_host_metatable_set
 luau_host_object_length
-luau_host_open_all_libraries
 luau_host_open_library
 luau_host_pcall
 luau_host_push_boolean
@@ -37,7 +34,6 @@ luau_host_push_string
 luau_host_push_thread
 luau_host_push_value
 luau_host_push_vector
-luau_host_raw_equal
 luau_host_reference_create
 luau_host_reference_push
 luau_host_reference_release
@@ -70,7 +66,6 @@ luau_host_thread_status
 luau_host_to_boolean
 luau_host_to_buffer
 luau_host_to_display_string
-luau_host_to_function
 luau_host_to_integer32
 luau_host_to_integer64
 luau_host_to_light_userdata

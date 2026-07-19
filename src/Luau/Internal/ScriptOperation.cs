@@ -58,6 +58,7 @@ internal sealed class ScriptOperation : IDisposable
     int coroutineLifecycleArmed;
     int coroutineCompletion;
     long interruptCount;
+    long decodedBytes;
 
     internal unsafe ScriptOperation(
         LuauVmContext context,
@@ -136,6 +137,36 @@ internal sealed class ScriptOperation : IDisposable
     internal CancellationToken CancellationToken => linkedCancellationSource.Token;
     internal ScriptOperation? PreviousAmbient => previousAmbient;
     internal long InterruptCount => Interlocked.Read(ref interruptCount);
+
+    internal void ReserveDecodedBytes(ulong byteCount)
+    {
+        var limit = Context.Options.MaxDecodedBytesPerOperation;
+        if (!limit.HasValue || byteCount == 0)
+        {
+            return;
+        }
+
+        var increment = byteCount > long.MaxValue ? long.MaxValue : (long)byteCount;
+        long observed;
+        long total;
+        do
+        {
+            observed = Interlocked.Read(ref decodedBytes);
+            total = observed > long.MaxValue - increment
+                ? long.MaxValue
+                : observed + increment;
+        }
+        while (Interlocked.CompareExchange(ref decodedBytes, total, observed) != observed);
+
+        if (total > limit.Value)
+        {
+            throw new LuauDecodedResultLimitException(
+                ChunkName,
+                LuauDecodedResultLimitKind.OperationBytes,
+                total,
+                limit.Value);
+        }
+    }
 
     internal ScriptYieldReason YieldReason => (ScriptYieldReason)Volatile.Read(ref yieldReason);
 

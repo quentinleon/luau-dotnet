@@ -107,7 +107,10 @@ public sealed class HardeningConfigurationTests
         options.Validate();
 
         var output = LuauCompiler.Compile("return 42"u8);
-        var artifact = LuauBytecodeArtifact.Create(output, "tests/unbounded-policy");
+        var artifact = LuauBytecodeArtifact.Create(
+            output,
+            "tests/unbounded-policy.luau",
+            "tests/unbounded-policy");
         using var state = LuauState.Create(options);
 
         var exception = Assert.Throws<LuauException>(() => state.ExecuteVerifiedBytecode(artifact));

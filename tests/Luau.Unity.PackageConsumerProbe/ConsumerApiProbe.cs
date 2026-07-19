@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Luau;
 using Luau.Unity;
 
@@ -16,6 +18,15 @@ namespace Luau.Unity.PackageConsumerProbe
                 ConfigureHostApis = configureHostApis,
                 Log = _ => { },
             };
+        }
+
+        public static ValueTask<LuauModuleBundle> CompileModulesAsync(
+            LuauModuleMap moduleMap,
+            CancellationToken cancellationToken)
+        {
+            return LuauUnity.CompileModuleBundleAsync(
+                moduleMap,
+                cancellationToken: cancellationToken);
         }
     }
 }

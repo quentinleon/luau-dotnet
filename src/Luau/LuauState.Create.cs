@@ -1,4 +1,3 @@
-using System.Numerics;
 using Luau.Internal.Interop;
 using static Luau.Internal.Interop.NativeMethods;
 
@@ -6,11 +5,18 @@ namespace Luau;
 
 unsafe partial class LuauState
 {
+    /// <summary>Creates an empty table and returns an independently disposable owner.</summary>
     public LuauTable CreateTable()
     {
         return CreateTable(0, 0);
     }
 
+    /// <summary>
+    /// Creates an empty table with array and hash capacity hints and returns an
+    /// independently disposable owner.
+    /// </summary>
+    /// <param name="nArr">The non-negative array-capacity hint.</param>
+    /// <param name="nRec">The non-negative hash-capacity hint.</param>
     public LuauTable CreateTable(int nArr, int nRec)
     {
         ThrowIfDisposed();
@@ -32,30 +38,78 @@ unsafe partial class LuauState
         }
     }
 
+    /// <summary>
+    /// Creates a one-based array table from <paramref name="values"/> and
+    /// returns an independently disposable owner.
+    /// </summary>
+    /// <param name="values">Values borrowed for the duration of table construction.</param>
     public LuauTable CreateTable(ReadOnlySpan<LuauValue> values)
     {
         var table = CreateTable(values.Length, 0);
-
-        for (int i = 0; i < values.Length; i++)
+        try
         {
-            // Array slots are Luau number keys. Managed integral values map to
-            // the distinct upstream 64-bit integer kind in Stage 2.
-            table.RawSet(LuauValue.FromNumber(i + 1), values[i]);
+            for (int i = 0; i < values.Length; i++)
+            {
+                // Array slots are Luau number keys. Managed integral values map to
+                // the distinct upstream 64-bit integer kind in Stage 2.
+                table.RawSet(LuauValue.FromNumber(i + 1), values[i]);
+            }
+            return table;
         }
-
-        return table;
+        catch
+        {
+            table.Dispose();
+            throw;
+        }
     }
 
-    public LuauTable CreateTable(Dictionary<LuauValue, LuauValue> values)
+    /// <summary>
+    /// Creates a table from a span without intermediate collections. When the
+    /// span contains the same raw Luau key more than once, the later value wins.
+    /// </summary>
+    public LuauTable CreateTable(ReadOnlySpan<KeyValuePair<LuauValue, LuauValue>> values)
     {
-        var table = CreateTable(0, values.Count);
-
-        foreach (var kv in values)
+        var table = CreateTable(0, values.Length);
+        try
         {
-            table.RawSet(kv.Key, kv.Value);
+            for (var index = 0; index < values.Length; index++)
+            {
+                table.RawSet(values[index].Key, values[index].Value);
+            }
+            return table;
         }
+        catch
+        {
+            table.Dispose();
+            throw;
+        }
+    }
 
-        return table;
+    /// <summary>
+    /// Creates a table from one collection-friendly entry sequence. When the
+    /// sequence contains the same raw Luau key more than once, the later value
+    /// wins.
+    /// </summary>
+    public LuauTable CreateTable(IEnumerable<KeyValuePair<LuauValue, LuauValue>> values)
+    {
+        if (values == null) throw new ArgumentNullException(nameof(values));
+        var capacity = values is IReadOnlyCollection<KeyValuePair<LuauValue, LuauValue>> collection
+            ? collection.Count
+            : 0;
+        var table = CreateTable(0, capacity);
+        try
+        {
+            foreach (var pair in values)
+            {
+                table.RawSet(pair.Key, pair.Value);
+            }
+            return table;
+        }
+        catch
+        {
+            table.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -141,6 +195,10 @@ unsafe partial class LuauState
         return new LuauCSharpAsyncFunction(this, callback, name);
     }
 
+    /// <summary>
+    /// Creates a coroutine retained by this VM root. The returned wrapper may
+    /// be disposed independently; root disposal always invalidates it.
+    /// </summary>
     public unsafe LuauState CreateThread()
     {
         ThrowIfDisposed();
@@ -161,6 +219,8 @@ unsafe partial class LuauState
         }
     }
 
+    /// <summary>Creates a zero-filled buffer and returns an independently disposable owner.</summary>
+    /// <param name="size">The non-negative buffer length in bytes.</param>
     public unsafe LuauBuffer CreateBuffer(int size)
     {
         ThrowIfDisposed();
@@ -182,6 +242,10 @@ unsafe partial class LuauState
         }
     }
 
+    /// <summary>
+    /// Creates a buffer by copying <paramref name="str"/> and returns an
+    /// independently disposable owner.
+    /// </summary>
     public unsafe LuauBuffer CreateBuffer(ReadOnlySpan<byte> str)
     {
         ThrowIfDisposed();
@@ -201,38 +265,6 @@ unsafe partial class LuauState
         {
             SetTop(-2);
         }
-    }
-
-    public LuauValue CreateFrom<T>(T? value)
-    {
-        ThrowIfDisposed();
-
-        if (value == null) return LuauValue.Nil;
-
-        if (value is LuauValue luauValue) return luauValue;
-        if (value is bool boolean) return LuauValue.FromBoolean(boolean);
-        if (value is string text) return LuauValue.FromString(text);
-        if (value is Vector3 vector) return LuauValue.FromVector(vector);
-        if (value is LuauFunction function) return LuauValue.FromFunction(function);
-        if (value is LuauTable table) return LuauValue.FromTable(table);
-        if (value is LuauBuffer buffer) return LuauValue.FromBuffer(buffer);
-        if (value is LuauState state) return LuauValue.FromThread(state);
-        if (value is LuauUserData userData) return LuauValue.FromUserData(userData);
-        if (value is LuauObjectHandle objectHandle) return LuauValue.FromObjectHandle(objectHandle);
-
-        if (value is byte unsignedByte) return LuauValue.FromInteger(unsignedByte);
-        if (value is sbyte signedByte) return LuauValue.FromInteger(signedByte);
-        if (value is short signedShort) return LuauValue.FromInteger(signedShort);
-        if (value is ushort unsignedShort) return LuauValue.FromInteger(unsignedShort);
-        if (value is int signedInteger) return LuauValue.FromInteger(signedInteger);
-        if (value is uint unsignedInteger) return LuauValue.FromInteger(unsignedInteger);
-        if (value is long signedLong) return LuauValue.FromInteger(signedLong);
-        if (value is ulong unsignedLong) return LuauValue.FromInteger(checked((long)unsignedLong));
-        if (value is float single) return LuauValue.FromNumber(single);
-        if (value is double number) return LuauValue.FromNumber(number);
-
-        ThrowHelper.ThrowArgumentException(nameof(value), $"Cannot convert {typeof(T).Name} to LuauValue");
-        return default; // dummy
     }
 
     unsafe int ReferenceTopValue(string operation)

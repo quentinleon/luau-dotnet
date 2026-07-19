@@ -31,23 +31,17 @@ internal sealed unsafe class LuauCSharpAsyncFunction : LuauFunction, ILuauManage
 
         try
         {
-            if (!LuauVmContext.TryGetContext(l, out var context) ||
+            var nativeRegistrationId = luau_host_callback_registration_id(l);
+            if (nativeRegistrationId == 0 || nativeRegistrationId > int.MaxValue ||
+                !LuauVmContext.TryGetManagedCallbackOwner(
+                    (int)nativeRegistrationId,
+                    out var context,
+                    out registration) ||
                 (operation = context.GetActiveOperation()) == null)
             {
                 return 0;
             }
-
-            var idPointer = (int*)luau_host_callback_userdata(l, 1);
-            if (idPointer == null)
-            {
-                operation.RecordCallbackFailure(
-                    null,
-                    new InvalidOperationException("The managed callback registration token is missing."));
-                return YieldFailureIfPossible(l, operation);
-            }
-
-            var id = *idPointer;
-            if (!context.TryGetManagedCallback(id, out registration) || registration.AsynchronousCallback == null)
+            if (registration.AsynchronousCallback == null)
             {
                 operation.RecordCallbackFailure(
                     registration?.Name,

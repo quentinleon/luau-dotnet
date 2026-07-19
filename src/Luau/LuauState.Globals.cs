@@ -1,11 +1,16 @@
-using System.Buffers;
-using System.Text;
 using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
 public unsafe partial class LuauState
 {
+    /// <summary>
+    /// Gets or sets a global by strict UTF-8 name. Disposable reference values
+    /// returned by the getter are independently owned. A thread result is the
+    /// VM's shared cached child wrapper; dispose it only after all holders are
+    /// finished. The setter only borrows its value for this call.
+    /// </summary>
+    /// <param name="key">A UTF-8 name containing no NUL byte.</param>
     public LuauValue this[ReadOnlySpan<byte> key]
     {
         get
@@ -16,30 +21,8 @@ public unsafe partial class LuauState
                 throw new ArgumentException("Global names cannot contain a NUL byte.", nameof(key));
             }
 
-            using var access = EnterNativeAccess();
-            using var hostOperation = new LuauDirectHostOperationScope(this);
-            var buffer = ArrayPool<byte>.Shared.Rent(checked(key.Length + 1));
-            try
-            {
-                key.CopyTo(buffer);
-                buffer[key.Length] = 0;
-                fixed (byte* s = buffer)
-                {
-                    var ignoredType = 0;
-                    LuauNativeProtection.Prepare(context);
-                    var status = luau_host_global_get(l, s, &ignoredType);
-                    LuauNativeProtection.ThrowIfFailed(this, l, status, "read a Luau global");
-                }
-
-                var result = Pop();
-                hostOperation.Complete(
-                    "A direct host global read cannot yield or suspend the Luau thread.");
-                return result;
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            using var name = new Utf8BufferScope(key, appendNull: true);
+            return GetGlobal(name.NullTerminatedBytes);
         }
         set
         {
@@ -55,62 +38,86 @@ public unsafe partial class LuauState
                     "Root globals are read-only after SandboxRoot has been applied.");
             }
 
-            var buffer = ArrayPool<byte>.Shared.Rent(checked(key.Length + 1));
-            using var access = EnterNativeAccess();
-            using var hostOperation = new LuauDirectHostOperationScope(this);
-            try
-            {
-                key.CopyTo(buffer);
-                buffer[key.Length] = 0;
-                Push(value);
-                fixed (byte* s = buffer)
-                {
-                    LuauNativeProtection.Prepare(context);
-                    var status = luau_host_global_set(l, s);
-                    LuauNativeProtection.ThrowIfFailed(this, l, status, "write a Luau global");
-                }
-
-                hostOperation.Complete(
-                    "A direct host global write cannot yield or suspend the Luau thread.");
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            using var name = new Utf8BufferScope(key, appendNull: true);
+            SetGlobal(name.NullTerminatedBytes, value);
         }
     }
 
+    /// <summary>
+    /// Gets or sets a global by managed name. Disposable reference values
+    /// returned by the getter are independently owned. A thread result is the
+    /// VM's shared cached child wrapper; dispose it only after all holders are
+    /// finished. The setter only borrows its value for this call.
+    /// </summary>
+    /// <param name="key">A non-null name containing no NUL character.</param>
     public LuauValue this[string key]
     {
         get
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
-            var buffer = ArrayPool<byte>.Shared.Rent(checked(Encoding.UTF8.GetMaxByteCount(key.Length) + 1));
-            try
+            if (key.IndexOf('\0') >= 0)
             {
-                var count = Encoding.UTF8.GetBytes(key, buffer);
-                buffer[count] = 0;
-                return this[buffer.AsSpan(0, count)];
+                throw new ArgumentException("Global names cannot contain a NUL character.", nameof(key));
             }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            using var name = new Utf8BufferScope(key.AsSpan(), appendNull: true);
+            return GetGlobal(name.NullTerminatedBytes);
         }
         set
         {
             if (key == null) throw new ArgumentNullException(nameof(key));
-            var buffer = ArrayPool<byte>.Shared.Rent(checked(Encoding.UTF8.GetMaxByteCount(key.Length) + 1));
-            try
+            if (key.IndexOf('\0') >= 0)
             {
-                var count = Encoding.UTF8.GetBytes(key, buffer);
-                buffer[count] = 0;
-                this[buffer.AsSpan(0, count)] = value;
+                throw new ArgumentException("Global names cannot contain a NUL character.", nameof(key));
             }
-            finally
+            if (IsMainThread && context.IsRootSandboxed)
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+                ThrowHelper.ThrowInvalidOperationException(
+                    "Root globals are read-only after SandboxRoot has been applied.");
             }
+            using var name = new Utf8BufferScope(key.AsSpan(), appendNull: true);
+            SetGlobal(name.NullTerminatedBytes, value);
         }
+    }
+
+    LuauValue GetGlobal(ReadOnlySpan<byte> nullTerminatedName)
+    {
+        using var access = EnterNativeAccess();
+        using var hostOperation = new LuauDirectHostOperationScope(this);
+        fixed (byte* name = nullTerminatedName)
+        {
+            var ignoredType = 0;
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_global_get(l, name, &ignoredType);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "read a Luau global");
+        }
+
+        var result = Pop();
+        try
+        {
+            hostOperation.Complete(
+                "A direct host global read cannot yield or suspend the Luau thread.");
+            return result;
+        }
+        catch
+        {
+            result.DisposeUnpublishedReference();
+            throw;
+        }
+    }
+
+    void SetGlobal(ReadOnlySpan<byte> nullTerminatedName, LuauValue value)
+    {
+        using var access = EnterNativeAccess();
+        using var hostOperation = new LuauDirectHostOperationScope(this);
+        Push(value);
+        fixed (byte* name = nullTerminatedName)
+        {
+            LuauNativeProtection.Prepare(context);
+            var status = luau_host_global_set(l, name);
+            LuauNativeProtection.ThrowIfFailed(this, l, status, "write a Luau global");
+        }
+
+        hostOperation.Complete(
+            "A direct host global write cannot yield or suspend the Luau thread.");
     }
 }

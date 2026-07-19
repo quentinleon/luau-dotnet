@@ -1,32 +1,12 @@
-using System.Collections.Concurrent;
 using System.Text;
 using Luau.Internal.Interop;
 using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
-internal sealed class ScriptRunner : IDisposable
+internal static class ScriptRunner
 {
-    static readonly ConcurrentStack<ScriptRunner> pool = new();
-
-    int returned;
-
-    ScriptRunner()
-    {
-    }
-
-    internal static ScriptRunner Rent()
-    {
-        if (!pool.TryPop(out var runner))
-        {
-            runner = new ScriptRunner();
-        }
-
-        Volatile.Write(ref runner.returned, 0);
-        return runner;
-    }
-
-    internal int Run(
+    internal static int Run(
         ScriptOperation operation,
         LuauState state,
         int argumentCount,
@@ -41,16 +21,20 @@ internal sealed class ScriptRunner : IDisposable
         }
 
         var remaining = resultCount;
+        var writtenStart = resultCount;
         try
         {
+            ValidateDestinationSlots(destination, resultCount);
             for (var i = resultCount - 1; i >= 0; i--)
             {
                 destination[i] = state.Pop();
+                writtenStart = i;
                 remaining--;
             }
         }
         catch
         {
+            DisposeResultValues(destination.Slice(writtenStart, resultCount - writtenStart));
             DiscardResults(operation, operation.ThreadPointer, remaining);
             throw;
         }
@@ -58,7 +42,7 @@ internal sealed class ScriptRunner : IDisposable
         return resultCount;
     }
 
-    internal LuauValue[] Run(
+    internal static LuauResultScope Run(
         ScriptOperation operation,
         LuauState state,
         int argumentCount,
@@ -67,7 +51,7 @@ internal sealed class ScriptRunner : IDisposable
         var resultCount = RunCore(operation, argumentCount, hasFunction);
         if (resultCount == 0)
         {
-            return [];
+            return new LuauResultScope([]);
         }
 
         LuauValue[] results;
@@ -92,14 +76,15 @@ internal sealed class ScriptRunner : IDisposable
         }
         catch
         {
+            DisposeResultValues(results);
             DiscardResults(operation, operation.ThreadPointer, remaining);
             throw;
         }
 
-        return results;
+        return new LuauResultScope(results);
     }
 
-    internal async ValueTask<int> RunAsync(
+    internal static async ValueTask<int> RunAsync(
         ScriptOperation operation,
         LuauState state,
         int argumentCount,
@@ -120,16 +105,21 @@ internal sealed class ScriptRunner : IDisposable
             () =>
             {
                 var remaining = resultCount;
+                var writtenStart = resultCount;
                 try
                 {
+                    ValidateDestinationSlots(destination.Span, resultCount);
                     for (var i = resultCount - 1; i >= 0; i--)
                     {
                         destination.Span[i] = state.Pop();
+                        writtenStart = i;
                         remaining--;
                     }
                 }
                 catch
                 {
+                    DisposeResultValues(
+                        destination.Span.Slice(writtenStart, resultCount - writtenStart));
                     DiscardResults(operation, operation.ThreadPointer, remaining);
                     throw;
                 }
@@ -138,7 +128,7 @@ internal sealed class ScriptRunner : IDisposable
         return resultCount;
     }
 
-    internal async ValueTask<LuauValue[]> RunAsync(
+    internal static async ValueTask<LuauResultScope> RunAsync(
         ScriptOperation operation,
         LuauState state,
         int argumentCount,
@@ -147,7 +137,7 @@ internal sealed class ScriptRunner : IDisposable
         var resultCount = await RunAsyncCore(operation, argumentCount, hasFunction).ConfigureAwait(false);
         if (resultCount == 0)
         {
-            return [];
+            return new LuauResultScope([]);
         }
 
         LuauValue[] results;
@@ -178,15 +168,16 @@ internal sealed class ScriptRunner : IDisposable
                 }
                 catch
                 {
+                    DisposeResultValues(results);
                     DiscardResults(operation, operation.ThreadPointer, remaining);
                     throw;
                 }
             }).ConfigureAwait(false);
 
-        return results;
+        return new LuauResultScope(results);
     }
 
-    internal ValueTask<int> RunCountAsync(
+    internal static ValueTask<int> RunCountAsync(
         ScriptOperation operation,
         int argumentCount,
         bool hasFunction = true)
@@ -194,7 +185,7 @@ internal sealed class ScriptRunner : IDisposable
         return RunAsyncCore(operation, argumentCount, hasFunction);
     }
 
-    internal int RunToStack(
+    internal static int RunToStack(
         ScriptOperation operation,
         int argumentCount,
         bool hasFunction = true)
@@ -202,7 +193,7 @@ internal sealed class ScriptRunner : IDisposable
         return RunCore(operation, argumentCount, hasFunction);
     }
 
-    int RunCore(ScriptOperation operation, int argumentCount, bool hasFunction)
+    static int RunCore(ScriptOperation operation, int argumentCount, bool hasFunction)
     {
         var state = operation.ThreadPointer;
         var from = operation.FromPointer;
@@ -270,7 +261,7 @@ internal sealed class ScriptRunner : IDisposable
         }
     }
 
-    async ValueTask<int> RunAsyncCore(
+    static async ValueTask<int> RunAsyncCore(
         ScriptOperation operation,
         int argumentCount,
         bool hasFunction)
@@ -456,6 +447,29 @@ internal sealed class ScriptRunner : IDisposable
         SetTop(operation, state, Math.Max(0, top - resultCount));
     }
 
+    static void DisposeResultValues(Span<LuauValue> values)
+    {
+        for (var index = values.Length - 1; index >= 0; index--)
+        {
+            values[index].DisposeUnpublishedReference();
+            values[index] = default;
+        }
+    }
+
+    static void ValidateDestinationSlots(Span<LuauValue> destination, int resultCount)
+    {
+        for (var index = 0; index < resultCount; index++)
+        {
+            if (destination[index].ContainsManagedReferenceWrapper)
+            {
+                throw new ArgumentException(
+                    "A destination slot that will receive a result contains a managed Luau reference wrapper. " +
+                    "Release the existing wrapper according to its ownership contract and clear its slot before reuse.",
+                    nameof(destination));
+            }
+        }
+    }
+
     static void ValidateResultCount(ScriptOperation operation, IntPtr state, int resultCount)
     {
         var top = GetTop(operation, state);
@@ -596,12 +610,10 @@ internal sealed class ScriptRunner : IDisposable
                 return "Luau execution failed without an error message.";
             }
 
-            if (length > int.MaxValue)
-            {
-                return "Luau execution failed with an oversized error message.";
-            }
-
-            return Encoding.UTF8.GetString(new ReadOnlySpan<byte>(text, (int)length));
+            return BoundedUtf8Decoder.DecodeDiagnostic(
+                text,
+                length,
+                operation.Context.Options.MaxDiagnosticBytes);
         }
         finally
         {
@@ -707,11 +719,4 @@ internal sealed class ScriptRunner : IDisposable
         return luau_host_resume((LuauHostState*)state, (LuauHostState*)from, argumentCount);
     }
 
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref returned, 1) == 0)
-        {
-            pool.Push(this);
-        }
-    }
 }

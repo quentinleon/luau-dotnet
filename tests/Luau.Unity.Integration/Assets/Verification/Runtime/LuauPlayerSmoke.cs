@@ -76,7 +76,7 @@ namespace Luau.Unity.Verification
                 using var first = root.CreateSandboxedThread();
                 using var second = root.CreateSandboxedThread();
 
-                var firstResult = first.DoString(
+                using var firstResult = first.DoString(
                     "scriptLocal = 123; " +
                     "local protected = not pcall(function() hostAnswer = 99 end); " +
                     "return math.floor(41.9) == 41 " +
@@ -90,15 +90,15 @@ namespace Luau.Unity.Verification
                     "hostManualAddOne(41), " +
                     "smokeHost.addOne(41)",
                     "@unity/player-smoke-first.luau");
-                var secondResult = second.DoString(
+                using var secondResult = second.DoString(
                     "return scriptLocal == nil, hostAnswer",
                     "@unity/player-smoke-second.luau");
-                var asyncResult = await first.DoStringAsync(
+                using var asyncResult = await first.DoStringAsync(
                     "local answer = smokeHost.asyncAnswer(); return answer, smokeHost.assertUnityThread()",
                     "@unity/player-smoke-async.luau");
                 var capabilityObject = new GameObject("Luau Player Smoke Capability");
                 var capability = capabilityObject.AddComponent<LuauPlayerSmokeCapability>();
-                LuauValue[] compiledResult;
+                LuauResultScope compiledResult = null;
                 try
                 {
                     using var capabilityHandle = root.CreateHandle(capability);
@@ -162,7 +162,7 @@ namespace Luau.Unity.Verification
 
                     try
                     {
-                        first.DoString(
+                        using var unexpectedResult = first.DoString(
                             "return capability.Value",
                             "@unity/player-smoke-destroyed-capability.luau");
                         throw new LuauException(
@@ -175,6 +175,7 @@ namespace Luau.Unity.Verification
                 }
                 finally
                 {
+                    compiledResult?.Dispose();
                     if (capabilityObject != null)
                     {
                         UnityEngine.Object.Destroy(capabilityObject);

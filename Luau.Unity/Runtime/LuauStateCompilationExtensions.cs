@@ -12,7 +12,12 @@ namespace Luau.Unity
         /// then starts VM execution on the state's configured owner scheduler.
         /// Verified artifacts bypass the service.
         /// </summary>
-        public static ValueTask<LuauValue[]> ExecuteWithCompilationServiceAsync(
+        /// <returns>
+        /// A scope that owns disposable reference results and must be disposed
+        /// before the state. Shared child-thread wrappers are caller-managed and
+        /// disposed separately. The compilation service remains caller-owned.
+        /// </returns>
+        public static ValueTask<LuauResultScope> ExecuteWithCompilationServiceAsync(
             this LuauState state,
             LuauAsset asset,
             ILuauCompilationService compilationService,
@@ -55,7 +60,7 @@ namespace Luau.Unity
                 executionOptions);
         }
 
-        internal static ValueTask<LuauValue[]> ExecuteCompilerOutputOnOwnerAsync(
+        internal static ValueTask<LuauResultScope> ExecuteCompilerOutputOnOwnerAsync(
             this LuauState state,
             LuauCompilerOutput output,
             ReadOnlyMemory<char> chunkName = default,
@@ -107,7 +112,7 @@ namespace Luau.Unity
                     executionOptions));
         }
 
-        static async ValueTask<LuauValue[]> ExecuteAssetAsync(
+        static async ValueTask<LuauResultScope> ExecuteAssetAsync(
             LuauState state,
             LuauAsset asset,
             LuauAssetCompilationProvider compilationProvider,

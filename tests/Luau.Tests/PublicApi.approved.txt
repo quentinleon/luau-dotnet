@@ -1,10 +1,12 @@
 ctor Luau.FromLuauStateAttribute :: Void .ctor()
-ctor Luau.LuauBytecodeArtifact :: Void .ctor(Int32, System.ReadOnlySpan`1[System.Byte], Luau.LuauCompileOptions, UInt64, UInt64, System.String, System.String, System.String, System.ReadOnlySpan`1[System.Byte])
+ctor Luau.LuauArtifactLimits :: Void .ctor()
+ctor Luau.LuauBytecodeArtifact :: Void .ctor(Int32, System.ReadOnlySpan`1[System.Byte], Luau.LuauCompileOptions, UInt64, UInt64, System.String, System.String, System.String, System.String, System.ReadOnlySpan`1[System.Byte])
 ctor Luau.LuauCompilationException :: Void .ctor(System.String)
 ctor Luau.LuauCompilationException :: Void .ctor(System.String, System.String, System.Exception)
 ctor Luau.LuauCompilationLimitException :: Void .ctor(Luau.LuauCompilationLimitKind, Int64, Int64)
 ctor Luau.LuauCompilationShutdownException :: Void .ctor(System.TimeSpan, Int32)
 ctor Luau.LuauCompileOptions :: Void .ctor()
+ctor Luau.LuauDecodedResultLimitException :: Void .ctor(System.String, Luau.LuauDecodedResultLimitKind, Int64, Int64)
 ctor Luau.LuauException :: Void .ctor(System.String)
 ctor Luau.LuauException :: Void .ctor(System.String, System.String)
 ctor Luau.LuauException :: Void .ctor(System.String, System.String, System.Exception)
@@ -19,14 +21,24 @@ ctor Luau.LuauManagedHandleLimitException :: Void .ctor(Int32)
 ctor Luau.LuauMemberAttribute :: Void .ctor(System.String)
 ctor Luau.LuauMemoryLimitException :: Void .ctor(System.String, Luau.LuauMemoryUsageSnapshot, Int64)
 ctor Luau.LuauMemoryUsageSnapshot :: Void .ctor(Int64, Int64, System.Nullable`1[System.Int64])
+ctor Luau.LuauModuleLimitException :: Void .ctor(Luau.LuauModuleLimitKind, Int64, Int64)
+ctor Luau.LuauModuleLimits :: Void .ctor()
+ctor Luau.LuauModuleMap :: Void .ctor(System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.Byte[]], System.Collections.Generic.IReadOnlyDictionary`2[System.String,System.String], Luau.LuauModuleLimits)
 ctor Luau.LuauObjectDescriptor<T> :: Void .ctor(System.String, System.Action`1[T], Luau.LuauObjectMember`1[T][])
+ctor Luau.LuauReferenceLimitException :: Void .ctor()
 ctor Luau.LuauResultLimitException :: Void .ctor(System.String, Int32, Int32)
 ctor Luau.LuauStateOptions :: Void .ctor()
 ctor Luau.LuauSynchronizationContextScheduler :: Void .ctor(System.Threading.SynchronizationContext)
 ctor Luau.LuauTable.Enumerator :: Void .ctor(Luau.LuauTable)
 ctor Luau.LuauThreadedCompilationOptions :: Void .ctor()
 ctor Luau.LuauThreadedCompilationService :: Void .ctor(Luau.LuauThreadedCompilationOptions)
+field Luau.LuauArtifactFailureKind :: Luau.LuauArtifactFailureKind IntegrityMismatch = 3
+field Luau.LuauArtifactFailureKind :: Luau.LuauArtifactFailureKind LimitExceeded = 2
+field Luau.LuauArtifactFailureKind :: Luau.LuauArtifactFailureKind Malformed = 0
+field Luau.LuauArtifactFailureKind :: Luau.LuauArtifactFailureKind RuntimeIdentityMismatch = 4
+field Luau.LuauArtifactFailureKind :: Luau.LuauArtifactFailureKind UnsupportedVersion = 1
 field Luau.LuauBytecodeArtifact :: Int32 CurrentSchemaVersion = 1
+field Luau.LuauBytecodeArtifactCodec :: Int32 CurrentFormatVersion = 1
 field Luau.LuauBytecodePolicy :: Luau.LuauBytecodePolicy Reject = 0
 field Luau.LuauBytecodePolicy :: Luau.LuauBytecodePolicy RequireValidator = 1
 field Luau.LuauCompilationLimitKind :: Luau.LuauCompilationLimitKind BytecodeBytesPerResult = 3
@@ -37,12 +49,21 @@ field Luau.LuauCompileResultKind :: Luau.LuauCompileResultKind Canceled = 2
 field Luau.LuauCompileResultKind :: Luau.LuauCompileResultKind Diagnostic = 1
 field Luau.LuauCompileResultKind :: Luau.LuauCompileResultKind InfrastructureFailure = 3
 field Luau.LuauCompileResultKind :: Luau.LuauCompileResultKind Success = 0
+field Luau.LuauDecodedResultLimitKind :: Luau.LuauDecodedResultLimitKind OperationBytes = 1
+field Luau.LuauDecodedResultLimitKind :: Luau.LuauDecodedResultLimitKind StringBytes = 0
 field Luau.LuauExecutionBudgetKind :: Luau.LuauExecutionBudgetKind InterruptCount = 1
 field Luau.LuauExecutionBudgetKind :: Luau.LuauExecutionBudgetKind WallClock = 0
 field Luau.LuauLibraryExposure :: Luau.LuauLibraryExposure Capability = 1
 field Luau.LuauLibraryExposure :: Luau.LuauLibraryExposure Global = 0
 field Luau.LuauLoadInputKind :: Luau.LuauLoadInputKind Bytecode = 1
 field Luau.LuauLoadInputKind :: Luau.LuauLoadInputKind Source = 0
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind BundleBytecodeBytes = 3
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind BytecodeBytesPerModule = 2
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind CachedResultCount = 6
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind DependencyDepth = 5
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind ModuleCount = 0
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind ModuleIdBytes = 4
+field Luau.LuauModuleLimitKind :: Luau.LuauModuleLimitKind SourceBytes = 1
 field Luau.LuauThreadStatus :: Luau.LuauThreadStatus Dead = 2
 field Luau.LuauThreadStatus :: Luau.LuauThreadStatus Running = 1
 field Luau.LuauThreadStatus :: Luau.LuauThreadStatus Suspended = 0
@@ -64,15 +85,29 @@ method Luau.ILuauCompilationService :: System.Threading.Tasks.ValueTask`1[Luau.L
 method Luau.ILuauContinuationScheduler :: Boolean CheckAccess()
 method Luau.ILuauContinuationScheduler :: Void Post(System.Action)
 method Luau.ILuauLibrary :: Void RegisterTo(Luau.LuauState)
+method Luau.LuauArtifactLimits :: Boolean Equals(Luau.LuauArtifactLimits)
+method Luau.LuauArtifactLimits :: Boolean Equals(System.Object)
+method Luau.LuauArtifactLimits :: Boolean op_Equality(Luau.LuauArtifactLimits, Luau.LuauArtifactLimits)
+method Luau.LuauArtifactLimits :: Boolean op_Inequality(Luau.LuauArtifactLimits, Luau.LuauArtifactLimits)
+method Luau.LuauArtifactLimits :: Int32 GetHashCode()
+method Luau.LuauArtifactLimits :: Luau.LuauArtifactLimits <Clone>$()
+method Luau.LuauArtifactLimits :: System.String ToString()
 method Luau.LuauBuffer :: Byte[] ToArray()
+method Luau.LuauBuffer :: Luau.LuauBuffer Retain()
 method Luau.LuauBuffer :: System.String ToString()
 method Luau.LuauBuffer :: Void Dispose()
 method Luau.LuauBuffer :: Void Read(Int32, System.Span`1[System.Byte])
 method Luau.LuauBuffer :: Void Write(Int32, System.ReadOnlySpan`1[System.Byte])
 method Luau.LuauBytecodeArtifact :: Byte[] GetProvenanceData()
 method Luau.LuauBytecodeArtifact :: Byte[] ToBytecodeArray()
-method Luau.LuauBytecodeArtifact :: Luau.LuauBytecodeArtifact Create(Luau.LuauCompilerOutput, System.String, System.ReadOnlySpan`1[System.Byte])
+method Luau.LuauBytecodeArtifact :: Luau.LuauBytecodeArtifact Create(Luau.LuauCompilerOutput, System.String, System.String, System.ReadOnlySpan`1[System.Byte])
+method Luau.LuauBytecodeArtifact :: Luau.LuauBytecodeArtifact Create(Luau.LuauCompilerOutput, System.String, System.String, System.ReadOnlySpan`1[System.Byte], Luau.LuauArtifactLimits)
 method Luau.LuauBytecodeArtifact :: Void CopyBytecodeTo(System.Buffers.IBufferWriter`1[System.Byte])
+method Luau.LuauBytecodeArtifactCodec :: Byte[] Write(Luau.LuauBytecodeArtifact, Luau.LuauArtifactLimits)
+method Luau.LuauBytecodeArtifactCodec :: Luau.LuauBytecodeArtifact Parse(System.IO.Stream, Luau.LuauArtifactLimits)
+method Luau.LuauBytecodeArtifactCodec :: Luau.LuauBytecodeArtifact Parse(System.ReadOnlySpan`1[System.Byte], Luau.LuauArtifactLimits)
+method Luau.LuauBytecodeArtifactCodec :: Void Write(Luau.LuauBytecodeArtifact, System.Buffers.IBufferWriter`1[System.Byte], Luau.LuauArtifactLimits)
+method Luau.LuauBytecodeArtifactCodec :: Void Write(Luau.LuauBytecodeArtifact, System.IO.Stream, Luau.LuauArtifactLimits)
 method Luau.LuauCallContext :: System.String ToDisplayString(Int32, Int32, Boolean ByRef)
 method Luau.LuauCallContext :: T Read[T](Int32)
 method Luau.LuauCallContext :: Void Return[T](T)
@@ -97,15 +132,30 @@ method Luau.LuauExecutionOptions :: Boolean op_Inequality(Luau.LuauExecutionOpti
 method Luau.LuauExecutionOptions :: Int32 GetHashCode()
 method Luau.LuauExecutionOptions :: Luau.LuauExecutionOptions <Clone>$()
 method Luau.LuauExecutionOptions :: System.String ToString()
-method Luau.LuauFunction :: Luau.LuauValue[] Invoke(System.ReadOnlySpan`1[Luau.LuauValue], Luau.LuauExecutionOptions)
-method Luau.LuauFunction :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] InvokeAsync(System.ReadOnlyMemory`1[Luau.LuauValue], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauFunction :: Luau.LuauFunction Retain()
+method Luau.LuauFunction :: Luau.LuauResultScope Invoke(System.ReadOnlySpan`1[Luau.LuauValue], Luau.LuauExecutionOptions)
+method Luau.LuauFunction :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] InvokeAsync(System.ReadOnlyMemory`1[Luau.LuauValue], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
 method Luau.LuauFunction :: Void Dispose()
+method Luau.LuauModuleLimits :: Boolean Equals(Luau.LuauModuleLimits)
+method Luau.LuauModuleLimits :: Boolean Equals(System.Object)
+method Luau.LuauModuleLimits :: Boolean op_Equality(Luau.LuauModuleLimits, Luau.LuauModuleLimits)
+method Luau.LuauModuleLimits :: Boolean op_Inequality(Luau.LuauModuleLimits, Luau.LuauModuleLimits)
+method Luau.LuauModuleLimits :: Int32 GetHashCode()
+method Luau.LuauModuleLimits :: Luau.LuauModuleLimits <Clone>$()
+method Luau.LuauModuleLimits :: System.String ToString()
+method Luau.LuauModuleMap :: System.String CanonicalizeModuleId(System.String)
+method Luau.LuauModuleMap :: System.Threading.Tasks.ValueTask`1[Luau.LuauModuleBundle] CompileModuleBundleAsync(Luau.ILuauCompilationService, Luau.LuauCompileOptions, System.Threading.CancellationToken)
 method Luau.LuauObjectExtensions :: Luau.LuauObjectHandle CreateHandle[T](Luau.LuauState, T)
+method Luau.LuauObjectHandle :: Luau.LuauObjectHandle Retain()
 method Luau.LuauObjectHandle :: System.String ToString()
 method Luau.LuauObjectHandle :: Void Dispose()
 method Luau.LuauObjectMember<T> :: Luau.LuauObjectMember`1[T] AsyncMethod(System.String, System.Func`3[T,Luau.LuauCallContext,System.Threading.Tasks.ValueTask])
 method Luau.LuauObjectMember<T> :: Luau.LuauObjectMember`1[T] Method(System.String, System.Action`2[T,Luau.LuauCallContext])
 method Luau.LuauObjectMember<T> :: Luau.LuauObjectMember`1[T] Property(System.String, System.Action`2[T,Luau.LuauCallContext], System.Action`2[T,Luau.LuauCallContext])
+method Luau.LuauResultScope :: System.Collections.Generic.IEnumerator`1[Luau.LuauValue] GetEnumerator()
+method Luau.LuauResultScope :: System.ReadOnlySpan`1[Luau.LuauValue] AsSpan()
+method Luau.LuauResultScope :: T Read[T](Int32)
+method Luau.LuauResultScope :: Void Dispose()
 method Luau.LuauState :: Int32 DoStringInto(System.ReadOnlySpan`1[System.Byte], System.Span`1[Luau.LuauValue], System.ReadOnlySpan`1[System.Byte], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
 method Luau.LuauState :: Int32 DoStringInto(System.ReadOnlySpan`1[System.Char], System.Span`1[Luau.LuauValue], System.ReadOnlySpan`1[System.Char], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
 method Luau.LuauState :: Int32 ExecuteCompilerOutputInto(Luau.LuauCompilerOutput, System.Span`1[Luau.LuauValue], System.ReadOnlySpan`1[System.Char], Luau.LuauExecutionOptions)
@@ -121,6 +171,11 @@ method Luau.LuauState :: Luau.LuauFunction CreateFunction(System.String, System.
 method Luau.LuauState :: Luau.LuauFunction LoadCompilerOutput(Luau.LuauCompilerOutput, System.ReadOnlySpan`1[System.Char])
 method Luau.LuauState :: Luau.LuauFunction LoadVerifiedBytecode(Luau.LuauBytecodeArtifact, System.ReadOnlySpan`1[System.Char])
 method Luau.LuauState :: Luau.LuauObjectHandle CreateHandle[T](T, Luau.LuauObjectDescriptor`1[T])
+method Luau.LuauState :: Luau.LuauResultScope DoString(System.ReadOnlySpan`1[System.Byte], System.ReadOnlySpan`1[System.Byte], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
+method Luau.LuauState :: Luau.LuauResultScope DoString(System.ReadOnlySpan`1[System.Char], System.ReadOnlySpan`1[System.Char], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
+method Luau.LuauState :: Luau.LuauResultScope ExecuteCompilerOutput(Luau.LuauCompilerOutput, System.ReadOnlySpan`1[System.Char], Luau.LuauExecutionOptions)
+method Luau.LuauState :: Luau.LuauResultScope ExecuteVerifiedBytecode(Luau.LuauBytecodeArtifact, System.ReadOnlySpan`1[System.Char], Luau.LuauExecutionOptions)
+method Luau.LuauState :: Luau.LuauResultScope Resume(System.ReadOnlySpan`1[Luau.LuauValue], Luau.LuauExecutionOptions)
 method Luau.LuauState :: Luau.LuauState Create()
 method Luau.LuauState :: Luau.LuauState Create(Luau.LuauStateOptions)
 method Luau.LuauState :: Luau.LuauState CreateSandboxedThread()
@@ -128,23 +183,18 @@ method Luau.LuauState :: Luau.LuauState CreateThread()
 method Luau.LuauState :: Luau.LuauState GetMainThread()
 method Luau.LuauState :: Luau.LuauTable CreateTable()
 method Luau.LuauState :: Luau.LuauTable CreateTable(Int32, Int32)
-method Luau.LuauState :: Luau.LuauTable CreateTable(System.Collections.Generic.Dictionary`2[Luau.LuauValue,Luau.LuauValue])
+method Luau.LuauState :: Luau.LuauTable CreateTable(System.Collections.Generic.IEnumerable`1[System.Collections.Generic.KeyValuePair`2[Luau.LuauValue,Luau.LuauValue]])
 method Luau.LuauState :: Luau.LuauTable CreateTable(System.ReadOnlySpan`1[Luau.LuauValue])
+method Luau.LuauState :: Luau.LuauTable CreateTable(System.ReadOnlySpan`1[System.Collections.Generic.KeyValuePair`2[Luau.LuauValue,Luau.LuauValue]])
 method Luau.LuauState :: Luau.LuauTable GetMetatable(Luau.LuauValue)
 method Luau.LuauState :: Luau.LuauThreadStatus GetStatus()
-method Luau.LuauState :: Luau.LuauValue CreateFrom[T](T)
-method Luau.LuauState :: Luau.LuauValue[] DoString(System.ReadOnlySpan`1[System.Byte], System.ReadOnlySpan`1[System.Byte], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
-method Luau.LuauState :: Luau.LuauValue[] DoString(System.ReadOnlySpan`1[System.Char], System.ReadOnlySpan`1[System.Char], Luau.LuauCompileOptions, Luau.LuauExecutionOptions)
-method Luau.LuauState :: Luau.LuauValue[] ExecuteCompilerOutput(Luau.LuauCompilerOutput, System.ReadOnlySpan`1[System.Char], Luau.LuauExecutionOptions)
-method Luau.LuauState :: Luau.LuauValue[] ExecuteVerifiedBytecode(Luau.LuauBytecodeArtifact, System.ReadOnlySpan`1[System.Char], Luau.LuauExecutionOptions)
-method Luau.LuauState :: Luau.LuauValue[] Resume(System.ReadOnlySpan`1[Luau.LuauValue], Luau.LuauExecutionOptions)
 method Luau.LuauState :: System.String ToString()
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] DoStringAsync(System.ReadOnlyMemory`1[System.Byte], System.ReadOnlyMemory`1[System.Byte], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] DoStringAsync(System.ReadOnlyMemory`1[System.Char], System.ReadOnlyMemory`1[System.Char], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] DoStringAsync(System.String, System.String, Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] ExecuteCompilerOutputAsync(Luau.LuauCompilerOutput, System.ReadOnlyMemory`1[System.Char], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] ExecuteVerifiedBytecodeAsync(Luau.LuauBytecodeArtifact, System.ReadOnlyMemory`1[System.Char], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
-method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauValue[]] ResumeAsync(System.ReadOnlyMemory`1[Luau.LuauValue], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] DoStringAsync(System.ReadOnlyMemory`1[System.Byte], System.ReadOnlyMemory`1[System.Byte], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] DoStringAsync(System.ReadOnlyMemory`1[System.Char], System.ReadOnlyMemory`1[System.Char], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] DoStringAsync(System.String, System.String, Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] ExecuteCompilerOutputAsync(Luau.LuauCompilerOutput, System.ReadOnlyMemory`1[System.Char], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] ExecuteVerifiedBytecodeAsync(Luau.LuauBytecodeArtifact, System.ReadOnlyMemory`1[System.Char], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
+method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[Luau.LuauResultScope] ResumeAsync(System.ReadOnlyMemory`1[Luau.LuauValue], System.Threading.CancellationToken, Luau.LuauExecutionOptions)
 method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[System.Int32] DoStringIntoAsync(System.ReadOnlyMemory`1[System.Byte], System.Memory`1[Luau.LuauValue], System.ReadOnlyMemory`1[System.Byte], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
 method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[System.Int32] DoStringIntoAsync(System.ReadOnlyMemory`1[System.Char], System.Memory`1[Luau.LuauValue], System.ReadOnlyMemory`1[System.Char], Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
 method Luau.LuauState :: System.Threading.Tasks.ValueTask`1[System.Int32] DoStringIntoAsync(System.String, System.Memory`1[Luau.LuauValue], System.String, Luau.LuauCompileOptions, System.Threading.CancellationToken, Luau.LuauExecutionOptions)
@@ -183,10 +233,12 @@ method Luau.LuauSynchronizationContextScheduler :: Boolean CheckAccess()
 method Luau.LuauSynchronizationContextScheduler :: Luau.LuauSynchronizationContextScheduler CaptureCurrent()
 method Luau.LuauSynchronizationContextScheduler :: Void Post(System.Action)
 method Luau.LuauTable :: Boolean ContainsKey(Luau.LuauValue)
+method Luau.LuauTable :: Boolean Remove(Luau.LuauValue)
 method Luau.LuauTable :: Boolean TryGetValue(Luau.LuauValue, Luau.LuauValue ByRef)
 method Luau.LuauTable :: Boolean TryMoveNext(Luau.LuauValue, System.Collections.Generic.KeyValuePair`2[Luau.LuauValue,Luau.LuauValue] ByRef)
 method Luau.LuauTable :: Enumerator GetEnumerator()
 method Luau.LuauTable :: Luau.LuauTable Clone()
+method Luau.LuauTable :: Luau.LuauTable Retain()
 method Luau.LuauTable :: Luau.LuauValue RawGet(Luau.LuauValue)
 method Luau.LuauTable :: System.String ToString()
 method Luau.LuauTable :: Void Add(Luau.LuauValue, Luau.LuauValue)
@@ -199,6 +251,7 @@ method Luau.LuauTable.Enumerator :: Void Dispose()
 method Luau.LuauTable.Enumerator :: Void Reset()
 method Luau.LuauThreadedCompilationService :: System.Threading.Tasks.ValueTask DisposeAsync()
 method Luau.LuauThreadedCompilationService :: System.Threading.Tasks.ValueTask`1[Luau.LuauCompileResult] CompileAsync(System.ReadOnlyMemory`1[System.Byte], Luau.LuauCompileOptions, System.Threading.CancellationToken)
+method Luau.LuauUserData :: Luau.LuauUserData Retain()
 method Luau.LuauUserData :: System.String ToString()
 method Luau.LuauUserData :: Void Dispose()
 method Luau.LuauValue :: Boolean Equals(Luau.LuauValue)
@@ -208,6 +261,7 @@ method Luau.LuauValue :: Boolean op_Equality(Luau.LuauValue, Luau.LuauValue)
 method Luau.LuauValue :: Boolean op_Inequality(Luau.LuauValue, Luau.LuauValue)
 method Luau.LuauValue :: Double ReadDoubleLossy()
 method Luau.LuauValue :: Int32 GetHashCode()
+method Luau.LuauValue :: Luau.LuauValue CreateFrom[T](T)
 method Luau.LuauValue :: Luau.LuauValue FromBoolean(Boolean)
 method Luau.LuauValue :: Luau.LuauValue FromBuffer(Luau.LuauBuffer)
 method Luau.LuauValue :: Luau.LuauValue FromFunction(Luau.LuauFunction)
@@ -219,6 +273,7 @@ method Luau.LuauValue :: Luau.LuauValue FromTable(Luau.LuauTable)
 method Luau.LuauValue :: Luau.LuauValue FromThread(Luau.LuauState)
 method Luau.LuauValue :: Luau.LuauValue FromUserData(Luau.LuauUserData)
 method Luau.LuauValue :: Luau.LuauValue FromVector(System.Numerics.Vector3)
+method Luau.LuauValue :: Luau.LuauValue Retain()
 method Luau.LuauValue :: Luau.LuauValue op_Implicit(Boolean)
 method Luau.LuauValue :: Luau.LuauValue op_Implicit(Byte)
 method Luau.LuauValue :: Luau.LuauValue op_Implicit(Double)
@@ -240,6 +295,18 @@ method Luau.LuauValue :: Luau.LuauValue op_Implicit(UInt64)
 method Luau.LuauValue :: System.String ToString()
 method Luau.LuauValue :: T Read[T]()
 property Luau.ILuauObjectCapability :: Luau.LuauObjectDescriptor LuauObjectDescriptor { get; }
+property Luau.LuauArtifactException :: Luau.LuauArtifactFailureKind FailureKind { get; }
+property Luau.LuauArtifactException :: System.Nullable`1[System.Int64] Actual { get; }
+property Luau.LuauArtifactException :: System.Nullable`1[System.Int64] Limit { get; }
+property Luau.LuauArtifactException :: System.String FieldName { get; }
+property Luau.LuauArtifactLimits :: Luau.LuauArtifactLimits Default { get; }
+property Luau.LuauArtifactLimits :: Luau.LuauArtifactLimits UnsafeUnbounded { get; }
+property Luau.LuauArtifactLimits :: System.Nullable`1[System.Int32] MaxBytecodeBytes { get; set; }
+property Luau.LuauArtifactLimits :: System.Nullable`1[System.Int32] MaxEnvelopeBytes { get; set; }
+property Luau.LuauArtifactLimits :: System.Nullable`1[System.Int32] MaxProvenanceBytes { get; set; }
+property Luau.LuauArtifactLimits :: System.Nullable`1[System.Int32] MaxProvenanceIdBytes { get; set; }
+property Luau.LuauArtifactLimits :: System.Nullable`1[System.Int32] MaxSourceIdentityBytes { get; set; }
+property Luau.LuauBuffer :: Boolean IsBorrowed { get; }
 property Luau.LuauBuffer :: Boolean IsDisposed { get; }
 property Luau.LuauBuffer :: Int32 Length { get; }
 property Luau.LuauBytecodeArtifact :: Int32 BytecodeLength { get; }
@@ -247,6 +314,7 @@ property Luau.LuauBytecodeArtifact :: Int32 SchemaVersion { get; }
 property Luau.LuauBytecodeArtifact :: Luau.LuauCompileOptions CompileOptions { get; }
 property Luau.LuauBytecodeArtifact :: System.String BytecodeSha256 { get; }
 property Luau.LuauBytecodeArtifact :: System.String ProvenanceId { get; }
+property Luau.LuauBytecodeArtifact :: System.String SourceIdentity { get; }
 property Luau.LuauBytecodeArtifact :: System.String SourceSha256 { get; }
 property Luau.LuauBytecodeArtifact :: UInt64 HostBuildFingerprint { get; }
 property Luau.LuauBytecodeArtifact :: UInt64 UpstreamRevisionHash { get; }
@@ -275,6 +343,8 @@ property Luau.LuauCompilerOutput :: System.String BytecodeSha256 { get; }
 property Luau.LuauCompilerOutput :: System.String SourceSha256 { get; }
 property Luau.LuauCompilerOutput :: UInt64 HostBuildFingerprint { get; }
 property Luau.LuauCompilerOutput :: UInt64 UpstreamRevisionHash { get; }
+property Luau.LuauDecodedResultLimitException :: Int64 ActualBytes { get; }
+property Luau.LuauDecodedResultLimitException :: Luau.LuauDecodedResultLimitKind LimitKind { get; }
 property Luau.LuauException :: System.String ChunkName { get; }
 property Luau.LuauExecutionBudgetException :: Luau.LuauExecutionBudgetKind BudgetKind { get; }
 property Luau.LuauExecutionBudgetException :: System.Nullable`1[System.Int64] InterruptCountLimit { get; }
@@ -289,6 +359,7 @@ property Luau.LuauExecutionOptions :: Luau.LuauExecutionOptions Unbounded { get;
 property Luau.LuauExecutionOptions :: System.Nullable`1[System.Int32] MaxResultCount { get; set; }
 property Luau.LuauExecutionOptions :: System.Nullable`1[System.Int64] InterruptCountLimit { get; set; }
 property Luau.LuauExecutionOptions :: System.Nullable`1[System.TimeSpan] WallClockLimit { get; set; }
+property Luau.LuauFunction :: Boolean IsBorrowed { get; }
 property Luau.LuauFunction :: Boolean IsDisposed { get; }
 property Luau.LuauFunction :: Luau.LuauState State { get; }
 property Luau.LuauLibraryAttribute :: Luau.LuauLibraryExposure Exposure { get; set; }
@@ -304,12 +375,33 @@ property Luau.LuauMemoryUsageSnapshot :: Boolean IsTracked { get; }
 property Luau.LuauMemoryUsageSnapshot :: Int64 CurrentBytes { get; }
 property Luau.LuauMemoryUsageSnapshot :: Int64 PeakBytes { get; }
 property Luau.LuauMemoryUsageSnapshot :: System.Nullable`1[System.Int64] LimitBytes { get; }
+property Luau.LuauModuleBundle :: Int32 Count { get; }
+property Luau.LuauModuleBundle :: Int64 TotalBytecodeBytes { get; }
+property Luau.LuauModuleBundle :: Luau.LuauModuleLimits Limits { get; }
+property Luau.LuauModuleBundleCompilationException :: System.String ModuleId { get; }
+property Luau.LuauModuleLimitException :: Int64 Actual { get; }
+property Luau.LuauModuleLimitException :: Int64 Limit { get; }
+property Luau.LuauModuleLimitException :: Luau.LuauModuleLimitKind LimitKind { get; }
+property Luau.LuauModuleLimits :: Luau.LuauModuleLimits Default { get; }
+property Luau.LuauModuleLimits :: Luau.LuauModuleLimits UnsafeUnbounded { get; }
+property Luau.LuauModuleLimits :: System.Nullable`1[System.Int32] MaxBytecodeBytesPerModule { get; set; }
+property Luau.LuauModuleLimits :: System.Nullable`1[System.Int32] MaxModuleCount { get; set; }
+property Luau.LuauModuleLimits :: System.Nullable`1[System.Int32] MaxModuleIdUtf8Bytes { get; set; }
+property Luau.LuauModuleLimits :: System.Nullable`1[System.Int64] MaxTotalBytecodeBytes { get; set; }
+property Luau.LuauModuleLimits :: System.Nullable`1[System.Int64] MaxTotalSourceBytes { get; set; }
+property Luau.LuauModuleMap :: Int32 Count { get; }
+property Luau.LuauModuleMap :: Int64 TotalSourceBytes { get; }
+property Luau.LuauModuleMap :: Luau.LuauModuleLimits Limits { get; }
 property Luau.LuauObjectDescriptor :: System.String TypeName { get; }
+property Luau.LuauObjectHandle :: Boolean IsBorrowed { get; }
 property Luau.LuauObjectHandle :: Boolean IsDisposed { get; }
 property Luau.LuauObjectHandle :: Luau.LuauState State { get; }
 property Luau.LuauObjectMember<T> :: System.String Name { get; }
 property Luau.LuauResultLimitException :: Int32 ActualCount { get; }
 property Luau.LuauResultLimitException :: Int32 Limit { get; }
+property Luau.LuauResultScope :: Int32 Count { get; }
+property Luau.LuauResultScope :: Int32 Length { get; }
+property Luau.LuauResultScope :: Luau.LuauValue Item [Int32] { get; }
 property Luau.LuauState :: Boolean IsDisposed { get; }
 property Luau.LuauState :: Boolean IsMainThread { get; }
 property Luau.LuauState :: Boolean IsRootSandboxed { get; }
@@ -317,18 +409,25 @@ property Luau.LuauState :: Luau.LuauMemoryUsageSnapshot MemoryUsage { get; }
 property Luau.LuauState :: Luau.LuauStateOptions Options { get; }
 property Luau.LuauState :: Luau.LuauValue Item [System.ReadOnlySpan`1[System.Byte]] { get; set; }
 property Luau.LuauState :: Luau.LuauValue Item [System.String] { get; set; }
+property Luau.LuauStateOptions :: Int32 MaxDiagnosticBytes { get; set; }
 property Luau.LuauStateOptions :: Luau.ILuauBytecodeValidator BytecodeValidator { get; set; }
 property Luau.LuauStateOptions :: Luau.LuauBytecodePolicy BytecodePolicy { get; set; }
 property Luau.LuauStateOptions :: Luau.LuauExecutionOptions DefaultExecutionOptions { get; set; }
 property Luau.LuauStateOptions :: Luau.LuauStateOptions Default { get; }
 property Luau.LuauStateOptions :: Luau.LuauStateOptions UnboundedResources { get; }
 property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxBytecodeBytes { get; set; }
+property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxCachedModuleCount { get; set; }
+property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxDecodedStringBytes { get; set; }
 property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxManagedHandleCount { get; set; }
+property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxModuleDependencyDepth { get; set; }
 property Luau.LuauStateOptions :: System.Nullable`1[System.Int32] MaxSourceBytes { get; set; }
+property Luau.LuauStateOptions :: System.Nullable`1[System.Int64] MaxDecodedBytesPerOperation { get; set; }
 property Luau.LuauStateOptions :: System.Nullable`1[System.Int64] MemoryLimitBytes { get; set; }
 property Luau.LuauSynchronizationContextScheduler :: Int32 OwnerManagedThreadId { get; }
 property Luau.LuauSynchronizationContextScheduler :: System.Threading.SynchronizationContext SynchronizationContext { get; }
+property Luau.LuauTable :: Boolean IsBorrowed { get; }
 property Luau.LuauTable :: Boolean IsDisposed { get; }
+property Luau.LuauTable :: Int32 EntryCount { get; }
 property Luau.LuauTable :: Int32 Length { get; }
 property Luau.LuauTable :: Luau.LuauValue Item [Luau.LuauValue] { get; set; }
 property Luau.LuauTable.Enumerator :: System.Collections.Generic.KeyValuePair`2[Luau.LuauValue,Luau.LuauValue] Current { get; }
@@ -341,6 +440,7 @@ property Luau.LuauThreadedCompilationOptions :: Luau.LuauThreadedCompilationOpti
 property Luau.LuauThreadedCompilationOptions :: System.TimeSpan ShutdownTimeout { get; set; }
 property Luau.LuauThreadedCompilationService :: Luau.LuauThreadedCompilationOptions Options { get; }
 property Luau.LuauUnsupportedValueException :: System.String ValueKind { get; }
+property Luau.LuauUserData :: Boolean IsBorrowed { get; }
 property Luau.LuauUserData :: Boolean IsDisposed { get; }
 property Luau.LuauUserData :: Int32 Size { get; }
 property Luau.LuauValue :: Boolean IsNil { get; }
@@ -359,12 +459,15 @@ type abstract class Luau.LuauObjectDescriptor
 type abstract class Luau.LuauRequirer
 type class Luau.LuauException : System.Exception, System.Runtime.Serialization.ISerializable
 type class Luau.LuauState : System.IDisposable
+type enum Luau.LuauArtifactFailureKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauBytecodePolicy : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauCompilationLimitKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauCompileResultKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+type enum Luau.LuauDecodedResultLimitKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauExecutionBudgetKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauLibraryExposure : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauLoadInputKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
+type enum Luau.LuauModuleLimitKind : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauThreadStatus : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type enum Luau.LuauType : System.IComparable, System.IConvertible, System.IFormattable, System.ISpanFormattable
 type interface Luau.ILuauBytecodeValidator
@@ -376,6 +479,8 @@ type readonly struct Luau.LuauCallContext
 type readonly struct Luau.LuauMemoryUsageSnapshot
 type readonly struct Luau.LuauValue : System.IEquatable<Luau.LuauValue>
 type sealed class Luau.FromLuauStateAttribute : System.Attribute
+type sealed class Luau.LuauArtifactException : Luau.LuauException, System.Runtime.Serialization.ISerializable
+type sealed class Luau.LuauArtifactLimits : System.IEquatable<Luau.LuauArtifactLimits>
 type sealed class Luau.LuauBuffer : System.IDisposable
 type sealed class Luau.LuauBytecodeArtifact
 type sealed class Luau.LuauCompilationException : Luau.LuauException, System.Runtime.Serialization.ISerializable
@@ -384,6 +489,7 @@ type sealed class Luau.LuauCompilationShutdownException : System.Runtime.Seriali
 type sealed class Luau.LuauCompileOptions : System.IEquatable<Luau.LuauCompileOptions>
 type sealed class Luau.LuauCompileResult
 type sealed class Luau.LuauCompilerOutput
+type sealed class Luau.LuauDecodedResultLimitException : Luau.LuauLimitException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauExecutionBudgetException : Luau.LuauException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauExecutionCanceledException : System.OperationCanceledException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauExecutionOptions : System.IEquatable<Luau.LuauExecutionOptions>
@@ -393,10 +499,17 @@ type sealed class Luau.LuauManagedCallbackException : Luau.LuauException, System
 type sealed class Luau.LuauManagedHandleLimitException : Luau.LuauException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauMemberAttribute : System.Attribute
 type sealed class Luau.LuauMemoryLimitException : Luau.LuauLimitException, System.Runtime.Serialization.ISerializable
+type sealed class Luau.LuauModuleBundle : Luau.LuauRequirer
+type sealed class Luau.LuauModuleBundleCompilationException : Luau.LuauException, System.Runtime.Serialization.ISerializable
+type sealed class Luau.LuauModuleLimitException : Luau.LuauException, System.Runtime.Serialization.ISerializable
+type sealed class Luau.LuauModuleLimits : System.IEquatable<Luau.LuauModuleLimits>
+type sealed class Luau.LuauModuleMap : Luau.LuauRequirer
 type sealed class Luau.LuauObjectDescriptor<T> : Luau.LuauObjectDescriptor
 type sealed class Luau.LuauObjectHandle : System.IDisposable
 type sealed class Luau.LuauObjectMember<T>
+type sealed class Luau.LuauReferenceLimitException : Luau.LuauException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauResultLimitException : Luau.LuauException, System.Runtime.Serialization.ISerializable
+type sealed class Luau.LuauResultScope : System.Collections.Generic.IEnumerable<Luau.LuauValue>, System.Collections.Generic.IReadOnlyCollection<Luau.LuauValue>, System.Collections.Generic.IReadOnlyList<Luau.LuauValue>, System.Collections.IEnumerable, System.IDisposable
 type sealed class Luau.LuauStateOptions : System.IEquatable<Luau.LuauStateOptions>
 type sealed class Luau.LuauSynchronizationContextScheduler : Luau.ILuauContinuationScheduler
 type sealed class Luau.LuauTable : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<Luau.LuauValue, Luau.LuauValue>>, System.Collections.IEnumerable, System.IDisposable
@@ -404,6 +517,7 @@ type sealed class Luau.LuauThreadedCompilationOptions
 type sealed class Luau.LuauThreadedCompilationService : Luau.ILuauCompilationService, System.IAsyncDisposable
 type sealed class Luau.LuauUnsupportedValueException : Luau.LuauException, System.Runtime.Serialization.ISerializable
 type sealed class Luau.LuauUserData : System.IDisposable
+type static class Luau.LuauBytecodeArtifactCodec
 type static class Luau.LuauCompiler
 type static class Luau.LuauObjectExtensions
 type struct Luau.LuauTable.Enumerator : System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<Luau.LuauValue, Luau.LuauValue>>, System.Collections.IEnumerator, System.IDisposable

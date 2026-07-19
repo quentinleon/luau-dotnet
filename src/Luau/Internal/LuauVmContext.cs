@@ -37,7 +37,7 @@ internal sealed unsafe class LuauVmContext
     static readonly AsyncLocal<ScriptOperation?> ambientOperation = new();
     static readonly LuauHostInterruptPoll interruptCallback = Interrupt;
     static readonly IntPtr interruptPointer = Marshal.GetFunctionPointerForDelegate(interruptCallback);
-    static int nextGlobalManagedCallbackId;
+    static long nextGlobalManagedCallbackId;
 
     readonly object lifecycleGate = new();
     readonly object nativeGate = new();
@@ -59,6 +59,7 @@ internal sealed unsafe class LuauVmContext
     int bytecodeLoadDepth;
     int releasedReferenceCount;
     int closeCount;
+    LuauManagedCallbackRegistration? pendingManagedCallbackNativeReleases;
 
     LuauHostMemoryInfo finalMemoryInfo;
     bool hasFinalMemoryInfo;
@@ -113,6 +114,7 @@ internal sealed unsafe class LuauVmContext
         {
             lock (lifecycleGate)
             {
+                DrainManagedCallbackNativeReleasesLocked();
                 return managedCallbacks.Count;
             }
         }
@@ -184,29 +186,6 @@ internal sealed unsafe class LuauVmContext
             {
                 throw new LuauException(
                     $"The Luau host could not reset allocator diagnostics (status {(int)status}).");
-            }
-        }
-    }
-
-    internal void ArmQuotaFailureOnNextGrowth()
-    {
-        lock (nativeGate)
-        {
-            if (mainPointer == IntPtr.Zero)
-            {
-                ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
-            }
-
-            var status = luau_host_memory_arm_quota_failure((LuauHostState*)mainPointer);
-            if (status == LuauHostStatus.Unsupported)
-            {
-                throw new InvalidOperationException(
-                    "A finite native memory limit is required before quota fault injection can be armed.");
-            }
-            if (status != LuauHostStatus.Ok)
-            {
-                throw new LuauException(
-                    $"The Luau host could not arm quota fault injection (status {(int)status}).");
             }
         }
     }
@@ -365,7 +344,7 @@ internal sealed unsafe class LuauVmContext
             }
 
             ThrowIfNativeAccessDenied();
-            return new LuauNativeAccess(nativeGate);
+            return new LuauNativeAccess(this, nativeGate);
         }
         catch
         {
@@ -387,7 +366,7 @@ internal sealed unsafe class LuauVmContext
                 }
             }
 
-            return new LuauNativeAccess(nativeGate);
+            return new LuauNativeAccess(this, nativeGate);
         }
         catch
         {
@@ -432,10 +411,8 @@ internal sealed unsafe class LuauVmContext
             }
 
             var id = NextManagedCallbackId();
-            managedCallbacks.Add(id, new LuauManagedCallbackRegistration(id, name, callback));
-            managedCallbackWrapperOwners.Add(id);
-            managedCallbackOwners[id] = new WeakReference<LuauVmContext>(this);
-            return id;
+            var registration = new LuauManagedCallbackRegistration(this, id, name, callback);
+            return CompleteManagedCallbackRegistrationLocked(registration);
         }
     }
 
@@ -451,10 +428,28 @@ internal sealed unsafe class LuauVmContext
             }
 
             var id = NextManagedCallbackId();
-            managedCallbacks.Add(id, new LuauManagedCallbackRegistration(id, name, callback));
-            managedCallbackWrapperOwners.Add(id);
-            managedCallbackOwners[id] = new WeakReference<LuauVmContext>(this);
-            return id;
+            var registration = new LuauManagedCallbackRegistration(this, id, name, callback);
+            return CompleteManagedCallbackRegistrationLocked(registration);
+        }
+    }
+
+    int CompleteManagedCallbackRegistrationLocked(
+        LuauManagedCallbackRegistration registration)
+    {
+        try
+        {
+            managedCallbacks.Add(registration.Id, registration);
+            managedCallbackWrapperOwners.Add(registration.Id);
+            managedCallbackOwners[registration.Id] = new WeakReference<LuauVmContext>(this);
+            return registration.Id;
+        }
+        catch
+        {
+            managedCallbackOwners.TryRemove(registration.Id, out _);
+            managedCallbackWrapperOwners.Remove(registration.Id);
+            managedCallbacks.Remove(registration.Id);
+            registration.DisposeNativeReleaseToken();
+            throw;
         }
     }
 
@@ -462,21 +457,51 @@ internal sealed unsafe class LuauVmContext
     {
         lock (lifecycleGate)
         {
+            DrainManagedCallbackNativeReleasesLocked();
             return managedCallbacks.TryGetValue(id, out registration!);
         }
     }
 
-    internal void AddManagedCallbackNativeReference(int id)
+    internal static bool TryGetManagedCallbackOwner(
+        int id,
+        out LuauVmContext context,
+        out LuauManagedCallbackRegistration registration)
+    {
+        if (id > 0 &&
+            managedCallbackOwners.TryGetValue(id, out var owner) &&
+            owner.TryGetTarget(out context!) &&
+            context.TryGetManagedCallback(id, out registration!))
+        {
+            return true;
+        }
+
+        managedCallbackOwners.TryRemove(id, out _);
+        context = null!;
+        registration = null!;
+        return false;
+    }
+
+    internal bool TryGetOwnedState(LuauHostState* pointer, out LuauState state)
     {
         lock (lifecycleGate)
         {
-            if (!managedCallbacks.ContainsKey(id))
+            return TryGetStateLocked((IntPtr)pointer, out state!);
+        }
+    }
+
+    internal IntPtr AddManagedCallbackNativeReference(int id)
+    {
+        lock (lifecycleGate)
+        {
+            DrainManagedCallbackNativeReleasesLocked();
+            if (!managedCallbacks.TryGetValue(id, out var registration))
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauFunction));
             }
 
             managedCallbackNativeReferences.TryGetValue(id, out var count);
             managedCallbackNativeReferences[id] = checked(count + 1);
+            return registration.NativeReleaseToken;
         }
     }
 
@@ -485,6 +510,7 @@ internal sealed unsafe class LuauVmContext
         var removeGlobalOwner = false;
         lock (lifecycleGate)
         {
+            DrainManagedCallbackNativeReleasesLocked();
             managedCallbackWrapperOwners.Remove(id);
             removeGlobalOwner = RemoveManagedCallbackIfUnownedLocked(id);
         }
@@ -495,37 +521,58 @@ internal sealed unsafe class LuauVmContext
         }
     }
 
-    internal static void ReleaseManagedCallbackFromNative(int id)
+    internal void EnqueueManagedCallbackNativeRelease(
+        LuauManagedCallbackRegistration registration)
     {
-        if (id == 0 ||
-            !managedCallbackOwners.TryGetValue(id, out var owner) ||
-            !owner.TryGetTarget(out var context))
+        LuauManagedCallbackRegistration? head;
+        do
         {
-            managedCallbackOwners.TryRemove(id, out _);
-            return;
+            head = Volatile.Read(ref pendingManagedCallbackNativeReleases);
+            registration.SetNextNativeRelease(head);
         }
+        while (Interlocked.CompareExchange(
+            ref pendingManagedCallbackNativeReleases,
+            registration,
+            head) != head);
+    }
 
-        var removeGlobalOwner = false;
-        lock (context.lifecycleGate)
+    internal void DrainManagedCallbackNativeReleases()
+    {
+        lock (lifecycleGate)
         {
-            if (context.managedCallbackNativeReferences.TryGetValue(id, out var count))
+            DrainManagedCallbackNativeReleasesLocked();
+        }
+    }
+
+    void DrainManagedCallbackNativeReleasesLocked()
+    {
+        var registration = Interlocked.Exchange(
+            ref pendingManagedCallbackNativeReleases,
+            null);
+        while (registration != null)
+        {
+            var next = registration.TakeNextNativeRelease();
+            var releaseCount = registration.DrainNativeReleaseCount();
+            var id = registration.Id;
+
+            if (releaseCount > 0 &&
+                managedCallbackNativeReferences.TryGetValue(id, out var nativeReferenceCount))
             {
-                if (count <= 1)
+                if (releaseCount >= nativeReferenceCount)
                 {
-                    context.managedCallbackNativeReferences.Remove(id);
+                    managedCallbackNativeReferences.Remove(id);
                 }
                 else
                 {
-                    context.managedCallbackNativeReferences[id] = count - 1;
+                    managedCallbackNativeReferences[id] = nativeReferenceCount - releaseCount;
                 }
             }
 
-            removeGlobalOwner = context.RemoveManagedCallbackIfUnownedLocked(id);
-        }
-
-        if (removeGlobalOwner)
-        {
-            managedCallbackOwners.TryRemove(id, out _);
+            if (RemoveManagedCallbackIfUnownedLocked(id))
+            {
+                managedCallbackOwners.TryRemove(id, out _);
+            }
+            registration = next;
         }
     }
 
@@ -566,11 +613,27 @@ internal sealed unsafe class LuauVmContext
 
     internal void CacheModule(string key, LuauValue value)
     {
+        if (value.Type == LuauType.Thread)
+        {
+            throw new LuauException(
+                "Luau thread wrappers cannot be stored in the managed module cache.");
+        }
+
         lock (lifecycleGate)
         {
             if (lifecycleState != 0)
             {
                 ThrowHelper.ThrowObjectDisposedException(nameof(LuauState));
+            }
+
+            if (!moduleCache.ContainsKey(key) &&
+                Options.MaxCachedModuleCount is { } limit &&
+                moduleCache.Count >= limit)
+            {
+                throw new LuauModuleLimitException(
+                    LuauModuleLimitKind.CachedResultCount,
+                    moduleCache.Count + 1L,
+                    limit);
             }
 
             moduleCache[key] = value;
@@ -581,11 +644,21 @@ internal sealed unsafe class LuauVmContext
     {
         lock (lifecycleGate)
         {
-            if (!loadingModules.Add(key))
+            if (loadingModules.Contains(key))
             {
                 throw new LuauException(
                     $"Circular module dependency detected while requiring '{requireArgument}'.");
             }
+            if (Options.MaxModuleDependencyDepth is { } limit &&
+                loadingModules.Count >= limit)
+            {
+                throw new LuauModuleLimitException(
+                    LuauModuleLimitKind.DependencyDepth,
+                    loadingModules.Count + 1L,
+                    limit);
+            }
+
+            loadingModules.Add(key);
         }
     }
 
@@ -623,6 +696,15 @@ internal sealed unsafe class LuauVmContext
 
     internal LuauState GetOrCreateThread(LuauHostState* source, LuauHostState* thread, int stackIndex)
     {
+        return GetOrCreateThread(source, thread, stackIndex, out _);
+    }
+
+    internal LuauState GetOrCreateThread(
+        LuauHostState* source,
+        LuauHostState* thread,
+        int stackIndex,
+        out bool created)
+    {
         var pointer = (IntPtr)thread;
 
         lock (nativeGate)
@@ -636,6 +718,7 @@ internal sealed unsafe class LuauVmContext
 
                 if (TryGetStateLocked(pointer, out var cached))
                 {
+                    created = false;
                     return cached;
                 }
 
@@ -660,6 +743,7 @@ internal sealed unsafe class LuauVmContext
                 states[pointer] = entry;
                 state.SetCacheEntry(entry);
                 globalStates[pointer] = entry;
+                created = true;
                 return state;
             }
         }
@@ -807,14 +891,6 @@ internal sealed unsafe class LuauVmContext
 
                 states.Clear();
                 rootEntry = null;
-                foreach (var callbackId in managedCallbacks.Keys)
-                {
-                    managedCallbackOwners.TryRemove(callbackId, out _);
-                }
-
-                managedCallbacks.Clear();
-                managedCallbackNativeReferences.Clear();
-                managedCallbackWrapperOwners.Clear();
                 moduleCache.Clear();
                 loadingModules.Clear();
                 sandboxedThreads.Clear();
@@ -871,6 +947,19 @@ internal sealed unsafe class LuauVmContext
         }
         finally
         {
+            lock (lifecycleGate)
+            {
+                DrainManagedCallbackNativeReleasesLocked();
+                foreach (var pair in managedCallbacks)
+                {
+                    managedCallbackOwners.TryRemove(pair.Key, out _);
+                    pair.Value.DisposeNativeReleaseToken();
+                }
+
+                managedCallbacks.Clear();
+                managedCallbackNativeReferences.Clear();
+                managedCallbackWrapperOwners.Clear();
+            }
             globalContexts.TryRemove(pointer, out _);
             try
             {
@@ -921,18 +1010,24 @@ internal sealed unsafe class LuauVmContext
 
     static int NextManagedCallbackId()
     {
-        var id = Interlocked.Increment(ref nextGlobalManagedCallbackId);
-        if (id == 0)
+        while (true)
         {
-            id = Interlocked.Increment(ref nextGlobalManagedCallbackId);
-        }
+            var observed = Interlocked.Read(ref nextGlobalManagedCallbackId);
+            if (observed >= int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    "The process exhausted managed Luau callback identifiers.");
+            }
 
-        if (id < 0)
-        {
-            throw new InvalidOperationException("The process exhausted managed Luau callback identifiers.");
+            var next = observed + 1;
+            if (Interlocked.CompareExchange(
+                    ref nextGlobalManagedCallbackId,
+                    next,
+                    observed) == observed)
+            {
+                return checked((int)next);
+            }
         }
-
-        return id;
     }
 
     bool RemoveManagedCallbackIfUnownedLocked(int id)
@@ -943,7 +1038,16 @@ internal sealed unsafe class LuauVmContext
             return false;
         }
 
-        managedCallbacks.Remove(id);
+        if (managedCallbacks.TryGetValue(id, out var registration))
+        {
+            if (registration.HasPendingNativeReleases)
+            {
+                return false;
+            }
+
+            managedCallbacks.Remove(id);
+            registration.DisposeNativeReleaseToken();
+        }
         return true;
     }
 
@@ -977,15 +1081,24 @@ internal sealed unsafe class LuauVmContext
 
 internal readonly ref struct LuauNativeAccess
 {
+    readonly LuauVmContext context;
     readonly object gate;
 
-    internal LuauNativeAccess(object gate)
+    internal LuauNativeAccess(LuauVmContext context, object gate)
     {
+        this.context = context;
         this.gate = gate;
     }
 
     public void Dispose()
     {
-        Monitor.Exit(gate);
+        try
+        {
+            context.DrainManagedCallbackNativeReleases();
+        }
+        finally
+        {
+            Monitor.Exit(gate);
+        }
     }
 }

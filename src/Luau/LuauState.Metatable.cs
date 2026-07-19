@@ -4,6 +4,11 @@ namespace Luau;
 
 unsafe partial class LuauState
 {
+    /// <summary>
+    /// Gets an independently disposable owner for <paramref name="value"/>'s
+    /// metatable, or <see langword="null"/> when it has none.
+    /// </summary>
+    /// <param name="value">The value borrowed for the duration of the operation.</param>
     public LuauTable? GetMetatable(LuauValue value)
     {
         ThrowIfDisposed();
@@ -26,6 +31,10 @@ unsafe partial class LuauState
         }
     }
 
+    /// <summary>
+    /// Sets <paramref name="value"/>'s metatable, borrowing both wrappers for
+    /// the duration of the operation. Pass <see langword="null"/> to clear it.
+    /// </summary>
     public void SetMetatable(LuauValue value, LuauTable? metatable)
     {
         ThrowIfDisposed();

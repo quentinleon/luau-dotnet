@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -97,7 +98,7 @@ public sealed class PublicApiContractTests
     }
 
     [Fact]
-    public void ResultDestinationsUseOnlyIntoNamesAndResumeArrayBindingIsUnambiguous()
+    public void ResultDestinationsUseOnlyIntoNamesAndResumeScopeBindingIsUnambiguous()
     {
         var methods = typeof(LuauState).GetMethods(PublicDeclared);
         string[] allocatingNames =
@@ -122,11 +123,11 @@ public sealed class PublicApiContractTests
         Assert.All(intoNames, name => Assert.Contains(methods, method => method.Name == name));
 
         var resume = Assert.Single(methods, method => method.Name == "Resume");
-        Assert.Equal(typeof(LuauValue[]), resume.ReturnType);
+        Assert.Equal(typeof(LuauResultScope), resume.ReturnType);
         Assert.Equal(typeof(ReadOnlySpan<LuauValue>), resume.GetParameters()[0].ParameterType);
 
         var resumeAsync = Assert.Single(methods, method => method.Name == "ResumeAsync");
-        Assert.Equal(typeof(ValueTask<LuauValue[]>), resumeAsync.ReturnType);
+        Assert.Equal(typeof(ValueTask<LuauResultScope>), resumeAsync.ReturnType);
         Assert.Equal(typeof(ReadOnlyMemory<LuauValue>), resumeAsync.GetParameters()[0].ParameterType);
     }
 
@@ -137,9 +138,9 @@ public sealed class PublicApiContractTests
         var invoke = Assert.Single(functionMethods, method => method.Name == "Invoke");
         var invokeAsync = Assert.Single(functionMethods, method => method.Name == "InvokeAsync");
 
-        Assert.Equal(typeof(LuauValue[]), invoke.ReturnType);
+        Assert.Equal(typeof(LuauResultScope), invoke.ReturnType);
         Assert.Equal(typeof(ReadOnlySpan<LuauValue>), invoke.GetParameters()[0].ParameterType);
-        Assert.Equal(typeof(ValueTask<LuauValue[]>), invokeAsync.ReturnType);
+        Assert.Equal(typeof(ValueTask<LuauResultScope>), invokeAsync.ReturnType);
         Assert.Equal(typeof(ReadOnlyMemory<LuauValue>), invokeAsync.GetParameters()[0].ParameterType);
         Assert.All(
             typeof(LuauFunction).GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
@@ -156,6 +157,7 @@ public sealed class PublicApiContractTests
             Enum.GetNames<LuauThreadStatus>());
         Assert.Null(typeof(LuauTable).GetProperty("Count", PublicDeclared));
         Assert.Equal(typeof(int), typeof(LuauTable).GetProperty("Length", PublicDeclared)!.PropertyType);
+        Assert.Equal(typeof(int), typeof(LuauTable).GetProperty("EntryCount", PublicDeclared)!.PropertyType);
     }
 
     [Fact]
@@ -185,6 +187,9 @@ public sealed class PublicApiContractTests
         Assert.Empty(typeof(LuauCompileResult).GetConstructors(PublicDeclared));
         var compile = Assert.Single(typeof(LuauCompiler).GetMethods(PublicDeclared));
         Assert.Equal(typeof(LuauCompilerOutput), compile.ReturnType);
+        Assert.Equal(
+            EditorBrowsableState.Advanced,
+            compile.GetCustomAttribute<EditorBrowsableAttribute>()?.State);
 
         var serviceCompile = Assert.Single(
             typeof(ILuauCompilationService).GetMethods(PublicDeclared));

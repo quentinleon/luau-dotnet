@@ -10,7 +10,7 @@ permissions:
 jobs:
   build:
     name: Build ${{ matrix.platform }} host
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -22,12 +22,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           submodules: true
 
       - name: Install CMake
-        uses: jwlawson/actions-setup-cmake@v1
+        uses: jwlawson/actions-setup-cmake@d06b37b47cfd043ec794ffa3e40e0b6b5858a7ec # v1.14.2
         with:
           cmake-version: 3.29.5
 
@@ -38,7 +38,7 @@ jobs:
 
       - name: Install approved Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         with:
           ndk-version: r27c
 
@@ -78,12 +78,20 @@ jobs:
           -Platform ${{ matrix.platform }}
           -Check
 
-      - name: Upload host
-        uses: actions/upload-artifact@v4
+      - name: Shape stripped shipping host and external symbols
+        shell: pwsh
+        run: >-
+          & ./tools/Copy-NativeArtifactsToUnity.ps1
+          -Platform ${{ matrix.platform }}
+
+      - name: Upload unstripped host, audited shipping output, and symbols
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: luau-host-${{ matrix.platform }}
+          name: luau-host-${{ matrix.platform }}-release
           if-no-files-found: error
           path: |
             native/luau-host/out/install/${{ matrix.preset }}/libluau_host.so
             native/luau-host/out/install/${{ matrix.preset }}/luau_host.manifest.json
             native/luau-host/out/install/${{ matrix.preset }}/share/luau-host/luau_host.exports
+            native/luau-host/out/shipping/${{ matrix.platform }}/
+            native/luau-host/out/symbols/${{ matrix.platform }}/

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.ComponentModel;
 using System.Text;
 using Luau.Internal;
 using Luau.Internal.Interop;
@@ -6,9 +7,15 @@ using static Luau.Internal.Interop.NativeMethods;
 
 namespace Luau;
 
+/// <summary>
+/// Provides the expert, synchronous entry point to the official native Luau
+/// compiler. This type does not grant persistent-artifact trust; callers that
+/// accept untrusted input should use a bounded <see cref="ILuauCompilationService"/>.
+/// </summary>
 public unsafe static class LuauCompiler
 {
     const ulong MaximumManagedBytecodeLength = 0X7FFFFFC7; // Array.MaxLength
+    const int MaximumDiagnosticBytes = 16 * 1024;
 
     internal static void Compile(
         IBufferWriter<byte> writer,
@@ -55,14 +62,15 @@ public unsafe static class LuauCompiler
                     limit);
             }
 
-            var destination = writer.GetSpan(result.Length);
-            if (destination.Length < result.Length)
+            var copyLength = GetBoundedOutputLength(output.data, result.Length, result.IsDiagnostic);
+            var destination = writer.GetSpan(copyLength);
+            if (destination.Length < copyLength)
             {
                 throw new InvalidOperationException("The buffer writer returned less space than requested.");
             }
 
-            new ReadOnlySpan<byte>(output.data, result.Length).CopyTo(destination);
-            writer.Advance(result.Length);
+            new ReadOnlySpan<byte>(output.data, copyLength).CopyTo(destination);
+            writer.Advance(copyLength);
         }
         finally
         {
@@ -71,11 +79,18 @@ public unsafe static class LuauCompiler
     }
 
     /// <summary>
-    /// Compiles an owned snapshot of UTF-8 source into opaque, loadable output.
+    /// Expert synchronous tooling path that compiles an owned snapshot of
+    /// trusted UTF-8 source into opaque, loadable output.
     /// </summary>
+    /// <remarks>
+    /// This method does not impose a finite source or output admission limit.
+    /// Ordinary Unity content and streamed or otherwise untrusted mods should
+    /// use <see cref="ILuauCompilationService"/> and its shared bounded lane.
+    /// </remarks>
     /// <exception cref="LuauCompilationException">
     /// The compiler reports a source diagnostic or no loadable output.
     /// </exception>
+    [EditorBrowsable(EditorBrowsableState.Advanced)]
     public static LuauCompilerOutput Compile(ReadOnlySpan<byte> source, LuauCompileOptions? options = null)
     {
         return Compile(source, options, LuauNativeProtection.AbiVerifier);
@@ -201,8 +216,12 @@ public unsafe static class LuauCompiler
                     limit);
             }
 
-            var result = new byte[nativeResult.Length];
-            new ReadOnlySpan<byte>(output.data, nativeResult.Length).CopyTo(result);
+            var copyLength = GetBoundedOutputLength(
+                output.data,
+                nativeResult.Length,
+                nativeResult.IsDiagnostic);
+            var result = new byte[copyLength];
+            new ReadOnlySpan<byte>(output.data, copyLength).CopyTo(result);
 
             return result;
         }
@@ -249,6 +268,19 @@ public unsafe static class LuauCompiler
             type_info_level = options.TypeInfoLevel,
             coverage_level = options.CoverageLevel,
         };
+    }
+
+    static int GetBoundedOutputLength(byte* output, int length, bool isDiagnostic)
+    {
+        if (!isDiagnostic || length <= MaximumDiagnosticBytes + 1)
+        {
+            return length;
+        }
+
+        return 1 + BoundedUtf8Decoder.GetValidPrefixLength(
+            output + 1,
+            checked((ulong)(length - 1)),
+            MaximumDiagnosticBytes);
     }
 
     static int GetManagedBytecodeLength(byte* code, ulong size)
