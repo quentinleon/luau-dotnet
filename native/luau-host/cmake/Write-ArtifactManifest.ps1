@@ -285,15 +285,17 @@ function Get-ManagedEnumValues {
 
 $hostRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $hostRoot "../.."))
+$upstreamRoot = Join-Path $repositoryRoot "native/luau"
+$packageRoot = Join-Path $repositoryRoot "Luau.Unity"
 $headerPath = Join-Path $hostRoot "include/luau_host.h"
 $sourcePath = Join-Path $hostRoot "src/luau_host.cpp"
 $allocatorPath = Join-Path $hostRoot "src/tracked_allocation.h"
 $exportsPath = Join-Path $hostRoot "exports/luau_host.exports"
 $cmakePath = Join-Path $hostRoot "CMakeLists.txt"
 $exportAuditPath = Join-Path $hostRoot "cmake/AuditExports.cmake"
-$luauHeaderPath = Join-Path $repositoryRoot "luau/VM/include/lua.h"
+$luauHeaderPath = Join-Path $upstreamRoot "VM/include/lua.h"
 $managedProtectionPath = Join-Path $repositoryRoot "src/Luau/Internal/LuauNativeProtection.cs"
-$managedTypesPath = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/Interop/NativeTypes.cs"
+$managedTypesPath = Join-Path $packageRoot "Runtime/Interop/NativeTypes.cs"
 
 foreach ($requiredPath in @(
     $headerPath,
@@ -509,7 +511,7 @@ $upstreamRevision = Get-RequiredMatchValue `
     -Text $cmake `
     -Pattern 'set\(LUAU_HOST_UPSTREAM_REVISION\s+"([0-9a-fA-F]{40})"\)' `
     -Description "approved Luau revision"
-$actualUpstreamRevision = (& git -C (Join-Path $repositoryRoot "luau") rev-parse HEAD).Trim()
+$actualUpstreamRevision = (& git -C $upstreamRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to read the checked-out Luau revision."
 }

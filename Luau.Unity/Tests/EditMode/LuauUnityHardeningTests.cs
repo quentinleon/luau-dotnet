@@ -31,7 +31,6 @@ namespace Luau.Unity.Tests
                 "Luau.Unity.LuauUnityObjectGuard",
                 "Luau.Unity.LuauUnityOptions",
                 "Luau.Unity.LuauUnityValue",
-                "Luau.Unity.Verification.LuauPlayerSmoke",
             }));
         }
 

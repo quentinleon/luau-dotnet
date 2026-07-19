@@ -1,0 +1,16 @@
+{
+    "name": "Luau.Unity.Verification",
+    "rootNamespace": "",
+    "references": [
+        "GUID:c727d2ef8dd2e4846ab81fbe6ca1f508"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

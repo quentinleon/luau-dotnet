@@ -13,9 +13,10 @@ attribute-generated host libraries, and maintained Windows and Android plugins.
 
 ## Architecture
 
-The supported product is the package under
-`src/Luau.Unity/Assets/Luau.Unity`. The repository's .NET projects build and
-test that product; they are not a separate distribution.
+The supported product is the standalone UPM package under `Luau.Unity`. The
+repository's .NET projects build and test that product; they are not a separate
+distribution. The development and player-smoke project under
+`tests/Luau.Unity.Integration` consumes the same package.
 
 ```mermaid
 flowchart LR
@@ -57,7 +58,7 @@ and build fingerprint. The native binary exports only the approved
 In Unity Package Manager, choose **Add package from git URL** and enter:
 
 ```text
-https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity
+https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity
 ```
 
 Or add the package to `Packages/manifest.json`:
@@ -65,7 +66,7 @@ Or add the package to `Packages/manifest.json`:
 ```json
 {
   "dependencies": {
-    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=src/Luau.Unity/Assets/Luau.Unity"
+    "com.nuskey.luau.unity": "https://github.com/nuskey8/luau-dotnet.git?path=Luau.Unity"
   }
 }
 ```
@@ -571,11 +572,12 @@ powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageStatic.ps1
 powershell -ExecutionPolicy Bypass -File tools/Copy-NativeArtifactsToUnity.ps1
 powershell -ExecutionPolicy Bypass -File tools/Copy-NativeArtifactsToUnity.ps1 -Check
 
-# Compile the product from a clean path-only UPM consumer project.
+# Generate a disposable minimal UPM consumer, compile generated bindings, load
+# the native plugin, and execute a representative script.
 powershell -ExecutionPolicy Bypass -File tools/Test-UnityPackageConsumer.ps1
 
-# Unity compile and EditMode tests.
-Push-Location src/Luau.Unity
+# Unity integration-project compile and package EditMode tests.
+Push-Location tests/Luau.Unity.Integration
 ucp compile
 ucp run-tests --mode edit
 Pop-Location

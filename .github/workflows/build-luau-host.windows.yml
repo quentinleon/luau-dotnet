@@ -48,15 +48,19 @@ jobs:
         run: dotnet restore Luau.slnx
 
       - name: Run .NET suite against host
-        run: dotnet test Luau.slnx --no-restore --configuration Release
+        shell: pwsh
+        run: |
+          $nativeHost = Join-Path $env:GITHUB_WORKSPACE "native/luau-host/out/install/windows-x64/luau_host.dll"
+          dotnet test Luau.slnx --no-restore --configuration Release "-p:LuauHostNativePath=$nativeHost"
 
       - name: Run host lifetime and fault soak
         shell: pwsh
-        run: >-
-          powershell -ExecutionPolicy Bypass
-          -File tools/Test-LuauHostSoak.ps1
-          -Configuration Release
-          -SoakIterations 25
+        run: |
+          $nativeHost = Join-Path $env:GITHUB_WORKSPACE "native/luau-host/out/install/windows-x64/luau_host.dll"
+          & ./tools/Test-LuauHostSoak.ps1 `
+            -Configuration Release `
+            -SoakIterations 25 `
+            -NativeHostPath $nativeHost
 
       - name: Reject malformed host ABI fixtures before native operations
         run: >-

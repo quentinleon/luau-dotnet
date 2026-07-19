@@ -4,7 +4,13 @@ Runs the deterministic Stage 3 lifetime and fault soak harness against luau_host
 
 .DESCRIPTION
 Builds and runs the final managed host harness once, writes a structured JSON
-report, and fails if any deterministic scenario or soak group fails.
+report, and fails if any deterministic scenario or soak group fails. The
+checked-in Windows package plugin is used unless -NativeHostPath explicitly
+selects another artifact by absolute path.
+
+.PARAMETER NativeHostPath
+Absolute path to the Windows luau_host artifact to test. Defaults to the
+checked-in package plugin.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File tools/Test-LuauHostSoak.ps1 -SoakIterations 25
@@ -16,6 +22,8 @@ param(
 
     [ValidateRange(1, 10000)]
     [int] $SoakIterations = 25,
+
+    [string] $NativeHostPath,
 
     [string] $OutputRoot
 )
@@ -41,10 +49,21 @@ function Invoke-CheckedCommand {
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $project = Join-Path $repositoryRoot "tests/Luau.HostSoak/Luau.HostSoak.csproj"
-$plugin = Join-Path $repositoryRoot "src/Luau.Unity/Assets/Luau.Unity/Interop/Plugins/win-x64/luau_host.dll"
-if (!(Test-Path -LiteralPath $plugin -PathType Leaf)) {
-    throw "The Windows luau_host plugin was not found at $plugin. Build the windows-x64 CMake preset and install the artifact first."
+$defaultNativeHostPath = Join-Path $repositoryRoot "Luau.Unity/Runtime/Plugins/win-x64/luau_host.dll"
+if ([string]::IsNullOrWhiteSpace($NativeHostPath)) {
+    $NativeHostPath = $defaultNativeHostPath
 }
+elseif (![System.IO.Path]::IsPathRooted($NativeHostPath)) {
+    throw "NativeHostPath must be an absolute path when supplied explicitly. Selected value: '$NativeHostPath'."
+}
+
+$nativeHost = [System.IO.Path]::GetFullPath($NativeHostPath)
+if (!(Test-Path -LiteralPath $nativeHost -PathType Leaf)) {
+    throw "The selected Windows luau_host artifact was not found at $nativeHost."
+}
+$nativeHostHash = (Get-FileHash -LiteralPath $nativeHost -Algorithm SHA256).Hash
+Write-Host "Selected luau_host native artifact: $nativeHost"
+Write-Host "Selected luau_host SHA256: $nativeHostHash"
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repositoryRoot "artifacts/stage-3-host-soak"
@@ -62,6 +81,7 @@ Invoke-CheckedCommand -Command "dotnet" -Description "Run luau_host lifetime/fau
     "run", "--project", $project,
     "--configuration", $Configuration,
     "--artifacts-path", $dotnetArtifacts,
+    "-p:LuauHostNativePath=$nativeHost",
     "--",
     "run", "--output", $report,
     "--soak-iterations", $SoakIterations.ToString([Globalization.CultureInfo]::InvariantCulture)

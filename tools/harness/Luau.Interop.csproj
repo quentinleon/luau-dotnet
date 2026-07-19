@@ -7,26 +7,34 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>false</IsPackable>
+    <LuauHostNativePath Condition="'$(LuauHostNativePath)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\Luau.Unity\Runtime\Plugins\win-x64\luau_host.dll'))</LuauHostNativePath>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\AssemblyInfo.cs"
+    <Compile Include="..\..\Luau.Unity\Runtime\Interop\AssemblyInfo.cs"
              Link="AssemblyInfo.cs" />
-    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\NativeTypes.cs"
+    <Compile Include="..\..\Luau.Unity\Runtime\Interop\NativeTypes.cs"
              Link="NativeTypes.cs" />
-    <Compile Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\NativeMethods.cs"
+    <Compile Include="..\..\Luau.Unity\Runtime\Interop\NativeMethods.cs"
              Link="NativeMethods.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\native\luau-host\out\install\windows-x64\luau_host.dll"
+    <None Include="$(LuauHostNativePath)"
           Link="luau_host.dll"
-          CopyToOutputDirectory="PreserveNewest"
-          Condition="Exists('..\..\native\luau-host\out\install\windows-x64\luau_host.dll')" />
-    <None Include="..\..\src\Luau.Unity\Assets\Luau.Unity\Interop\Plugins\win-x64\luau_host.dll"
-          Link="luau_host.dll"
-          CopyToOutputDirectory="PreserveNewest"
-          Condition="!Exists('..\..\native\luau-host\out\install\windows-x64\luau_host.dll')" />
+          CopyToOutputDirectory="Always" />
   </ItemGroup>
+
+  <Target Name="ValidateLuauHostNativeArtifact" BeforeTargets="PrepareForBuild">
+    <Error Condition="!$([System.IO.Path]::IsPathRooted('$(LuauHostNativePath)'))"
+           Text="LuauHostNativePath must be an absolute path. Selected value: '$(LuauHostNativePath)'." />
+    <Error Condition="!Exists('$(LuauHostNativePath)')"
+           Text="The selected luau_host native artifact does not exist: '$(LuauHostNativePath)'." />
+    <GetFileHash Files="$(LuauHostNativePath)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_SelectedLuauHostNativeArtifact" />
+    </GetFileHash>
+    <Message Importance="High"
+             Text="Selected luau_host native artifact: %(_SelectedLuauHostNativeArtifact.FullPath) (SHA256=%(_SelectedLuauHostNativeArtifact.FileHash))" />
+  </Target>
 
 </Project>

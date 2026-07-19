@@ -3,11 +3,13 @@
 Prepares and optionally validates a disposable Unity project against luau_host.
 
 .DESCRIPTION
-Copies only Assets, Packages, and ProjectSettings from src/Luau.Unity into an
-ignored directory below native/luau-host/out. The script builds the managed
-runtime and installs the selected luau_host native plugins with the existing
-reviewed Unity importer metadata. Canonical interop source is already part of
-the copied Unity package.
+Copies only Assets, Packages, and ProjectSettings from
+tests/Luau.Unity.Integration into an ignored directory below
+native/luau-host/out. The standalone Luau.Unity package is staged under the
+disposable project's Packages directory, and the copied manifest and lock file
+are normalized to that self-contained package copy. The script builds the
+managed runtime and installs the selected luau_host native plugins with the
+existing reviewed Unity importer metadata.
 
 With no validation switches, the script only prepares the disposable project.
 Unity is launched in batch mode only when Compile, EditModeTests, or a smoke
@@ -25,21 +27,22 @@ native/luau-host/out so cleanup cannot affect source or other repository files.
 
 .PARAMETER UnityPath
 Path to Unity.exe. When omitted, UNITY_EXE/UNITY_PATH and the Unity Hub install
-matching src/Luau.Unity/ProjectSettings/ProjectVersion.txt are searched.
+matching tests/Luau.Unity.Integration/ProjectSettings/ProjectVersion.txt are
+searched.
 
 .PARAMETER WindowsPlugin
-Path to luau_host.dll. The Windows CMake build and install locations
-are searched when omitted.
+Absolute path to luau_host.dll. The checked-in package plugin is used when
+omitted. Pass this parameter explicitly to validate a fresh native build instead.
 
 .PARAMETER AndroidX64Plugin
-Path to libluau_host.so for Android x86_64. The Android x64 CMake
-build and install locations are searched when omitted. It is required only for
-AndroidX64Smoke and is copied opportunistically otherwise.
+Absolute path to libluau_host.so for Android x86_64. The checked-in package
+plugin is used when omitted. Pass this parameter explicitly to validate a fresh
+native build instead.
 
 .PARAMETER AndroidArm64Plugin
-Path to libluau_host.so for Android ARM64. The Android ARM64 CMake
-build and install locations are searched when omitted. It is required only for
-AndroidArm64Smoke and is copied opportunistically otherwise.
+Absolute path to libluau_host.so for Android ARM64. The checked-in package
+plugin is used when omitted. Pass this parameter explicitly to validate a fresh
+native build instead.
 
 .PARAMETER AdbPath
 Path to adb.exe. When omitted, the SDK bundled with the selected Unity editor,
@@ -236,6 +239,9 @@ function Resolve-FirstExistingFile {
     )
 
     if (![string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (![System.IO.Path]::IsPathRooted($ExplicitPath)) {
+            throw "$Description must be selected with an absolute path when supplied explicitly."
+        }
         $resolved = Get-AbsolutePath -Path $ExplicitPath -BasePath $BasePath
         if (!(Test-Path -LiteralPath $resolved -PathType Leaf)) {
             throw "$Description was not found: $resolved"
@@ -251,7 +257,7 @@ function Resolve-FirstExistingFile {
     }
 
     if ($Required) {
-        throw "$Description was not found. Build the matching native CMake preset first or pass an explicit path."
+        throw "$Description was not found. Refresh the checked-in package artifact or pass an explicit path."
     }
 
     return $null
@@ -276,7 +282,7 @@ function Resolve-UnityEditor {
         $candidates.Add($env:UNITY_PATH)
     }
 
-    $projectVersionPath = Join-Path $RepositoryRoot "src/Luau.Unity/ProjectSettings/ProjectVersion.txt"
+    $projectVersionPath = Join-Path $RepositoryRoot "tests/Luau.Unity.Integration/ProjectSettings/ProjectVersion.txt"
     if (Test-Path -LiteralPath $projectVersionPath -PathType Leaf) {
         $versionLine = Select-String -LiteralPath $projectVersionPath -Pattern '^m_EditorVersion:\s*(\S+)' | Select-Object -First 1
         if ($versionLine -and $versionLine.Matches.Count -gt 0) {
@@ -747,8 +753,99 @@ function Install-HostPlugin {
         throw "Reviewed Unity importer metadata was not found: $pluginMeta"
     }
 
+    $sourceHash = (Get-FileHash -LiteralPath $PluginSource -Algorithm SHA256).Hash
     Copy-Item -LiteralPath $PluginSource -Destination $PluginPath -Force
-    Write-Host "Installed host plugin: $PluginPath"
+    $destinationHash = (Get-FileHash -LiteralPath $PluginPath -Algorithm SHA256).Hash
+    if ($sourceHash -ne $destinationHash) {
+        throw "Installed host plugin failed SHA256 verification: $PluginPath"
+    }
+
+    Write-Host "Installed host plugin: $PluginPath (SHA256=$destinationHash)"
+}
+
+function Set-DisposablePackageReferences {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ManifestPath,
+        [Parameter(Mandatory = $true)]
+        [string] $LockPath,
+        [Parameter(Mandatory = $true)]
+        [string] $PackageName,
+        [Parameter(Mandatory = $true)]
+        [string] $PackageReference,
+        [Parameter(Mandatory = $true)]
+        [string] $LockReference
+    )
+
+    if (!(Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        throw "Disposable Unity manifest was not found: $ManifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    if (!$manifest.dependencies) {
+        throw "Disposable Unity manifest has no dependencies object: $ManifestPath"
+    }
+
+    $manifestDependency = $manifest.dependencies.PSObject.Properties[$PackageName]
+    if ($null -eq $manifestDependency) {
+        $manifest.dependencies | Add-Member -NotePropertyName $PackageName -NotePropertyValue $PackageReference
+    }
+    else {
+        $manifestDependency.Value = $PackageReference
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $manifestJson = $manifest | ConvertTo-Json -Depth 100
+    [System.IO.File]::WriteAllText($ManifestPath, $manifestJson + [Environment]::NewLine, $utf8NoBom)
+
+    if (Test-Path -LiteralPath $LockPath -PathType Leaf) {
+        $lock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
+        $lockDependency = if ($lock.dependencies) {
+            $lock.dependencies.PSObject.Properties[$PackageName]
+        }
+        else {
+            $null
+        }
+
+        if ($null -eq $lockDependency) {
+            # A lock without the package-under-test entry cannot be normalized
+            # safely. Let Unity regenerate it solely from the staged manifest.
+            Remove-Item -LiteralPath $LockPath -Force
+        }
+        else {
+            $lockDependency.Value.version = $LockReference
+            $lockDependency.Value.source = "embedded"
+            $lockJson = $lock | ConvertTo-Json -Depth 100
+            [System.IO.File]::WriteAllText($LockPath, $lockJson + [Environment]::NewLine, $utf8NoBom)
+        }
+    }
+
+    $normalizedManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $normalizedDependency = $normalizedManifest.dependencies.PSObject.Properties[$PackageName]
+    if ($null -eq $normalizedDependency -or $normalizedDependency.Value -ne $PackageReference) {
+        throw "Disposable Unity manifest did not normalize $PackageName to $PackageReference."
+    }
+
+    if (Test-Path -LiteralPath $LockPath -PathType Leaf) {
+        $normalizedLock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
+        $normalizedLockDependency = $normalizedLock.dependencies.PSObject.Properties[$PackageName]
+        if ($null -eq $normalizedLockDependency -or
+            $normalizedLockDependency.Value.version -ne $LockReference -or
+            $normalizedLockDependency.Value.source -ne "embedded") {
+            throw "Disposable Unity lock did not normalize $PackageName to the staged package."
+        }
+    }
+
+    foreach ($packageStatePath in @($ManifestPath, $LockPath)) {
+        if (!(Test-Path -LiteralPath $packageStatePath -PathType Leaf)) {
+            continue
+        }
+
+        $packageState = [System.IO.File]::ReadAllText($packageStatePath)
+        if ($packageState -match 'file:\.\.[\\/]\.\.[\\/]\.\.[\\/]Luau\.Unity') {
+            throw "Checkout-relative Luau.Unity dependency survived in $packageStatePath"
+        }
+    }
 }
 
 function Invoke-UnityBatch {
@@ -815,12 +912,14 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 $validationRoot = Get-AbsolutePath -Path $OutputRoot -BasePath $repositoryRoot
 Assert-StrictDescendantPath -Path $validationRoot -Parent $nativeOut -Description "OutputRoot"
 
-$sourceUnityProject = Join-Path $repositoryRoot "src/Luau.Unity"
+$sourceUnityProject = Join-Path $repositoryRoot "tests/Luau.Unity.Integration"
+$sourcePackage = Join-Path $repositoryRoot "Luau.Unity"
 $projectRoot = Join-Path $validationRoot "project"
 $dotnetArtifacts = Join-Path $validationRoot "dotnet-artifacts"
 $logsRoot = Join-Path $validationRoot "logs"
 $resultsRoot = Join-Path $validationRoot "results"
 $buildsRoot = Join-Path $validationRoot "builds"
+$luauPackageName = "com.nuskey.luau.unity"
 $androidPackageName = "com.luauunity.host.smoke"
 
 if (Test-Path -LiteralPath $validationRoot) {
@@ -837,28 +936,81 @@ foreach ($folderName in @("Assets", "Packages", "ProjectSettings")) {
     Copy-Item -LiteralPath $source -Destination $projectRoot -Recurse -Force
 }
 
-# Do not carry generated assembly folders nested under Assets into the copy.
-$generatedAssetDirectories = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot "Assets") -Directory -Recurse |
-    Where-Object { $_.Name -eq "bin" -or $_.Name -eq "obj" } |
-    Sort-Object { $_.FullName.Length } -Descending)
-foreach ($directory in $generatedAssetDirectories) {
-    Remove-Item -LiteralPath $directory.FullName -Recurse -Force
-    $metaPath = "$($directory.FullName).meta"
-    if (Test-Path -LiteralPath $metaPath) {
-        Remove-Item -LiteralPath $metaPath -Force
+if (!(Test-Path -LiteralPath $sourcePackage -PathType Container)) {
+    throw "Standalone Unity package was not found: $sourcePackage"
+}
+$stagedPackage = Join-Path $projectRoot "Packages/$luauPackageName"
+Copy-Item -LiteralPath $sourcePackage -Destination $stagedPackage -Recurse -Force
+
+# package.json.meta was valid only while the package was embedded under Assets.
+# Ignore a locally regenerated copy if Unity has recreated it in the checkout.
+$stagedPackageManifestMeta = Join-Path $stagedPackage "package.json.meta"
+if (Test-Path -LiteralPath $stagedPackageManifestMeta -PathType Leaf) {
+    Remove-Item -LiteralPath $stagedPackageManifestMeta -Force
+}
+
+# Do not carry generated assembly folders nested under project Assets or the
+# staged package into the disposable copy.
+foreach ($generatedSearchRoot in @((Join-Path $projectRoot "Assets"), $stagedPackage)) {
+    $generatedAssetDirectories = @(Get-ChildItem -LiteralPath $generatedSearchRoot -Directory -Recurse |
+        Where-Object { $_.Name -eq "bin" -or $_.Name -eq "obj" } |
+        Sort-Object { $_.FullName.Length } -Descending)
+    foreach ($directory in $generatedAssetDirectories) {
+        Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+        $metaPath = "$($directory.FullName).meta"
+        if (Test-Path -LiteralPath $metaPath) {
+            Remove-Item -LiteralPath $metaPath -Force
+        }
     }
 }
+
+$disposableManifest = Join-Path $projectRoot "Packages/manifest.json"
+$disposableLock = Join-Path $projectRoot "Packages/packages-lock.json"
+Set-DisposablePackageReferences `
+    -ManifestPath $disposableManifest `
+    -LockPath $disposableLock `
+    -PackageName $luauPackageName `
+    -PackageReference "file:$luauPackageName" `
+    -LockReference "file:$luauPackageName"
 
 Set-DisposableAndroidApplicationIdentifier `
     -ProjectSettingsPath (Join-Path $projectRoot "ProjectSettings/ProjectSettings.asset") `
     -PackageName $androidPackageName
+
+$windowsPlugin = Resolve-FirstExistingFile `
+    -ExplicitPath $WindowsPlugin `
+    -Candidates @(
+        "Luau.Unity/Runtime/Plugins/win-x64/luau_host.dll"
+    ) `
+    -BasePath $repositoryRoot `
+    -Description "Windows checked-in host plugin" `
+    -Required
+
+$androidPlugin = Resolve-FirstExistingFile `
+    -ExplicitPath $AndroidX64Plugin `
+    -Candidates @(
+        "Luau.Unity/Runtime/Plugins/android-x64/libluau_host.so"
+    ) `
+    -BasePath $repositoryRoot `
+    -Description "Android x64 checked-in host plugin" `
+    -Required
+
+$androidArm64Plugin = Resolve-FirstExistingFile `
+    -ExplicitPath $AndroidArm64Plugin `
+    -Candidates @(
+        "Luau.Unity/Runtime/Plugins/android-arm64/libluau_host.so"
+    ) `
+    -BasePath $repositoryRoot `
+    -Description "Android ARM64 checked-in host plugin" `
+    -Required
 
 $luauProject = Join-Path $repositoryRoot "src/Luau/Luau.csproj"
 $dotnetArguments = @(
     "build", $luauProject,
     "--configuration", $Configuration,
     "--framework", "netstandard2.1",
-    "--artifacts-path", $dotnetArtifacts
+    "--artifacts-path", $dotnetArtifacts,
+    "-p:LuauHostNativePath=$windowsPlugin"
 )
 Invoke-NativeCommand -Command "dotnet" -Arguments $dotnetArguments -Description "Build Luau.dll"
 
@@ -871,41 +1023,25 @@ Invoke-NativeCommand -Command "dotnet" -Arguments @(
 ) -Description "Build Luau source generator"
 $managedGenerator = Find-ManagedArtifact -ArtifactsRoot $dotnetArtifacts -ProjectName "Luau.SourceGenerator" -FileName "Luau.SourceGenerator.dll"
 
-$runtimeDestination = Join-Path $projectRoot "Assets/Luau.Unity/Runtime"
+$runtimeDestination = Join-Path $stagedPackage "Runtime"
+if (!(Test-Path -LiteralPath $runtimeDestination -PathType Container)) {
+    throw "Staged package Runtime directory was not found: $runtimeDestination"
+}
 Copy-Item -LiteralPath $managedLuau -Destination (Join-Path $runtimeDestination "Luau.dll") -Force
 Copy-Item -LiteralPath $managedGenerator -Destination (Join-Path $runtimeDestination "Luau.SourceGenerator.dll") -Force
+foreach ($managedArtifact in @(
+    @{ Source = $managedLuau; Destination = (Join-Path $runtimeDestination "Luau.dll") },
+    @{ Source = $managedGenerator; Destination = (Join-Path $runtimeDestination "Luau.SourceGenerator.dll") }
+)) {
+    $sourceHash = (Get-FileHash -LiteralPath $managedArtifact.Source -Algorithm SHA256).Hash
+    $destinationHash = (Get-FileHash -LiteralPath $managedArtifact.Destination -Algorithm SHA256).Hash
+    if ($sourceHash -ne $destinationHash) {
+        throw "Installed managed package artifact failed SHA256 verification: $($managedArtifact.Destination)"
+    }
+    Write-Host "Installed managed package artifact: $($managedArtifact.Destination) (SHA256=$destinationHash)"
+}
 
-$windowsPlugin = Resolve-FirstExistingFile `
-    -ExplicitPath $WindowsPlugin `
-    -Candidates @(
-        "native/luau-host/out/build/windows-x64/Release/luau_host.dll",
-        "native/luau-host/out/install/windows-x64/luau_host.dll"
-    ) `
-    -BasePath $repositoryRoot `
-    -Description "Windows host plugin" `
-    -Required
-
-$androidPlugin = Resolve-FirstExistingFile `
-    -ExplicitPath $AndroidX64Plugin `
-    -Candidates @(
-        "native/luau-host/out/build/android-x64/libluau_host.so",
-        "native/luau-host/out/install/android-x64/libluau_host.so"
-    ) `
-    -BasePath $repositoryRoot `
-    -Description "Android x64 host plugin" `
-    -Required:$AndroidX64Smoke
-
-$androidArm64Plugin = Resolve-FirstExistingFile `
-    -ExplicitPath $AndroidArm64Plugin `
-    -Candidates @(
-        "native/luau-host/out/build/android-arm64/libluau_host.so",
-        "native/luau-host/out/install/android-arm64/libluau_host.so"
-    ) `
-    -BasePath $repositoryRoot `
-    -Description "Android ARM64 host plugin" `
-    -Required:$AndroidArm64Smoke
-
-$pluginsRoot = Join-Path $projectRoot "Assets/Luau.Unity/Interop/Plugins"
+$pluginsRoot = Join-Path $stagedPackage "Runtime/Plugins"
 $copiedWindowsPlugin = Join-Path $pluginsRoot "win-x64/luau_host.dll"
 Install-HostPlugin `
     -PluginSource $windowsPlugin `
@@ -955,6 +1091,7 @@ if ($AndroidArm64Smoke -or $AndroidX64Smoke) {
 
 Write-Host "Disposable Unity host project prepared at $projectRoot"
 Write-Host "Source Unity project preserved at $sourceUnityProject"
+Write-Host "Source Unity package preserved at $sourcePackage"
 if ($resolvedUnity) {
     Write-Host "Unity editor: $resolvedUnity"
 }
