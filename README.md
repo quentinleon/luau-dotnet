@@ -1,3 +1,5 @@
+# This repository has moved to https://github.com/Quantum-Lion-Labs/Luau-Unity
+
 # Luau for Unity
 
 A focused Unity runtime for the official Luau VM, with a safe managed API,
